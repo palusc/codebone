@@ -129,3 +129,27 @@ class Config:
     def select_model(self, path: str):
         self.data["model_path"] = path
         self.save()
+
+    def get_ignore_dirs(self, project_path: Optional[Path] = None) -> set[str]:
+        """Returns comprehensive set of ignored directories, including project .gitignore entries."""
+        base_ignores = set(self.data.get("ignore_dirs", []))
+        # Ensure standard dependencies, caches, and build targets are always protected
+        base_ignores.update({
+            ".git", "node_modules", ".venv", "venv", "__pycache__", "build",
+            "dist", ".pug", ".next", ".turbo", "target", ".cache", ".idea",
+            ".vscode", "coverage", ".pytest_cache", ".mypy_cache"
+        })
+        proj = project_path or self.project_path
+        if proj and proj.exists():
+            gitignore = proj / ".gitignore"
+            if gitignore.is_file():
+                try:
+                    for line in gitignore.read_text(encoding="utf-8", errors="ignore").splitlines():
+                        line = line.strip()
+                        if line and not line.startswith("#"):
+                            clean = line.strip("/").rstrip("/*")
+                            if clean and not clean.startswith("*"):
+                                base_ignores.add(clean)
+                except Exception:
+                    pass
+        return base_ignores

@@ -1,9 +1,8 @@
-"""The 'Sniffer' — watches the project folder and sniffs changed files."""
+"""The 'Sniffer' — watches the project folder and sniffs changed files with burst protection."""
 import logging
 import threading
-import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -12,18 +11,27 @@ from .battery import on_battery_power
 
 logger = logging.getLogger("pug.watcher")
 
-DEBOUNCE_SECONDS = 0.75
+DEBOUNCE_SECONDS = 0.8
 DEBOUNCE_SECONDS_ON_BATTERY = 2.5
 
 
 class _SnifferHandler(FileSystemEventHandler):
-    def __init__(self, on_change: Callable[[Path], None], on_delete: Callable[[Path], None],
-                 extensions: set[str], ignore_dirs: set[str]):
+    def __init__(
+        self,
+        on_change: Callable[[Path], None],
+        on_delete: Callable[[Path], None],
+        extensions: set[str],
+        ignore_dirs: set[str],
+        on_batch: Optional[Callable[[set[Path], set[Path]], None]] = None,
+    ):
         self.on_change = on_change
         self.on_delete = on_delete
+        self.on_batch = on_batch
         self.extensions = extensions
         self.ignore_dirs = ignore_dirs
-        self._pending: dict[str, threading.Timer] = {}
+        self._changed: set[Path] = set()
+        self._deleted: set[Path] = set()
+        self._timer: Optional[threading.Timer] = None
         self._lock = threading.Lock()
 
     def _is_watched(self, path: str) -> bool:
@@ -34,44 +42,98 @@ class _SnifferHandler(FileSystemEventHandler):
             return False
         return True
 
-    def _debounced(self, path: Path, callback: Callable[[Path], None]):
-        key = str(path)
+    def _schedule_batch(self):
         delay = DEBOUNCE_SECONDS_ON_BATTERY if on_battery_power() else DEBOUNCE_SECONDS
         with self._lock:
-            existing = self._pending.get(key)
-            if existing:
-                existing.cancel()
-            timer = threading.Timer(delay, lambda: callback(path))
-            timer.daemon = True
-            self._pending[key] = timer
-            timer.start()
+            if self._timer:
+                self._timer.cancel()
+            self._timer = threading.Timer(delay, self._flush_batch)
+            self._timer.daemon = True
+            self._timer.start()
+
+    def _flush_batch(self):
+        with self._lock:
+            changed = set(self._changed)
+            deleted = set(self._deleted)
+            self._changed.clear()
+            self._deleted.clear()
+            self._timer = None
+
+        if not changed and not deleted:
+            return
+
+        if self.on_batch:
+            try:
+                self.on_batch(changed, deleted)
+            except Exception:
+                logger.exception("Error in batch change handler")
+        else:
+            for p in deleted:
+                try:
+                    self.on_delete(p)
+                except Exception:
+                    logger.exception("Error in delete handler for %s", p)
+            for p in changed:
+                try:
+                    self.on_change(p)
+                except Exception:
+                    logger.exception("Error in change handler for %s", p)
 
     def on_modified(self, event):
         if not event.is_directory and self._is_watched(event.src_path):
-            self._debounced(Path(event.src_path), self.on_change)
+            p = Path(event.src_path)
+            with self._lock:
+                self._changed.add(p)
+                self._deleted.discard(p)
+            self._schedule_batch()
 
     def on_created(self, event):
         if not event.is_directory and self._is_watched(event.src_path):
-            self._debounced(Path(event.src_path), self.on_change)
+            p = Path(event.src_path)
+            with self._lock:
+                self._changed.add(p)
+                self._deleted.discard(p)
+            self._schedule_batch()
 
     def on_deleted(self, event):
         if not event.is_directory and self._is_watched(event.src_path):
-            self.on_delete(Path(event.src_path))
+            p = Path(event.src_path)
+            with self._lock:
+                self._deleted.add(p)
+                self._changed.discard(p)
+            self._schedule_batch()
 
     def on_moved(self, event):
         if not event.is_directory:
-            if self._is_watched(event.src_path):
-                self.on_delete(Path(event.src_path))
-            if self._is_watched(event.dest_path):
-                self._debounced(Path(event.dest_path), self.on_change)
+            src = Path(event.src_path)
+            dest = Path(event.dest_path)
+            with self._lock:
+                if self._is_watched(event.src_path):
+                    self._deleted.add(src)
+                    self._changed.discard(src)
+                if self._is_watched(event.dest_path):
+                    self._changed.add(dest)
+                    self._deleted.discard(dest)
+            self._schedule_batch()
 
 
 class Sniffer:
-    def __init__(self, project_path: Path, extensions: list[str], ignore_dirs: list[str],
-                 on_change: Callable[[Path], None], on_delete: Callable[[Path], None]):
+    def __init__(
+        self,
+        project_path: Path,
+        extensions: list[str],
+        ignore_dirs: list[str],
+        on_change: Callable[[Path], None],
+        on_delete: Callable[[Path], None],
+        on_batch: Optional[Callable[[set[Path], set[Path]], None]] = None,
+    ):
         self.project_path = project_path
         self.handler = _SnifferHandler(
-            on_change, on_delete, set(extensions), set(ignore_dirs)
+            on_change=on_change,
+            on_delete=on_delete,
+            extensions=set(extensions),
+            ignore_dirs=set(ignore_dirs),
+            on_batch=on_batch,
         )
         self.observer = Observer()
 

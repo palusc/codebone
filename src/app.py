@@ -117,12 +117,18 @@ class PugApp(rumps.App):
 
         self.export_scan_item = rumps.MenuItem("Export Scan Snapshot...", callback=self.export_scan_snapshot)
         self.import_scan_item = rumps.MenuItem("Import Scan File (.sqlite3)...", callback=self.import_scan_file)
+        self.view_graph_item = rumps.MenuItem("View Live Graph...", callback=self.view_live_graph)
+        self.view_logs_item = rumps.MenuItem("View Logs...", callback=self.view_logs)
         self.reset_map_item = rumps.MenuItem("Reset Map", callback=self.reset_map)
         self.quit_item = rumps.MenuItem("Quit PUG", callback=self.quit_app)
 
         self.more_menu = rumps.MenuItem("More...")
         self.more_menu.update([
             self.brain_menu,
+            None,
+            self.view_graph_item,
+            self.view_logs_item,
+            None,
             self.export_scan_item,
             self.import_scan_item,
             self.reset_map_item,
@@ -314,6 +320,24 @@ class PugApp(rumps.App):
             rumps.notification("PUG", "Scan Imported", f"Imported '{meta['project_name']}' ({meta['file_count']} files).")
         except Exception as exc:
             rumps.notification("PUG", "Import Failed", str(exc))
+
+    def view_live_graph(self, _):
+        port = self.config.get("server_port", 3000)
+        url = f"http://127.0.0.1:{port}/pug/graph/ui"
+        try:
+            subprocess.Popen(["open", url])
+        except Exception as exc:
+            logger.error("Failed to open graph UI: %s", exc)
+
+    def view_logs(self, _):
+        from .logging_setup import LOG_FILE
+        try:
+            subprocess.Popen(["open", "-a", "Console", str(LOG_FILE)])
+        except Exception:
+            try:
+                subprocess.Popen(["open", str(LOG_FILE)])
+            except Exception as exc:
+                logger.error("Failed to open log file: %s", exc)
 
     def copy_curl(self, _):
         cmd = self.server.curl_command()

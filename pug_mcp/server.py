@@ -83,14 +83,23 @@ def pug_status() -> str:
 
 
 @mcp.tool()
-def pug_context(format: str = "markdown") -> str:
+def pug_context(format: str = "markdown", domain: str = "", file: str = "", query: str = "") -> str:
     """Retrieve the live codebase architecture, overarching business domains,
     database models/tables, API routes, events, and the Semantic System Graph tracked by PUG.
     ALWAYS call this tool first whenever the user mentions 'PUG', 'pug', asks about
     project architecture, or asks you to build, implement, understand, or refactor code
     in the project, so you have full architectural context without reading all files manually.
-    `format` is 'markdown' (default, human-readable) or 'json' (structured)."""
-    return _get("/pug/context", {"format": format})
+    `format` is 'markdown' (default, human-readable) or 'json' (structured).
+    Use `domain`, `file`, or `query` parameters for Level-of-Detail filtering on large codebases:
+    e.g. domain='billing' returns only files in the Billing domain, reducing token usage further."""
+    params: dict = {"format": format}
+    if domain:
+        params["domain"] = domain
+    if file:
+        params["file"] = file
+    if query:
+        params["query"] = query
+    return _get("/pug/context", params)
 
 
 @mcp.tool()

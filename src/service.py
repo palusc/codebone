@@ -22,6 +22,7 @@ class PugService:
         self.scans = ScanManager(config)
         self.sniffer: Optional[Sniffer] = None
         self.last_synced: Optional[str] = None
+        self.last_error: Optional[str] = None
         self.last_reconciliation: Optional[dict] = None
         self.sniffing = False
         self.on_activity_start: Optional[Callable[[], None]] = None
@@ -33,12 +34,14 @@ class PugService:
             logger.warning("PUG not configured — skipping sniffer start")
             return
         project_path = self.config.project_path
+        ignore_dirs = list(self.config.get_ignore_dirs(project_path))
         self.sniffer = Sniffer(
             project_path=project_path,
             extensions=self.config.get("watched_extensions"),
-            ignore_dirs=self.config.get("ignore_dirs"),
+            ignore_dirs=ignore_dirs,
             on_change=self._handle_change,
             on_delete=self._handle_delete,
+            on_batch=self._handle_batch,
         )
         self.sniffer.start()
         if auto_scan:
@@ -78,7 +81,7 @@ class PugService:
             return 0, 0, 0
 
         extensions = set(self.config.get("watched_extensions"))
-        ignore_dirs = set(self.config.get("ignore_dirs"))
+        ignore_dirs = self.config.get_ignore_dirs(project_path)
 
         matching_files: list[Path] = []
         try:
@@ -255,6 +258,93 @@ class PugService:
             len(res.get("events", [])),
             len(res.get("domains", [])),
         )
+
+    def _handle_batch(self, changed: set[Path], deleted: set[Path]):
+        """Handles burst changes (e.g. git checkout, branch switch, mass file moves/refactors)."""
+        project_path = self.config.project_path
+        if not project_path:
+            return
+
+        with self._lock:
+            self.sniffing = True
+            if self.on_activity_start:
+                self.on_activity_start()
+            try:
+                # 1. Batch delete removed files in SQLite
+                deleted_rels = []
+                for p in deleted:
+                    try:
+                        rel = str(p.relative_to(project_path))
+                        deleted_rels.append(rel)
+                    except ValueError:
+                        pass
+                if deleted_rels:
+                    self.storage.remove_files(deleted_rels)
+                    logger.info("Batch deleted %d files from storage", len(deleted_rels))
+
+                # 2. Check changed files against existing SHA-256 hashes
+                existing_hashes = self.storage.get_file_hashes()
+                records_by_hash = self.storage.get_records_by_hash()
+
+                genuine_sniff_paths: list[Path] = []
+                for p in changed:
+                    if not p.exists() or not p.is_file():
+                        continue
+                    try:
+                        rel = str(p.relative_to(project_path))
+                    except ValueError:
+                        continue
+
+                    try:
+                        content_bytes = p.read_bytes()
+                        content_hash = hashlib.sha256(content_bytes).hexdigest()
+                    except OSError:
+                        continue
+
+                    # If file has identical hash at this path, skip
+                    if existing_hashes.get(rel) == content_hash:
+                        continue
+
+                    # If hash matches a previously indexed file that was moved/renamed:
+                    if content_hash in records_by_hash:
+                        prev_records = records_by_hash[content_hash]
+                        if prev_records:
+                            rec = dict(prev_records[0])
+                            rec["path"] = rel
+                            try:
+                                rec["mtime"] = p.stat().st_mtime
+                            except OSError:
+                                pass
+                            self.storage.insert_record(rec)
+                            logger.info("Instantly re-linked moved file %s via SHA-256 (0 LLM cost)", rel)
+                            continue
+
+                    genuine_sniff_paths.append(p)
+
+                # 3. Process genuine code modifications
+                if genuine_sniff_paths:
+                    logger.info("Batch sniffing %d modified/new files", len(genuine_sniff_paths))
+                    for p in genuine_sniff_paths:
+                        try:
+                            self._sniff_file(p)
+                        except Exception as exc:
+                            self.last_error = str(exc)
+                            logger.exception("Error sniffing file %s in batch", p)
+
+                # 4. If this was a large batch (e.g. branch switch with >= 8 files), auto-save snapshot
+                if len(changed) + len(deleted) >= 8:
+                    try:
+                        self.scans.save_snapshot(
+                            project_name=project_path.name,
+                            project_path=project_path,
+                            storage=self.storage,
+                        )
+                    except Exception as exc:
+                        logger.warning("Failed to auto-save scan snapshot after batch: %s", exc)
+            finally:
+                self.sniffing = False
+                if self.on_activity_end:
+                    self.on_activity_end()
 
     def _handle_delete(self, path: Path):
         project_path = self.config.project_path

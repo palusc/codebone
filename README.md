@@ -10,7 +10,7 @@
 [![macOS](https://img.shields.io/badge/platform-macOS-black?logo=apple&style=flat-square)](#)
 [![Metal GPU](https://img.shields.io/badge/inference-Apple%20Silicon%20Metal-purple?style=flat-square)](#)
 [![MCP](https://img.shields.io/badge/protocol-MCP%20Native-blue?style=flat-square)](#)
-[![Version 1.0.0](https://img.shields.io/badge/version-1.0.0-informational?style=flat-square)](CHANGELOG.md)
+[![Version 1.0.1](https://img.shields.io/badge/version-1.0.1-informational?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Local Only](https://img.shields.io/badge/privacy-100%25%20local-success?style=flat-square)](#-privacy--security)
 
@@ -171,7 +171,38 @@ Returns Markdown structured specifically for LLMs:
 * **Semantic System Graph**: Cross-module business relationships beyond rigid code imports.
 * **Recent Changes**: Chronological log of recent file modifications and their logical purpose.
 
+**Level-of-Detail (LOD) filtering** — Reduce token usage further on large repos:
+
+```bash
+# Only files in the "billing" domain
+curl 'http://localhost:3000/pug/context?domain=billing'
+
+# Files matching a specific path
+curl 'http://localhost:3000/pug/context?file=payments'
+
+# Files touching a specific table, route, or event
+curl 'http://localhost:3000/pug/context?query=InvoiceCreated'
+```
+
+Or via the MCP tool: `pug_context(domain="billing")` — the AI only loads the relevant slice.
+
 </details>
+
+---
+
+## 🗺️ Live Graph UI
+
+Visualize your Semantic System Graph as an interactive node-link diagram in any browser:
+
+```bash
+open http://localhost:3000/pug/graph/ui
+```
+
+Or click 🦴 **More... → View Live Graph...** in the menu bar. The graph:
+- **Auto-refreshes every 5 seconds** to reflect the latest file saves
+- **Color-codes** nodes by type: Domains (purple), Files (green), Routes (cyan), Tables (amber), Events (rose)
+- **Pan / Zoom** with mouse drag and scroll wheel
+- **Click any node** to inspect its connections in a slide-out panel
 
 ---
 

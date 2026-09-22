@@ -159,6 +159,11 @@ def test_api_endpoints():
         assert adopt_data["report"]["renamed_count"] == 1
         assert adopt_data["report"]["renamed_pairs"] == [["app.py", "app_v2.py"]]
 
+        service.stop()
+        del client, app, service
+        import gc
+        gc.collect()
+
         print("API endpoint tests passed successfully!")
 
 

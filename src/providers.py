@@ -170,6 +170,20 @@ class BuiltinProvider(Provider):
         self.n_gpu_layers = n_gpu_layers
         self._llm: Optional["Llama"] = None
         self._fallback = FastFallbackProvider()
+        import atexit
+        atexit.register(self.close)
+
+    def close(self):
+        """Release Metal GPU context cleanly before process exit."""
+        if self._llm is not None:
+            try:
+                if hasattr(self._llm, "close"):
+                    self._llm.close()
+            except Exception:
+                pass
+            self._llm = None
+            import gc
+            gc.collect()
 
     @property
     def available(self) -> bool:

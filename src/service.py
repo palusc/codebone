@@ -53,6 +53,8 @@ class PugService:
         if self.sniffer:
             self.sniffer.stop()
             self.sniffer = None
+        if hasattr(self.provider, "close"):
+            self.provider.close()
 
     def reload_provider(self):
         """Call after brain settings change."""

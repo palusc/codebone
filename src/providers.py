@@ -30,6 +30,26 @@ class Provider:
     def sniff(self, file_path: str, code: str) -> str:
         raise NotImplementedError
 
+    def generate(self, prompt: str, max_tokens: int = 250) -> str:
+        raise NotImplementedError
+
+    def reconcile_architecture(
+        self,
+        previous_domains: list[str],
+        previous_entities: dict,
+        delta: dict,
+    ) -> tuple[list[str], str]:
+        from .prompts import build_reconciliation_prompt, parse_reconciliation
+        prompt = build_reconciliation_prompt(previous_domains, previous_entities, delta)
+        raw = self.generate(prompt, max_tokens=220)
+        if not raw:
+            return FastFallbackProvider().reconcile_architecture(previous_domains, previous_entities, delta)
+        domains, summary = parse_reconciliation(raw)
+        if not domains:
+            fb_domains, _ = FastFallbackProvider().reconcile_architecture(previous_domains, previous_entities, delta)
+            domains = fb_domains
+        return domains, summary
+
     @property
     def available(self) -> bool:
         raise NotImplementedError
@@ -42,6 +62,37 @@ class FastFallbackProvider(Provider):
     @property
     def available(self) -> bool:
         return True
+
+    def generate(self, prompt: str, max_tokens: int = 250) -> str:
+        return ""
+
+    def reconcile_architecture(
+        self,
+        previous_domains: list[str],
+        previous_entities: dict,
+        delta: dict,
+    ) -> tuple[list[str], str]:
+        domains = list(previous_domains)
+        domain_patterns = [
+            ("Payment & Billing", (r"bill", r"pay", r"stripe", r"invoice", r"checkout", r"subscription", r"pricing")),
+            ("Authentication & Identity", (r"auth", r"login", r"signup", r"jwt", r"token", r"session", r"password", r"credential", r"oauth")),
+            ("Notifications & Messaging", (r"notif", r"email", r"sms", r"alert", r"webhook", r"mailer", r"push")),
+            ("Data Persistence & Storage", (r"model", r"schema", r"database", r"sqlite", r"postgres", r"migration", r"repository", r"dao")),
+            ("API & Routing", (r"router", r"endpoint", r"controller", r"handler", r"middleware", r"gateway", r"api")),
+            ("Search & Analytics", (r"search", r"query", r"filter", r"analytic", r"telemetry", r"metric", r"tracking")),
+            ("Configuration & Core", (r"config", r"setting", r"env", r"bootstrap", r"logging", r"constant")),
+        ]
+        all_new_paths = [p for p in delta.get("added", [])] + [new for old, new in delta.get("renamed", [])]
+        for p in all_new_paths:
+            low = p.lower()
+            for d_name, terms in domain_patterns:
+                if any(t in low for t in terms) and d_name not in domains:
+                    domains.append(d_name)
+        renamed_count = len(delta.get("renamed", []))
+        added_count = len(delta.get("added", []))
+        modified_count = len(delta.get("modified", []))
+        summary = f"Reconciled codebase with {renamed_count} renamed, {modified_count} modified, and {added_count} new files."
+        return domains, summary
 
     def sniff(self, file_path: str, code: str) -> str:
         tables = set()
@@ -142,23 +193,29 @@ class BuiltinProvider(Provider):
             logger.error("Failed to load built-in brain: %s", exc)
             return False
 
-    def sniff(self, file_path: str, code: str) -> str:
+    def generate(self, prompt: str, max_tokens: int = 250) -> str:
         if not self._ensure_loaded():
-            return self._fallback.sniff(file_path, code)
-
-        prompt = build_prompt(file_path, code)
+            return ""
         try:
             res = self._llm.create_chat_completion(
                 messages=[
                     {"role": "user", "content": prompt},
                 ],
-                max_tokens=220,
+                max_tokens=max_tokens,
                 temperature=0.1,
             )
             return res["choices"][0]["message"]["content"].strip()
         except Exception as exc:
-            logger.warning("Inference error in BuiltinProvider: %s. Using fallback.", exc)
+            logger.warning("Generation error in BuiltinProvider: %s", exc)
+            return ""
+
+    def sniff(self, file_path: str, code: str) -> str:
+        if not self._ensure_loaded():
             return self._fallback.sniff(file_path, code)
+
+        prompt = build_prompt(file_path, code)
+        out = self.generate(prompt, max_tokens=220)
+        return out if out else self._fallback.sniff(file_path, code)
 
 
 class LocalUrlProvider(Provider):
@@ -177,11 +234,9 @@ class LocalUrlProvider(Provider):
         except Exception:
             return False
 
-    def sniff(self, file_path: str, code: str) -> str:
-        prompt = build_prompt(file_path, code)
+    def generate(self, prompt: str, max_tokens: int = 250) -> str:
         try:
             if "api/generate" in self.url or ":11434" in self.url:
-                # Ollama format
                 url = self.url if "api/generate" in self.url else f"{self.url}/api/generate"
                 r = requests.post(
                     url,
@@ -191,7 +246,6 @@ class LocalUrlProvider(Provider):
                 if r.status_code == 200:
                     return r.json().get("response", "").strip()
             else:
-                # OpenAI-compatible /v1/chat/completions format
                 url = self.url if self.url.endswith("/chat/completions") else f"{self.url}/v1/chat/completions"
                 r = requests.post(
                     url,
@@ -205,9 +259,13 @@ class LocalUrlProvider(Provider):
                 if r.status_code == 200:
                     return r.json()["choices"][0]["message"]["content"].strip()
         except Exception as exc:
-            logger.warning("LocalUrlProvider error: %s", exc)
+            logger.warning("LocalUrlProvider generation error: %s", exc)
+        return ""
 
-        return self._fallback.sniff(file_path, code)
+    def sniff(self, file_path: str, code: str) -> str:
+        prompt = build_prompt(file_path, code)
+        out = self.generate(prompt, max_tokens=220)
+        return out if out else self._fallback.sniff(file_path, code)
 
 
 class CloudProvider(Provider):
@@ -223,11 +281,9 @@ class CloudProvider(Provider):
     def available(self) -> bool:
         return bool(self.api_key and len(self.api_key.strip()) > 8)
 
-    def sniff(self, file_path: str, code: str) -> str:
+    def generate(self, prompt: str, max_tokens: int = 250) -> str:
         if not self.available:
-            return self._fallback.sniff(file_path, code)
-
-        prompt = build_prompt(file_path, code)
+            return ""
         try:
             if self.vendor == "anthropic":
                 r = requests.post(
@@ -239,7 +295,7 @@ class CloudProvider(Provider):
                     },
                     json={
                         "model": self.model or "claude-3-5-haiku-20241022",
-                        "max_tokens": 250,
+                        "max_tokens": max_tokens,
                         "messages": [{"role": "user", "content": prompt}],
                     },
                     timeout=REQUEST_TIMEOUT,
@@ -264,9 +320,16 @@ class CloudProvider(Provider):
                 if r.status_code == 200:
                     return r.json()["choices"][0]["message"]["content"].strip()
         except Exception as exc:
-            logger.warning("CloudProvider error: %s", exc)
+            logger.warning("CloudProvider generation error: %s", exc)
+        return ""
 
-        return self._fallback.sniff(file_path, code)
+    def sniff(self, file_path: str, code: str) -> str:
+        if not self.available:
+            return self._fallback.sniff(file_path, code)
+
+        prompt = build_prompt(file_path, code)
+        out = self.generate(prompt, max_tokens=250)
+        return out if out else self._fallback.sniff(file_path, code)
 
 
 def build_provider(config: Config) -> Provider:

@@ -128,6 +128,41 @@ Returns Markdown structured specifically for LLMs:
 
 ---
 
+## ⚡ Smart Scan Adoption & AI Reconciliation
+
+Renamed a project folder, moved code to a new directory, or checked out a branch? **You never have to re-scan from scratch.**
+
+PUG automatically saves persistent codebase snapshots in `~/Library/Application Support/PUG/scans/` and features an intelligent **Structural Reconciler**:
+
+```
+[Target Project Folder] ◀── Compare ──▶ [Existing Codebase Scan]
+          │
+          ├── ⚡ Content Hash Match (SHA-256): 0-cost instant reuse (zero LLM latency)
+          ├── 🔄 Moved / Renamed Files: auto-detected by hash & re-linked in database
+          ├── 🧠 Modified / New Files: only the diff is sniffed by the AI brain
+          └── 🗺️ AI Architecture Pass: LLM reconciles overarching business domains
+```
+
+* **macOS Menu Bar:** Click 🦴 ➔ **Adopt / Link Existing Scan...** to select an existing scan or browse any `.sqlite3` snapshot. When choosing a renamed project folder via **Select Project Folder...**, PUG automatically recognizes matching project signatures and offers instant reconciliation.
+* **Snapshot Management:** Click 🦴 ➔ **More...** ➔ **Export Scan Snapshot...** or **Import Scan File (.sqlite3)...** to share or back up scans across machines.
+* **REST API:**
+  ```bash
+  # List all historical codebase scans and detected domains
+  curl http://localhost:3000/pug/scans
+
+  # Adopt a scan for a moved or renamed project
+  curl -X POST http://localhost:3000/pug/scans/adopt \
+       -H "Content-Type: application/json" \
+       -d '{"scan_id": "my_app_1790102978", "project_path": "/Users/you/Desktop/my_app_renamed"}'
+  ```
+* **Native MCP Tools:**
+  * `pug_context()`: Retrieve live architecture, business domains, and Semantic System Graph.
+  * `pug_graph()`: Inspect cross-module conceptual and entity links.
+  * `pug_list_scans()`: List all saved codebase scans and snapshots.
+  * `pug_adopt_scan(scan_id_or_path, project_path)`: Adopt and reconcile an existing scan.
+
+---
+
 ## 🧠 Brain Options
 
 Click the bone icon 🦴 ➔ **More...** ➔ **Brain Selection**:

@@ -5,9 +5,10 @@ Provides structured semantic codebase context over localhost HTTP.
 import logging
 import threading
 import time
+from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, HTTPException, Response
 
 from .service import PugService
 
@@ -102,6 +103,7 @@ def create_app(service: PugService) -> FastAPI:
             "project": str(service.config.project_path) if service.config.project_path else None,
             "sniffing": service.sniffing,
             "last_synced": service.last_synced,
+            "last_reconciliation": service.last_reconciliation,
             "file_count": service.storage.file_count(),
             "brain_provider": service.config.get("brain_provider"),
             "brain_available": service.provider.available,
@@ -130,6 +132,59 @@ def create_app(service: PugService) -> FastAPI:
             "nodes": [f["path"] for f in service.storage.all_files()],
             "edges": service.storage.graph_edges(),
         }
+
+    @app.get("/pug/scans")
+    def list_scans():
+        scans = service.scans.list_scans()
+        return {
+            "scans": scans,
+            "count": len(scans),
+        }
+
+    @app.post("/pug/scans/adopt")
+    def adopt_scan(payload: dict):
+        scan_id_or_path = payload.get("scan_id") or payload.get("scan_path")
+        if not scan_id_or_path:
+            raise HTTPException(status_code=400, detail="Missing 'scan_id' or 'scan_path'")
+
+        project_path = payload.get("project_path")
+        if project_path:
+            p = Path(project_path)
+            if not p.exists():
+                raise HTTPException(status_code=404, detail=f"Project path does not exist: {project_path}")
+            service.config.set("project_path", str(p))
+            service.stop()
+            service.start(auto_scan=False)
+
+        if not service.config.is_configured:
+            raise HTTPException(
+                status_code=400,
+                detail="No project folder configured. Provide 'project_path' or configure via menu bar.",
+            )
+
+        try:
+            report = service.adopt_scan(scan_id_or_path)
+            return {
+                "status": "success",
+                "message": "Scan adopted and reconciled successfully",
+                "report": report,
+            }
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.post("/pug/scans/export")
+    def export_scan(payload: dict):
+        scan_id = payload.get("scan_id")
+        dest_path = payload.get("dest_path")
+        if not scan_id or not dest_path:
+            raise HTTPException(status_code=400, detail="Missing 'scan_id' or 'dest_path'")
+        try:
+            out = service.scans.export_scan(scan_id, Path(dest_path))
+            return {"status": "success", "exported_to": str(out)}
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
 
     return app
 

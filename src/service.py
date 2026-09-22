@@ -7,6 +7,7 @@ from typing import Callable, Optional
 
 from .config import Config
 from .providers import Provider, build_provider
+from .scans import ScanManager, ScanReconciler
 from .storage import Storage
 from .watcher import Sniffer
 
@@ -18,8 +19,10 @@ class PugService:
         self.config = config
         self.provider: Provider = build_provider(config)
         self.storage = Storage(config.db_path)
+        self.scans = ScanManager(config)
         self.sniffer: Optional[Sniffer] = None
         self.last_synced: Optional[str] = None
+        self.last_reconciliation: Optional[dict] = None
         self.sniffing = False
         self.on_activity_start: Optional[Callable[[], None]] = None
         self.on_activity_end: Optional[Callable[[], None]] = None
@@ -137,7 +140,62 @@ class PugService:
                     self.on_activity_end()
 
         logger.info("Rescan finished: %d total, %d sniffed, %d skipped", total, sniffed, skipped)
+        if self.config.project_path:
+            try:
+                self.scans.save_snapshot(
+                    project_name=self.config.project_path.name,
+                    project_path=self.config.project_path,
+                    storage=self.storage,
+                )
+            except Exception as exc:
+                logger.warning("Failed to auto-save scan snapshot: %s", exc)
         return total, sniffed, skipped
+
+    def adopt_scan(
+        self,
+        source_scan_id_or_path: str,
+        on_progress: Optional[Callable[[int, int, str], None]] = None,
+    ) -> dict:
+        """Reconciles the currently configured project folder against an existing scan."""
+        if not self.config.is_configured:
+            raise ValueError("No project folder configured")
+
+        project_path = self.config.project_path
+        scan_meta = self.scans.get_scan(source_scan_id_or_path)
+        if not scan_meta:
+            raise FileNotFoundError(f"Source scan '{source_scan_id_or_path}' not found")
+
+        source_db_path = Path(scan_meta["db_path"])
+        if not source_db_path.exists():
+            raise FileNotFoundError(f"Source database file missing: {source_db_path}")
+
+        with self._lock:
+            self.sniffing = True
+            if self.on_activity_start:
+                self.on_activity_start()
+            try:
+                report = ScanReconciler.reconcile(
+                    target_project=project_path,
+                    source_db_path=source_db_path,
+                    target_storage=self.storage,
+                    provider=self.provider,
+                    config=self.config,
+                    on_progress=on_progress,
+                )
+                self.last_reconciliation = report
+                self.last_synced = "reconciled"
+
+                # Update snapshot with reconciled state
+                self.scans.save_snapshot(
+                    project_name=project_path.name,
+                    project_path=project_path,
+                    storage=self.storage,
+                )
+                return report
+            finally:
+                self.sniffing = False
+                if self.on_activity_end:
+                    self.on_activity_end()
 
     def _handle_change(self, path: Path):
         with self._lock:

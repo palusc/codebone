@@ -144,6 +144,105 @@ class Storage:
         self._conn.execute("DELETE FROM files")
         self._conn.commit()
 
+    def snapshot_to(self, dest_path: Path):
+        """Atomically copy the SQLite database to a snapshot file."""
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_dest = dest_path.with_suffix(".tmp")
+        bck = sqlite3.connect(str(tmp_dest))
+        with bck:
+            self._conn.backup(bck)
+        bck.close()
+        import os
+        os.replace(tmp_dest, dest_path)
+
+    def restore_from(self, source_path: Path):
+        """Atomically restore the SQLite database from a snapshot file."""
+        src = sqlite3.connect(str(source_path))
+        with self._conn:
+            src.backup(self._conn)
+        src.close()
+        self._migrate()
+
+    def get_records_by_hash(self) -> Dict[str, List[dict]]:
+        """Maps content_hash to list of file records (used for rename/move detection)."""
+        rows = self._conn.execute("SELECT * FROM files WHERE content_hash != ''").fetchall()
+        result: Dict[str, List[dict]] = {}
+        for r in rows:
+            d = self._row_to_dict(r)
+            result.setdefault(r["content_hash"], []).append(d)
+        return result
+
+    def insert_record(self, entry: dict):
+        """Insert or replace a pre-existing analysis record."""
+        path = entry["path"]
+        tables = entry.get("tables", [])
+        routes = entry.get("routes", [])
+        events = entry.get("events", [])
+        domains = entry.get("domains", [])
+        summary = entry.get("summary", "")
+        updated_at = entry.get("updated_at", time.time())
+        mtime = entry.get("mtime", 0.0)
+        content_hash = entry.get("content_hash", "")
+
+        if self._has_entities_col:
+            all_entities = json.dumps(tables + routes + events + domains)
+            self._conn.execute(
+                """
+                INSERT INTO files (path, entities, tables, routes, events, domains, summary, updated_at, mtime, content_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(path) DO UPDATE SET
+                    entities = excluded.entities,
+                    tables = excluded.tables,
+                    routes = excluded.routes,
+                    events = excluded.events,
+                    domains = excluded.domains,
+                    summary = excluded.summary,
+                    updated_at = excluded.updated_at,
+                    mtime = excluded.mtime,
+                    content_hash = excluded.content_hash
+                """,
+                (
+                    path,
+                    all_entities,
+                    json.dumps(tables),
+                    json.dumps(routes),
+                    json.dumps(events),
+                    json.dumps(domains),
+                    summary,
+                    updated_at,
+                    mtime,
+                    content_hash,
+                ),
+            )
+        else:
+            self._conn.execute(
+                """
+                INSERT INTO files (path, tables, routes, events, domains, summary, updated_at, mtime, content_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(path) DO UPDATE SET
+                    tables = excluded.tables,
+                    routes = excluded.routes,
+                    events = excluded.events,
+                    domains = excluded.domains,
+                    summary = excluded.summary,
+                    updated_at = excluded.updated_at,
+                    mtime = excluded.mtime,
+                    content_hash = excluded.content_hash
+                """,
+                (
+                    path,
+                    json.dumps(tables),
+                    json.dumps(routes),
+                    json.dumps(events),
+                    json.dumps(domains),
+                    summary,
+                    updated_at,
+                    mtime,
+                    content_hash,
+                ),
+            )
+        self._conn.commit()
+
     def get_file(self, rel_path: str) -> Optional[dict]:
         row = self._conn.execute("SELECT * FROM files WHERE path = ?", (rel_path,)).fetchone()
         return self._row_to_dict(row) if row else None
@@ -229,4 +328,5 @@ class Storage:
             "summary": row["summary"],
             "updated_at": row["updated_at"],
             "mtime": row["mtime"],
+            "content_hash": row["content_hash"] if "content_hash" in row.keys() else "",
         }

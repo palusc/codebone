@@ -7,6 +7,7 @@ from typing import Optional
 CONFIG_DIR = Path.home() / "Library" / "Application Support" / "PUG"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 DB_FILE = CONFIG_DIR / "pug.sqlite3"
+SCANS_DIR = CONFIG_DIR / "scans"
 MODELS_DIR = CONFIG_DIR / "models"
 
 BASE_MODEL_NAME = "Built-in (Qwen 0.8B)"
@@ -57,27 +58,29 @@ DEFAULTS = {
 
 
 class Config:
-    def __init__(self):
+    def __init__(self, config_file: Optional[Path] = None):
+        self.config_file = Path(config_file) if config_file else CONFIG_FILE
+        self.config_dir = self.config_file.parent
         self.data = dict(DEFAULTS)
-        if CONFIG_FILE.exists():
+        if self.config_file.exists():
             self.load()
         else:
             self.save()
 
     def load(self):
-        if CONFIG_FILE.exists():
+        if self.config_file.exists():
             try:
-                stored = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+                stored = json.loads(self.config_file.read_text(encoding="utf-8"))
                 self.data.update(stored)
             except (json.JSONDecodeError, OSError):
                 pass
 
     def save(self):
         """Atomic write so a crash mid-save cannot corrupt config.json."""
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        tmp_path = CONFIG_FILE.with_suffix(".json.tmp")
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        tmp_path = self.config_file.with_suffix(".json.tmp")
         tmp_path.write_text(json.dumps(self.data, indent=2), encoding="utf-8")
-        os.replace(tmp_path, CONFIG_FILE)
+        os.replace(tmp_path, self.config_file)
 
     def get(self, key: str, default=None):
         return self.data.get(key, default)
@@ -98,8 +101,14 @@ class Config:
 
     @property
     def db_path(self) -> Path:
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        return DB_FILE
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        return self.config_dir / "pug.sqlite3"
+
+    @property
+    def scans_dir(self) -> Path:
+        p = self.config_dir / "scans"
+        p.mkdir(parents=True, exist_ok=True)
+        return p
 
     @property
     def known_models(self) -> list[dict]:

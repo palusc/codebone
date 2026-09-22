@@ -83,3 +83,60 @@ def parse_analysis(raw_text: str) -> Tuple[List[str], List[str], List[str], List
     summary = re.sub(r"\[\[([^\]|]+)(?:\|[^\]]*)?\]\]", r"\1", summary)
 
     return tables, routes, events, domains, summary
+
+
+def build_reconciliation_prompt(
+    previous_domains: List[str],
+    previous_entities: Dict[str, List[str]],
+    delta: Dict[str, list],
+) -> str:
+    """Build prompt for AI structural reconciliation when an existing scan is adopted."""
+    renamed = delta.get("renamed", [])
+    modified = delta.get("modified", [])
+    added = delta.get("added", [])
+
+    renamed_str = ", ".join(f"{old} -> {new}" for old, new in renamed[:10]) or "none"
+    modified_str = ", ".join(modified[:10]) or "none"
+    added_str = ", ".join(added[:10]) or "none"
+    prev_dom_str = ", ".join(previous_domains[:10]) or "none"
+
+    return (
+        "You are PUG. A codebase has been moved, renamed, or restructured based on an existing scan.\n"
+        "Reconcile the changes with the previous architecture. Determine the active overarching business domains "
+        "and summarize the structural evolution.\n\n"
+        f"Previous Domains: {prev_dom_str}\n"
+        f"Renamed Files: {renamed_str}\n"
+        f"Modified Files: {modified_str}\n"
+        f"Added Files: {added_str}\n\n"
+        "Format:\n"
+        "DOMAINS: [comma-separated list of overarching business domains]\n"
+        "SUMMARY: [at most two sentences describing the updated architecture]"
+    )
+
+
+def parse_reconciliation(raw_text: str) -> Tuple[List[str], str]:
+    """Parse output from architecture reconciliation into (domains, summary)."""
+    domains: List[str] = []
+    summary: str = ""
+    lines = raw_text.strip().splitlines()
+    summary_lines = []
+
+    for line in lines:
+        line_clean = line.strip()
+        if not line_clean:
+            continue
+        upper = line_clean.upper()
+        if upper.startswith("DOMAINS:") or upper.startswith("DOMÄNEN:"):
+            val = line_clean.split(":", 1)[1].strip()
+            if val.lower() not in ("none", "n/a", "-", ""):
+                domains = [item.strip(" `[]\"'") for item in val.split(",") if item.strip(" `[]\"'")]
+        elif upper.startswith("SUMMARY:") or upper.startswith("FLOW:"):
+            val = line_clean.split(":", 1)[1].strip()
+            if val:
+                summary_lines.append(val)
+        else:
+            summary_lines.append(line_clean)
+
+    summary = " ".join(summary_lines).strip() if summary_lines else raw_text.strip()
+    return domains, summary
+

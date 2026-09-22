@@ -96,6 +96,7 @@ class PugApp(rumps.App):
 
         # Primary menu items
         self.select_project_item = rumps.MenuItem("Select Project Folder...", callback=self.choose_project)
+        self.adopt_scan_item = rumps.MenuItem("Adopt / Link Existing Scan...", callback=self.choose_adopt_scan)
         self.status_item = rumps.MenuItem("Status: Not configured")
         self.server_item = rumps.MenuItem("Server: Running on localhost:3000")
         self.copy_curl_item = rumps.MenuItem("Copy Context-Curl", callback=self.copy_curl)
@@ -114,12 +115,16 @@ class PugApp(rumps.App):
             self.add_model_item,
         ])
 
+        self.export_scan_item = rumps.MenuItem("Export Scan Snapshot...", callback=self.export_scan_snapshot)
+        self.import_scan_item = rumps.MenuItem("Import Scan File (.sqlite3)...", callback=self.import_scan_file)
         self.reset_map_item = rumps.MenuItem("Reset Map", callback=self.reset_map)
         self.quit_item = rumps.MenuItem("Quit PUG", callback=self.quit_app)
 
         self.more_menu = rumps.MenuItem("More...")
         self.more_menu.update([
             self.brain_menu,
+            self.export_scan_item,
+            self.import_scan_item,
             self.reset_map_item,
             None,
             self.quit_item,
@@ -127,6 +132,7 @@ class PugApp(rumps.App):
 
         self.menu = [
             self.select_project_item,
+            self.adopt_scan_item,
             self.status_item,
             self.server_item,
             self.copy_curl_item,
@@ -172,12 +178,142 @@ class PugApp(rumps.App):
 
     def choose_project(self, _):
         path = choose_folder("Select Project Folder to Sniff")
-        if path:
+        if not path:
+            return
+        p = Path(path)
+        self.config.set("project_path", str(p))
+        self.service.stop()
+        self._update_ui_state()
+
+        # Check if an existing scan matches this folder
+        matching = self.service.scans.find_matching_scan(p)
+        if matching:
+            rumps.notification(
+                "PUG",
+                f"Found Previous Scan: {matching.get('project_name')}",
+                "Reconciling folder structure via AI...",
+            )
+
+            def _run_matched():
+                try:
+                    rep = self.service.adopt_scan(matching["id"])
+                    reused = rep.get("reused_count", 0)
+                    renamed = rep.get("renamed_count", 0)
+                    modified = rep.get("modified_count", 0)
+                    added = rep.get("added_count", 0)
+                    rumps.notification(
+                        "PUG",
+                        f"Adopted {matching.get('project_name')}",
+                        f"{reused} files reused, {renamed} renamed, {modified} modified, {added} added.",
+                    )
+                except Exception as exc:
+                    logger.warning("Matching scan adoption failed, falling back to rescan: %s", exc)
+                    self.service.rescan_all()
+                finally:
+                    self._update_ui_state()
+                    self.service.start(auto_scan=False)
+
+            threading.Thread(target=_run_matched, daemon=True, name="pug-matched-adopt").start()
+        else:
+            self.service.start(auto_scan=True)
+            rumps.notification("PUG", f"Watching {p.name}", "Project indexed successfully.")
+
+    def choose_adopt_scan(self, _):
+        if not self.config.is_configured:
+            path = choose_folder("Select Target Project Folder to Reconcile")
+            if not path:
+                return
             self.config.set("project_path", path)
             self.service.stop()
             self._update_ui_state()
-            self.service.start(auto_scan=True)
-            rumps.notification("PUG", f"Watching {Path(path).name}", "Project indexed successfully.")
+
+        scans = self.service.scans.list_scans()
+        source_target = None
+
+        if scans:
+            msg_lines = ["Select an existing codebase scan to adopt:\n"]
+            for i, s in enumerate(scans[:8], 1):
+                name = s.get("project_name", "Unknown")
+                f_count = s.get("file_count", 0)
+                domains = ", ".join(s.get("domains", [])[:2]) or "no domains"
+                msg_lines.append(f"{i}. {name} ({f_count} files, {domains})")
+            msg_lines.append("\nEnter number (or leave empty to browse for a .sqlite3 file):")
+
+            window = rumps.Window(
+                message="\n".join(msg_lines),
+                title="Adopt / Link Existing Scan",
+                default_text="1",
+                ok="Adopt",
+                cancel="Cancel",
+            )
+            resp = window.run()
+            if not resp.clicked:
+                return
+
+            entered = resp.text.strip()
+            if entered.isdigit() and 1 <= int(entered) <= len(scans):
+                source_target = scans[int(entered) - 1]["id"]
+            elif entered:
+                for s in scans:
+                    if s.get("project_name", "").lower() == entered.lower() or s["id"] == entered:
+                        source_target = s["id"]
+                        break
+
+        if not source_target:
+            f_path = choose_file("Select Existing Scan Database (.sqlite3)", ["sqlite3", "db", "sqlite"])
+            if not f_path:
+                return
+            source_target = f_path
+
+        def _run_adopt():
+            rumps.notification(
+                "PUG",
+                "Reconciling Codebase Scan",
+                "Comparing file hash signatures & running AI reconciliation...",
+            )
+            try:
+                rep = self.service.adopt_scan(source_target)
+                reused = rep.get("reused_count", 0)
+                renamed = rep.get("renamed_count", 0)
+                modified = rep.get("modified_count", 0)
+                added = rep.get("added_count", 0)
+                rumps.notification(
+                    "PUG",
+                    "Scan Adoption Complete!",
+                    f"{reused} files reused, {renamed} renamed, {modified} modified, {added} added. Semantic Graph synchronized!",
+                )
+                self._update_ui_state()
+                self.service.start(auto_scan=False)
+            except Exception as exc:
+                logger.exception("Error during scan adoption: %s", exc)
+                rumps.notification("PUG", "Adoption Failed", str(exc))
+
+        threading.Thread(target=_run_adopt, daemon=True, name="pug-user-adopt").start()
+
+    def export_scan_snapshot(self, _):
+        if not self.config.is_configured:
+            rumps.notification("PUG", "Not Configured", "Configure a project first to export its scan.")
+            return
+        dest_folder = choose_folder("Select Destination Folder for Scan Snapshot")
+        if not dest_folder:
+            return
+        p_name = self.config.project_path.name
+        dest_file = Path(dest_folder) / f"{p_name}_scan.sqlite3"
+        try:
+            self.service.storage.snapshot_to(dest_file)
+            rumps.notification("PUG", "Scan Exported", f"Saved to {dest_file.name}")
+        except Exception as exc:
+            rumps.notification("PUG", "Export Failed", str(exc))
+
+    def import_scan_file(self, _):
+        f_path = choose_file("Select Scan Snapshot File (.sqlite3)", ["sqlite3", "db", "sqlite"])
+        if not f_path:
+            return
+        try:
+            meta = self.service.scans.import_scan(Path(f_path))
+            rumps.notification("PUG", "Scan Imported", f"Imported '{meta['project_name']}' ({meta['file_count']} files).")
+        except Exception as exc:
+            rumps.notification("PUG", "Import Failed", str(exc))
 
     def copy_curl(self, _):
         cmd = self.server.curl_command()

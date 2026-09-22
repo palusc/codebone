@@ -53,6 +53,27 @@ def _get(path: str, params: dict | None = None) -> str:
     return resp.text
 
 
+def _post(path: str, payload: dict) -> str:
+    try:
+        base, headers = _connection()
+        resp = httpx.post(f"{base}{path}", headers=headers, json=payload, timeout=60)
+        resp.raise_for_status()
+    except PugNotRunning as exc:
+        return f"PUG is not reachable: {exc}"
+    except httpx.ConnectError:
+        return (
+            "PUG is configured but its server isn't answering on "
+            f"{base}{path} — make sure the PUG menu bar app is running."
+        )
+    except httpx.HTTPStatusError as exc:
+        return f"PUG returned an error: {exc.response.status_code} {exc.response.text}"
+
+    content_type = resp.headers.get("content-type", "")
+    if "json" in content_type:
+        return json.dumps(resp.json(), indent=2)
+    return resp.text
+
+
 @mcp.tool()
 def pug_status() -> str:
     """Get PUG's current status: the configured project directory path, sniffing state
@@ -78,6 +99,25 @@ def pug_graph() -> str:
     database tables, API routes, and events. Reveals how files and components are logically
     intertwined across the overarching system architecture, even when no direct code imports exist."""
     return _get("/pug/graph")
+
+
+@mcp.tool()
+def pug_list_scans() -> str:
+    """List all saved or historical codebase scans and snapshots tracked by PUG.
+    Returns scan identifiers, project names, file counts, and detected business domains."""
+    return _get("/pug/scans")
+
+
+@mcp.tool()
+def pug_adopt_scan(scan_id_or_path: str, project_path: str | None = None) -> str:
+    """Adopt and reconcile an existing codebase scan for a project folder (e.g. after
+    renaming, moving, or branching the folder). Re-links matching files instantly by SHA-256
+    hash with zero LLM overhead, sniffs modified files, and uses the AI to reconcile overarching
+    business domains and the Semantic System Graph."""
+    payload = {"scan_id": scan_id_or_path}
+    if project_path:
+        payload["project_path"] = project_path
+    return _post("/pug/scans/adopt", payload)
 
 
 @mcp.prompt("pug")

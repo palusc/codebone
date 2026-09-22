@@ -20,7 +20,7 @@ logger = logging.getLogger("pug.app")
 BASE_DIR = Path(__file__).resolve().parent.parent
 RESOURCES_DIR = BASE_DIR / "resources"
 
-ICON_ACTIVE = str(RESOURCES_DIR / "bone_idle.png")
+ICON_ACTIVE = str(RESOURCES_DIR / "bone_active.png")
 ICON_INACTIVE = str(RESOURCES_DIR / "bone_inactive.png")
 
 

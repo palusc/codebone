@@ -56,7 +56,8 @@ rsync -a --delete \
 if [[ -f "$REPO_DIR/resources/AppIcon.icns" ]]; then
   cp "$REPO_DIR/resources/AppIcon.icns" "$RESOURCES/"
 fi
-for icon in bone_idle.png bone_idle@2x.png bone_inactive.png bone_inactive@2x.png; do
+rm -f "$RESOURCES/bone_idle"* "$RESOURCES/bone_inactive@2x.png"
+for icon in bone_active.png bone_inactive.png; do
   if [[ -f "$REPO_DIR/resources/$icon" ]]; then
     cp "$REPO_DIR/resources/$icon" "$RESOURCES/"
   fi

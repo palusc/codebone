@@ -154,12 +154,14 @@ Click the bone icon 🦴 ➔ **More...** ➔ **Brain Selection**:
 <br>
 
 ```bash
-# Removes PUG.app, login items, and environment (keeps model for instant reinstall):
+# Standard uninstall (removes app & environment, keeps ~390 MB model for fast reinstall):
 ./uninstall.sh
 
-# Completely wipes everything from disk, including the ~390 MB local LLM model:
+# Full cleanup (completely wipes all ~650 MB: app, database, logs, and local model):
 ./uninstall.sh --all
 ```
+
+> ℹ️ *Note: Models and index data reside in `~/Library/Application Support/PUG/`, completely separated from your project repositories.*
 
 </details>
 

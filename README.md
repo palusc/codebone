@@ -10,6 +10,7 @@
 [![macOS](https://img.shields.io/badge/platform-macOS-black?logo=apple&style=flat-square)](#)
 [![Metal GPU](https://img.shields.io/badge/inference-Apple%20Silicon%20Metal-purple?style=flat-square)](#)
 [![MCP](https://img.shields.io/badge/protocol-MCP%20Native-blue?style=flat-square)](#)
+[![Version 1.0.0](https://img.shields.io/badge/version-1.0.0-informational?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Local Only](https://img.shields.io/badge/privacy-100%25%20local-success?style=flat-square)](#-privacy--security)
 
@@ -23,7 +24,7 @@
 
 ## 📉 Token Savings
 
-When asking AI assistants (Claude, Cursor, Gemini, Codex) to build a feature, they typically read 10 to 20 files just to discover your database schema, endpoints, and event handlers. That burns thousands of tokens on boilerplate, imports, and noise before writing any code.
+When asking AI assistants (Claude, Cursor, Gemini, Codex) to build a feature, they typically read 10 to 20 files just to discover schemas, routes, and events. That burns thousands of tokens on boilerplate before writing any code.
 
 ```text
 Prompt Token Overhead per Architectural Query:
@@ -37,7 +38,7 @@ PUG Live Graph    [███                                     ]  ~2,000 token
 
 ## 🐾 How It Works
 
-PUG runs quietly in your macOS menu bar.
+PUG runs silently in your macOS menu bar and updates on every file save (`Cmd + S`):
 
 ```text
        [ Project Folder ]
@@ -46,7 +47,7 @@ PUG runs quietly in your macOS menu bar.
     👃 File Watcher (Instant debounce on save)
               │
               ▼
-    🧠 Local AI Brain (Apple Silicon Metal GPU / Qwen2.5-Coder)
+    🧠 Local Metal GPU (Qwen2.5-Coder 0.8B)
               │
               ▼
     🗺️  Semantic System Graph (Domains, Tables, Endpoints, Events & Logic)
@@ -55,18 +56,16 @@ PUG runs quietly in your macOS menu bar.
               └── 🌐 Localhost API (curl http://127.0.0.1:3000/pug/context)
 ```
 
-1. **Sniff**: Watches your repository files in real time with battery-aware debouncing.
-2. **Think**: Local Apple Silicon Metal-accelerated AI extracts business domains, models, routes, and events in <1s.
-3. **Map**: Synthesizes a relational Semantic System Graph linking files across overarching business capabilities in local SQLite (`~/Library/Application Support/PUG`).
-4. **Serve**: Delivers instant distilled architecture context to AI models via **MCP** or **curl**.
+1. **Sniff**: Watches repository files in real time with battery-aware debouncing.
+2. **Think**: Apple Silicon Metal GPU extracts business domains, models, routes, and events in `<1s`.
+3. **Map**: Synthesizes a relational Semantic System Graph linking files across overarching business capabilities.
+4. **Serve**: Delivers instant architectural context to AI assistants via **MCP** or **curl**.
 
-> 💡 **Semantic System Graph:** PUG maps connections far beyond rigid code imports. Static parsers only see explicit `import` statements. PUG recognizes how files are logically intertwined through your overarching system architecture and business logic — connecting e.g. `billing.py` and `user_notification.py` through *Payment Processing* even when they never directly import each other.
+> 💡 **Beyond Code Imports:** Static parsers only see explicit `import` statements. PUG connects files through shared business logic (e.g. `billing.py` and `user_notification.py` via *Payment Processing*) even when no direct code import exists.
 
 ---
 
 ## 🚀 Quick Start
-
-One command sets up the environment, downloads the local Metal model (with live progress), creates `PUG.app`, and launches it:
 
 ```bash
 git clone https://github.com/palusc/pug.git
@@ -74,71 +73,34 @@ cd pug
 ./install.sh
 ```
 
-A bone icon **🦴** appears in your macOS menu bar. Click it ➔ **Select Project Folder...** and pick your repo.
+A bone icon **🦴** appears in your macOS menu bar. Click it ➔ **Select Project Folder...** to begin.
 
-> 💾 **Lightweight Footprint:** Only requires **~650 MB disk space** total (~390 MB model + ~260 MB virtualenv) and **< 1 GB RAM** on Apple Silicon.
-
----
-
-## 💬 Usage with AI Assistants
-
-Prompt your AI model naturally:
-> *"Implement authentication middleware for billing routes. Use PUG."*
-
-The model detects `PUG`, calls `pug_context()`, and immediately receives the exact database models, routes, and dependency graph.
-
-<details>
-<summary><b>⚙️ Cursor & Claude Desktop Configuration (Click to expand)</b></summary>
-
-<br>
-
-PUG auto-registers with Claude CLI during `./install.sh`. To use it in **Claude Desktop** or **Cursor**, add this block to your MCP config (`claude_desktop_config.json` or `.cursor/mcp.json`):
-
-```json
-{
-  "mcpServers": {
-    "pug": {
-      "command": "/Users/YOUR_USERNAME/Library/Application Support/PUG/venv/bin/python3",
-      "args": ["/Users/YOUR_USERNAME/Library/Application Support/PUG/src/pug_mcp/server.py"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>🌐 Direct Curl / Zero-Config Option (Click to expand)</b></summary>
-
-<br>
-
-You can also fetch the live architectural context directly from terminal or any chat tool:
-
-```bash
-curl http://localhost:3000/pug/context
-```
-
-Returns Markdown structured specifically for LLMs:
-* **Business Domains & Systems**: High-level architectural capabilities grouping related modules.
-* **Entities**: Database models, ORM tables, API routes, and event emitters.
-* **Semantic System Graph**: Cross-module business relationships beyond rigid code imports.
-* **Recent Changes**: Chronological log of recent file modifications and their logical purpose.
-
-</details>
+> 💾 **Lightweight:** Requires **~650 MB disk space** total (~390 MB model + ~260 MB venv) and **< 1 GB RAM**.
 
 ---
 
-## ⚡ Smart Scan Adoption
+## ⚡ Built for 24/7 Background Operation
+
+PUG runs continuously in the background without getting in your way:
+
+* **0.8B Model by Default**: Fast (`< 1s`), tiny (~390 MB RAM), and completely silent. Your Mac's fans stay off and your battery is preserved. PUG indexes structure; your frontier model (Claude 3.5 Sonnet, GPT-4o) writes the code.
+* **Apple Silicon Metal GPU**: Zero CPU overhead. Runs entirely on unified memory via Metal shaders.
+* **Smart Scan Adoption**: SHA-256 fingerprinting recognizes moved or renamed files instantly. You never have to re-scan a project from scratch after renaming a directory or switching branches.
+* **100% Localhost**: Binds strictly to `127.0.0.1:3000`. Zero cloud, zero telemetry, zero tokens leaving your machine.
+
+---
+
+## 🔄 Smart Scan Adoption
 
 Renamed, moved, or branched a project folder? **Never re-scan from scratch.**
 
-PUG recognizes moved files via SHA-256 fingerprinting (0-cost instant reuse), sniffs only modified files, and uses the AI to reconcile overarching business domains.
+PUG matches identical files via SHA-256 (0-cost instant reuse), sniffs only modified files, and reconciles the architecture automatically.
 
-* **Menu Bar:** Click 🦴 ➔ **Adopt / Link Existing Scan...** (or select a renamed folder for auto-detection).
-* **Backup & Share:** Click 🦴 ➔ **More...** ➔ **Export / Import Scan Snapshot (.sqlite3)**.
+* **Menu Bar**: Click 🦴 ➔ **Adopt / Link Existing Scan...** (or pick a renamed folder for auto-detection).
+* **Snapshots**: Click 🦴 ➔ **More...** ➔ **Export / Import Scan Snapshot (.sqlite3)**.
 
 <details>
-<summary><b>⚙️ How Smart Adoption Works (Click to expand)</b></summary>
+<summary><b>⚙️ Adoption Architecture & API Details (Click to expand)</b></summary>
 
 <br>
 
@@ -165,6 +127,54 @@ curl -X POST http://localhost:3000/pug/scans/adopt \
 
 ---
 
+## 💬 Usage with AI Assistants
+
+Prompt your AI model naturally:
+> *"Implement authentication middleware for billing routes. Use PUG."*
+
+The model detects `PUG`, calls `pug_context()`, and immediately receives the exact database models, routes, and dependency graph.
+
+<details>
+<summary><b>⚙️ Cursor & Claude Desktop Configuration (Click to expand)</b></summary>
+
+<br>
+
+PUG auto-registers with Claude CLI during `./install.sh`. To configure **Claude Desktop** or **Cursor**, add this block to your MCP config (`claude_desktop_config.json` or `.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "pug": {
+      "command": "/Users/YOUR_USERNAME/Library/Application Support/PUG/venv/bin/python3",
+      "args": ["/Users/YOUR_USERNAME/Library/Application Support/PUG/src/pug_mcp/server.py"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>🌐 Direct Curl / Terminal Option (Click to expand)</b></summary>
+
+<br>
+
+Fetch the live architectural context directly from your terminal:
+
+```bash
+curl http://localhost:3000/pug/context
+```
+
+Returns Markdown structured specifically for LLMs:
+* **Business Domains & Systems**: High-level architectural capabilities grouping related modules.
+* **Entities**: Database models, ORM tables, API routes, and event emitters.
+* **Semantic System Graph**: Cross-module business relationships beyond rigid code imports.
+* **Recent Changes**: Chronological log of recent file modifications and their logical purpose.
+
+</details>
+
+---
+
 ## 🧠 Brain Options
 
 Click the bone icon 🦴 ➔ **More...** ➔ **Brain Selection**:
@@ -178,20 +188,10 @@ Click the bone icon 🦴 ➔ **More...** ➔ **Brain Selection**:
 
 ---
 
-## 💡 Built for 24/7 Background Operation
-
-PUG is designed to run silently 24/7 in your menu bar on every file save (`Cmd + S`):
-
-* **⚡ Ultra-Lightweight (0.8B default):** Heavy 7B+ models spin up fans and drain MacBook battery. Qwen 0.8B extracts routes, tables, and events in `< 1s` using only ~390 MB RAM. PUG indexes structure; your frontier model (Claude 3.5 Sonnet, GPT-4o) writes the code.
-* **🍏 Apple Silicon First:** Unified memory allows zero-copy, zero-stutter inference on Metal GPU without taxing the CPU.
-* **🎛️ Modular Brains:** Need deeper parsing on complex meta-programming? Switch to Ollama, LM Studio, custom GGUF, or Cloud BYOK in 1 click.
-
----
-
 ## 🔒 Privacy & Security
 
 * **100% Localhost**: Binds strictly to `127.0.0.1:3000`. No external network exposure, zero telemetry.
-* **Metal Acceleration**: Runs on Apple Silicon GPU / Apple Neural Engine (`-DGGML_METAL=on`). Minimal CPU impact.
+* **Metal Acceleration**: Runs on Apple Silicon GPU / Neural Engine (`-DGGML_METAL=on`). Minimal CPU impact.
 * **Battery-Aware**: Detects MacBook battery power and increases debounce intervals to conserve energy.
 
 ---
@@ -199,7 +199,7 @@ PUG is designed to run silently 24/7 in your menu bar on every file save (`Cmd +
 ## 🗑️ Uninstall
 
 <details>
-<summary><b>Uninstall commands</b></summary>
+<summary><b>Uninstall commands (Click to expand)</b></summary>
 
 <br>
 

@@ -138,6 +138,13 @@ Click the bone icon 🦴 ➔ **More...** ➔ **Brain Selection**:
 
 ---
 
+## 💡 Design Decisions
+
+* **Why 0.8B by default?** PUG runs continuously in the background on every file save (`Cmd + S`). A heavy 7B+ model would spin up fans and drain MacBook battery. Qwen 0.8B extracts routes, tables, and events in `< 1s` using only ~390 MB of memory, leaving unified RAM free for Docker, your IDE, and browser tabs. PUG doesn't generate code — that is the job of your frontier model (Claude 3.5 Sonnet, GPT-4o). PUG only acts as an ultra-fast structural indexer (with one-click switching to Ollama, LM Studio, or Cloud in the menu if you ever need deeper parsing on complex meta-programming).
+* **Why macOS Apple Silicon first?** Apple Silicon's unified memory architecture is uniquely suited for persistent background inference via Metal GPU with zero CPU stutter or PCIe bus transfer lag. While built natively for the macOS developer ecosystem today, headless cross-platform support is planned.
+
+---
+
 ## 🔒 Privacy & Security
 
 * **100% Localhost**: Binds strictly to `127.0.0.1:3000`. No external network exposure, zero telemetry.

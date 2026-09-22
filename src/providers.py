@@ -1,4 +1,4 @@
-"""Brain providers for PUG: Built-in (Metal Qwen), Local URL, Cloud BYOK, and Fast Fallback."""
+"""Brain providers for CodeBone: Built-in (Metal Qwen), Local URL, Cloud BYOK, and Fast Fallback."""
 import json
 import logging
 import re
@@ -15,7 +15,7 @@ except ImportError:
 from .config import Config
 from .prompts import build_prompt
 
-logger = logging.getLogger("pug.providers")
+logger = logging.getLogger("codebone.providers")
 
 try:
     from llama_cpp import Llama
@@ -308,7 +308,7 @@ class CloudProvider(Provider):
                         "content-type": "application/json",
                     },
                     json={
-                        "model": self.model or "claude-3-5-haiku-20241022",
+                        "model": self.model or "claude-haiku-4-5-20251001",
                         "max_tokens": max_tokens,
                         "messages": [{"role": "user", "content": prompt}],
                     },
@@ -325,7 +325,7 @@ class CloudProvider(Provider):
                         "Content-Type": "application/json",
                     },
                     json={
-                        "model": self.model or "gpt-4o-mini",
+                        "model": self.model or "gpt-6-luna",
                         "messages": [{"role": "user", "content": prompt}],
                         "temperature": 0.1,
                     },

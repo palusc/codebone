@@ -1,16 +1,16 @@
-"""Persistent PUG configuration (project path, brain provider, server port)."""
+"""Persistent CodeBone configuration (project path, brain provider, server port)."""
 import json
 import os
 from pathlib import Path
 from typing import Optional
 
-CONFIG_DIR = Path.home() / "Library" / "Application Support" / "PUG"
+CONFIG_DIR = Path.home() / "Library" / "Application Support" / "CodeBone"
 CONFIG_FILE = CONFIG_DIR / "config.json"
-DB_FILE = CONFIG_DIR / "pug.sqlite3"
+DB_FILE = CONFIG_DIR / "codebone.sqlite3"
 SCANS_DIR = CONFIG_DIR / "scans"
 MODELS_DIR = CONFIG_DIR / "models"
 
-BASE_MODEL_NAME = "Built-in (Qwen 0.8B)"
+BASE_MODEL_NAME = "Built-in (Qwen 0.5B)"
 BASE_MODEL_PATH = str(MODELS_DIR / "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf")
 
 DEFAULTS = {
@@ -26,6 +26,7 @@ DEFAULTS = {
         "venv",
         "dist",
         "build",
+        ".codebone",
         ".pug",
         ".next",
         ".turbo",
@@ -53,7 +54,8 @@ DEFAULTS = {
     "brain_local_url": "http://localhost:11434/api/generate",
     "brain_cloud_vendor": "openai",  # "openai" | "anthropic"
     "brain_cloud_api_key": "",
-    "brain_cloud_model": "gpt-4o-mini",
+    "brain_cloud_model": "gpt-6-luna",
+    "deep_scan_model_path": None,
 }
 
 
@@ -102,7 +104,14 @@ class Config:
     @property
     def db_path(self) -> Path:
         self.config_dir.mkdir(parents=True, exist_ok=True)
-        return self.config_dir / "pug.sqlite3"
+        primary = self.config_dir / "codebone.sqlite3"
+        legacy = self.config_dir / "pug.sqlite3"
+        if not primary.exists() and legacy.exists():
+            try:
+                legacy.replace(primary)
+            except Exception:
+                return legacy
+        return primary
 
     @property
     def scans_dir(self) -> Path:
@@ -113,6 +122,26 @@ class Config:
     @property
     def known_models(self) -> list[dict]:
         return self.data.get("known_models", [])
+
+    @property
+    def active_model_display_name(self) -> str:
+        provider = self.data.get("brain_provider", "builtin")
+        if provider == "builtin":
+            cur_path = self.data.get("model_path", BASE_MODEL_PATH)
+            for m in self.known_models:
+                if m.get("path") == cur_path:
+                    return m.get("name", "Built-in (Qwen 0.5B)")
+            if cur_path:
+                return Path(cur_path).stem
+            return BASE_MODEL_NAME
+        elif provider == "local_url":
+            url = self.data.get("brain_local_url", "")
+            return f"Local URL ({url.split('://')[-1].split('/')[0]})" if url else "Local URL (Ollama)"
+        elif provider == "cloud":
+            vendor = self.data.get("brain_cloud_vendor", "openai")
+            model = self.data.get("brain_cloud_model", "gpt-4o")
+            return f"Cloud ({vendor.title()} {model})"
+        return "Unknown"
 
     def add_model(self, path: str, name: Optional[str] = None) -> dict:
         """Register an additional GGUF selected by the user."""
@@ -136,7 +165,7 @@ class Config:
         # Ensure standard dependencies, caches, and build targets are always protected
         base_ignores.update({
             ".git", "node_modules", ".venv", "venv", "__pycache__", "build",
-            "dist", ".pug", ".next", ".turbo", "target", ".cache", ".idea",
+            "dist", ".codebone", ".pug", ".next", ".turbo", "target", ".cache", ".idea",
             ".vscode", "coverage", ".pytest_cache", ".mypy_cache"
         })
         proj = project_path or self.project_path

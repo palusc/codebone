@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Downloader for the default PUG GGUF model (Qwen2.5-Coder-0.5B-Instruct).
+"""Downloader for the default CodeBone GGUF model (Qwen2.5-Coder-0.5B-Instruct).
 
-Downloads the model file from Hugging Face into PUG's models directory.
+Downloads the model file from Hugging Face into CodeBone's models directory.
 Uses standard library urllib so it runs with zero extra dependencies.
 """
 import argparse
@@ -16,7 +16,7 @@ MODEL_URL = (
     "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/"
     + MODEL_NAME
 )
-MODELS_DIR = Path.home() / "Library" / "Application Support" / "PUG" / "models"
+MODELS_DIR = Path.home() / "Library" / "Application Support" / "CodeBone" / "models"
 MODEL_DEST = MODELS_DIR / MODEL_NAME
 MIN_EXPECTED_SIZE = 300 * 1024 * 1024  # ~390 MB
 
@@ -27,7 +27,7 @@ def is_model_installed() -> bool:
 
 def download_model(force: bool = False) -> bool:
     if is_model_installed() and not force:
-        print(f"PUG model already present: {MODEL_DEST}")
+        print(f"CodeBone model already present: {MODEL_DEST}")
         return True
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -74,7 +74,7 @@ def download_model(force: bool = False) -> bool:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Download PUG base GGUF model")
+    parser = argparse.ArgumentParser(description="Download CodeBone base GGUF model")
     parser.add_argument(
         "--check", action="store_true", help="Check if model is already downloaded"
     )

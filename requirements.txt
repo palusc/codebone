@@ -1,4 +1,5 @@
 rumps>=0.4.0
+pyobjc-framework-WebKit>=10.0
 watchdog>=4.0.0
 fastapi>=0.110.0
 uvicorn>=0.29.0

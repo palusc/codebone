@@ -9,7 +9,7 @@ from watchdog.observers import Observer
 
 from .battery import on_battery_power
 
-logger = logging.getLogger("pug.watcher")
+logger = logging.getLogger("codebone.watcher")
 
 DEBOUNCE_SECONDS = 0.8
 DEBOUNCE_SECONDS_ON_BATTERY = 2.5

@@ -11,10 +11,10 @@ from .scans import ScanManager, ScanReconciler
 from .storage import Storage
 from .watcher import Sniffer
 
-logger = logging.getLogger("pug.service")
+logger = logging.getLogger("codebone.service")
 
 
-class PugService:
+class CodeBoneService:
     def __init__(self, config: Config):
         self.config = config
         self.provider: Provider = build_provider(config)
@@ -31,7 +31,7 @@ class PugService:
 
     def start(self, auto_scan: bool = True, on_progress: Optional[Callable[[int, int, str], None]] = None):
         if not self.config.is_configured:
-            logger.warning("PUG not configured — skipping sniffer start")
+            logger.warning("CodeBone not configured — skipping sniffer start")
             return
         project_path = self.config.project_path
         ignore_dirs = list(self.config.get_ignore_dirs(project_path))
@@ -49,7 +49,7 @@ class PugService:
                 target=self.rescan_all,
                 args=(on_progress,),
                 daemon=True,
-                name="pug-initial-rescan",
+                name="codebone-initial-rescan",
             ).start()
 
     def stop(self):
@@ -63,14 +63,37 @@ class PugService:
         """Call after brain settings change."""
         self.provider = build_provider(self.config)
 
+    def stats_snapshot(self) -> dict:
+        """Lightweight status/counts payload for the menu bar dashboard."""
+        index = self.storage.entity_index()
+        proj = self.config.project_path
+        return {
+            "configured": self.config.is_configured,
+            "project_path": str(proj) if proj else None,
+            "repo_name": proj.name if proj else "None",
+            "model_name": self.config.active_model_display_name,
+            "sniffing": self.sniffing,
+            "last_synced": self.last_synced,
+            "file_count": self.storage.file_count(),
+            "connection_count": len(self.storage.graph_edges()),
+            "domain_count": len(index["domains"]),
+            "table_count": len(index["tables"]),
+            "route_count": len(index["routes"]),
+            "event_count": len(index["events"]),
+        }
+
     def reset_map(self):
         self.storage.reset()
         self.last_synced = None
 
-    def rescan_all(self, on_progress: Optional[Callable[[int, int, str], None]] = None) -> tuple[int, int, int]:
+    def rescan_all(
+        self,
+        on_progress: Optional[Callable[[int, int, str], None]] = None,
+        force: bool = False,
+    ) -> tuple[int, int, int]:
         """Full scan of the project folder:
         - Detects watched files
-        - Compares mtime and hash to skip unchanged files
+        - Compares mtime and hash to skip unchanged files (unless force=True)
         - Sniffs new/modified files
         - Removes stale database entries
         """
@@ -123,12 +146,12 @@ class PugService:
                         continue
 
                     # If mtime unchanged, skip reading and re-sniffing
-                    if rel_path in existing_mtimes and existing_mtimes[rel_path] >= mtime:
+                    if not force and rel_path in existing_mtimes and existing_mtimes[rel_path] >= mtime:
                         skipped += 1
                         continue
 
                     try:
-                        self._sniff_file(path, mtime=mtime)
+                        self._sniff_file(path, mtime=mtime, force=force)
                         sniffed += 1
                     except Exception:
                         logger.exception("Error sniffing %s during rescan", path)
@@ -155,6 +178,27 @@ class PugService:
             except Exception as exc:
                 logger.warning("Failed to auto-save scan snapshot: %s", exc)
         return total, sniffed, skipped
+
+    def run_deep_scan(
+        self,
+        on_progress: Optional[Callable[[int, int, str], None]] = None,
+    ) -> tuple[int, int, int]:
+        """One-off full re-sniff using a larger, slower local model (Deep Scan Mode),
+        then restores the normal fast brain. Heavier on RAM/CPU/time than the default."""
+        model_path = self.config.get("deep_scan_model_path")
+        if not model_path or not Path(model_path).exists():
+            raise ValueError("No Deep Scan model configured")
+
+        from .providers import BuiltinProvider
+
+        original_provider = self.provider
+        deep_provider = BuiltinProvider(model_path=model_path, n_ctx=4096)
+        self.provider = deep_provider
+        try:
+            return self.rescan_all(on_progress=on_progress, force=True)
+        finally:
+            deep_provider.close()
+            self.provider = original_provider
 
     def adopt_scan(
         self,
@@ -216,7 +260,7 @@ class PugService:
                 if self.on_activity_end:
                     self.on_activity_end()
 
-    def _sniff_file(self, path: Path, mtime: Optional[float] = None):
+    def _sniff_file(self, path: Path, mtime: Optional[float] = None, force: bool = False):
         project_path = self.config.project_path
         if not project_path:
             return
@@ -237,7 +281,7 @@ class PugService:
         # Check content hash
         content_hash = hashlib.sha256(content_bytes).hexdigest()
         existing_hashes = self.storage.get_file_hashes()
-        if existing_hashes.get(rel_path) == content_hash:
+        if not force and existing_hashes.get(rel_path) == content_hash:
             # File content has not actually changed
             return
 
@@ -355,3 +399,7 @@ class PugService:
         except ValueError:
             rel_path = str(path)
         self.storage.remove_file(rel_path)
+
+
+# Backwards compatibility alias
+PugService = CodeBoneService

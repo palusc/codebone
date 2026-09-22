@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🦴 PUG
+# 🦴 CodeBone
 
 ### Real-time codebase knowledge graph for your macOS menu bar.
 **Deliver clean architectural context without bloating your prompt tokens.**
@@ -10,7 +10,7 @@
 [![macOS](https://img.shields.io/badge/platform-macOS-black?logo=apple&style=flat-square)](#)
 [![Metal GPU](https://img.shields.io/badge/inference-Apple%20Silicon%20Metal-purple?style=flat-square)](#)
 [![MCP](https://img.shields.io/badge/protocol-MCP%20Native-blue?style=flat-square)](#)
-[![Version 1.0.1](https://img.shields.io/badge/version-1.0.1-informational?style=flat-square)](CHANGELOG.md)
+[![Version 1.1.0](https://img.shields.io/badge/version-1.1.0-informational?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Local Only](https://img.shields.io/badge/privacy-100%25%20local-success?style=flat-square)](#-privacy--security)
 
@@ -26,50 +26,30 @@
 
 When asking AI assistants (Claude, Cursor, Gemini, Codex) to build a feature, they typically read 10 to 20 files just to discover schemas, routes, and events. That burns thousands of tokens on boilerplate before writing any code.
 
-```text
-Prompt Token Overhead per Architectural Query:
-
-Raw File Dump     [████████████████████████████████████████] ~25,000 tokens  (100% — Slow & expensive)
-Vector RAG Search [██████████████████████                  ] ~14,000 tokens  ( 56% — High noise)
-PUG Live Graph    [███                                     ]  ~2,000 tokens  (  8% — ~80% savings ⚡)
-```
+<p align="center">
+  <img src="resources/token-savings.svg" width="560" alt="Token overhead per query: Raw File Dump ~25,000 tokens, Vector RAG Search ~14,000 tokens, CodeBone Live Graph ~2,000 tokens">
+</p>
 
 ---
 
 ## 🐾 How It Works
 
-PUG runs silently in your macOS menu bar and updates on every file save (`Cmd + S`):
-
-```text
-       [ Project Folder ]
-              │
-              ▼
-    👃 File Watcher (Instant debounce on save)
-              │
-              ▼
-    🧠 Local Metal GPU (Qwen2.5-Coder 0.8B)
-              │
-              ▼
-    🗺️  Semantic System Graph (Domains, Tables, Endpoints, Events & Logic)
-              │
-              ├── 🔗 Native MCP (Claude, Cursor, Gemini, Codex)
-              └── 🌐 Localhost API (curl http://127.0.0.1:3000/pug/context)
-```
+CodeBone runs silently in your macOS menu bar and updates on every file save (`Cmd + S`):
 
 1. **Sniff**: Watches repository files in real time with battery-aware debouncing.
 2. **Think**: Apple Silicon Metal GPU extracts business domains, models, routes, and events in `<1s`.
 3. **Map**: Synthesizes a relational Semantic System Graph linking files across overarching business capabilities.
 4. **Serve**: Delivers instant architectural context to AI assistants via **MCP** or **curl**.
 
-> 💡 **Beyond Code Imports:** Static parsers only see explicit `import` statements. PUG connects files through shared business logic (e.g. `billing.py` and `user_notification.py` via *Payment Processing*) even when no direct code import exists.
+> 💡 **Beyond Code Imports:** Static parsers only see explicit `import` statements. CodeBone connects files through shared business logic (e.g. `billing.py` and `user_notification.py` via *Payment Processing*) even when no direct code import exists.
 
 ---
 
 ## 🚀 Quick Start
 
 ```bash
-git clone https://github.com/palusc/pug.git
-cd pug
+git clone https://github.com/palusc/codebone.git
+cd codebone
 ./install.sh
 ```
 
@@ -81,9 +61,9 @@ A bone icon **🦴** appears in your macOS menu bar. Click it ➔ **Select Proje
 
 ## ⚡ Built for 24/7 Background Operation
 
-PUG runs continuously in the background without getting in your way:
+CodeBone runs continuously in the background without getting in your way:
 
-* **0.8B Model by Default**: Fast (`< 1s`), tiny (~390 MB RAM), and completely silent. Your Mac's fans stay off and your battery is preserved. PUG indexes structure; your frontier model (Claude 3.5 Sonnet, GPT-4o) writes the code.
+* **0.5B Model by Default**: Fast (`< 1s`), tiny (~390 MB RAM), and completely silent. Your Mac's fans stay off and your battery is preserved. CodeBone indexes structure; your frontier model (Claude Opus 5.5, GPT-6 Astra) writes the code.
 * **Apple Silicon Metal GPU**: Zero CPU overhead. Runs entirely on unified memory via Metal shaders.
 * **Smart Scan Adoption**: SHA-256 fingerprinting recognizes moved or renamed files instantly. You never have to re-scan a project from scratch after renaming a directory or switching branches.
 * **100% Localhost**: Binds strictly to `127.0.0.1:3000`. Zero cloud, zero telemetry, zero tokens leaving your machine.
@@ -94,7 +74,7 @@ PUG runs continuously in the background without getting in your way:
 
 Renamed, moved, or branched a project folder? **Never re-scan from scratch.**
 
-PUG matches identical files via SHA-256 (0-cost instant reuse), sniffs only modified files, and reconciles the architecture automatically.
+CodeBone matches identical files via SHA-256 (0-cost instant reuse), sniffs only modified files, and reconciles the architecture automatically.
 
 * **Menu Bar**: Click 🦴 ➔ **Adopt / Link Existing Scan...** (or pick a renamed folder for auto-detection).
 * **Snapshots**: Click 🦴 ➔ **More...** ➔ **Export / Import Scan Snapshot (.sqlite3)**.
@@ -115,10 +95,10 @@ PUG matches identical files via SHA-256 (0-cost instant reuse), sniffs only modi
 
 ```bash
 # List all saved codebase scans
-curl http://localhost:3000/pug/scans
+curl http://localhost:3000/codebone/scans
 
 # Adopt a scan for a moved or renamed project
-curl -X POST http://localhost:3000/pug/scans/adopt \
+curl -X POST http://localhost:3000/codebone/scans/adopt \
      -H "Content-Type: application/json" \
      -d '{"scan_id": "my_app_1790102978", "project_path": "/Users/you/Desktop/my_app_renamed"}'
 ```
@@ -130,23 +110,23 @@ curl -X POST http://localhost:3000/pug/scans/adopt \
 ## 💬 Usage with AI Assistants
 
 Prompt your AI model naturally:
-> *"Implement authentication middleware for billing routes. Use PUG."*
+> *"Implement authentication middleware for billing routes. Use CodeBone."*
 
-The model detects `PUG`, calls `pug_context()`, and immediately receives the exact database models, routes, and dependency graph.
+The model detects `CodeBone`, calls `codebone_context()`, and immediately receives the exact database models, routes, and dependency graph.
 
 <details>
 <summary><b>⚙️ Cursor & Claude Desktop Configuration (Click to expand)</b></summary>
 
 <br>
 
-PUG auto-registers with Claude CLI during `./install.sh`. To configure **Claude Desktop** or **Cursor**, add this block to your MCP config (`claude_desktop_config.json` or `.cursor/mcp.json`):
+CodeBone auto-registers with Claude CLI during `./install.sh`. To configure **Claude Desktop** or **Cursor**, add this block to your MCP config (`claude_desktop_config.json` or `.cursor/mcp.json`):
 
 ```json
 {
   "mcpServers": {
-    "pug": {
-      "command": "/Users/YOUR_USERNAME/Library/Application Support/PUG/venv/bin/python3",
-      "args": ["/Users/YOUR_USERNAME/Library/Application Support/PUG/src/pug_mcp/server.py"]
+    "codebone": {
+      "command": "/Users/YOUR_USERNAME/Library/Application Support/CodeBone/venv/bin/python3",
+      "args": ["/Users/YOUR_USERNAME/Library/Application Support/CodeBone/src/codebone_mcp/server.py"]
     }
   }
 }
@@ -162,7 +142,7 @@ PUG auto-registers with Claude CLI during `./install.sh`. To configure **Claude 
 Fetch the live architectural context directly from your terminal:
 
 ```bash
-curl http://localhost:3000/pug/context
+curl http://localhost:3000/codebone/context
 ```
 
 Returns Markdown structured specifically for LLMs:
@@ -175,16 +155,18 @@ Returns Markdown structured specifically for LLMs:
 
 ```bash
 # Only files in the "billing" domain
-curl 'http://localhost:3000/pug/context?domain=billing'
+curl 'http://localhost:3000/codebone/context?domain=billing'
 
 # Files matching a specific path
-curl 'http://localhost:3000/pug/context?file=payments'
+curl 'http://localhost:3000/codebone/context?file=payments'
 
 # Files touching a specific table, route, or event
-curl 'http://localhost:3000/pug/context?query=InvoiceCreated'
+curl 'http://localhost:3000/codebone/context?query=InvoiceCreated'
 ```
 
-Or via the MCP tool: `pug_context(domain="billing")` — the AI only loads the relevant slice.
+Or via the MCP tool: `codebone_context(domain="billing")` — the AI only loads the relevant slice.
+
+*(Note: `/pug/...` endpoints are also supported for backwards compatibility).*
 
 </details>
 
@@ -195,7 +177,7 @@ Or via the MCP tool: `pug_context(domain="billing")` — the AI only loads the r
 Visualize your Semantic System Graph as an interactive node-link diagram in any browser:
 
 ```bash
-open http://localhost:3000/pug/graph/ui
+open http://localhost:3000/codebone/graph/ui
 ```
 
 Or click 🦴 **More... → View Live Graph...** in the menu bar. The graph:
@@ -212,10 +194,20 @@ Click the bone icon 🦴 ➔ **More...** ➔ **Brain Selection**:
 
 | Provider | Description |
 |---|---|
-| **Built-in (Qwen 0.8B)** *(default)* | Apple Silicon Metal GPU-accelerated. Zero cost, zero cloud, instant setup. |
+| **Built-in (Qwen 0.5B)** *(default)* | Apple Silicon Metal GPU-accelerated. Zero cost, zero cloud, instant setup. |
 | **Local URL** | Connect to local Ollama (`http://localhost:11434/api/generate`) or LM Studio. |
-| **Cloud BYOK** | Use your own API key for OpenAI (`gpt-4o-mini`) or Anthropic (`claude-3-5-haiku`). |
+| **Cloud BYOK** | Use your own API key for OpenAI (`gpt-6-luna`) or Anthropic (`claude-haiku-4-5`). |
 | **Custom .gguf** | Load any local GGUF model file (e.g. Qwen 7B, Llama 3) via native file dialog. |
+
+---
+
+## 🔬 Deep Scan Mode (Advanced)
+
+The default 0.5B brain is tuned for speed, not depth. If your architecture is dense enough that the fast pass misses relationships, **Deep Scan Mode** re-runs a full project sniff through a larger local model you supply (e.g. **Qwen2.5-Coder 7B**) for a more thorough one-off pass, then automatically switches back to the fast 0.5B brain for everyday saves.
+
+Click 🦴 ➔ **More...** ➔ **Brain Selection** ➔ **Deep Scan Mode (7B)...** and point it at a `.gguf` file.
+
+> ⚠️ **Know what you're doing before you turn this on.** A 7B model needs far more RAM, disk, and time than the built-in 0.5B brain, and re-sniffing a large repo can take minutes instead of seconds. It's opt-in and off by default — recommended only if you're comfortable managing local GGUF models yourself.
 
 ---
 
@@ -242,7 +234,7 @@ Click the bone icon 🦴 ➔ **More...** ➔ **Brain Selection**:
 ./uninstall.sh --all
 ```
 
-> ℹ️ *Note: Models and index data reside in `~/Library/Application Support/PUG/`, completely separated from your project repositories.*
+> ℹ️ *Note: Models and index data reside in `~/Library/Application Support/CodeBone/`, completely separated from your project repositories.*
 
 </details>
 

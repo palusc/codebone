@@ -1,4 +1,4 @@
-"""Internal SQLite store for PUG's semantic knowledge graph."""
+"""Internal SQLite store for CodeBone's semantic knowledge graph."""
 import json
 import sqlite3
 import time

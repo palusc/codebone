@@ -1,20 +1,20 @@
-"""py2app build script — `python setup.py py2app` produces PUG.app."""
+"""py2app build script — `python setup.py py2app` produces CodeBone.app."""
 from setuptools import setup
 
 from src import __version__
 
-APP = ["pug_main.py"]
+APP = ["codebone_main.py"]
 DATA_FILES = ["resources"]
 OPTIONS = {
     "argv_emulation": False,
     "plist": {
         "LSUIElement": True,  # menu bar only, no Dock icon
-        "CFBundleName": "PUG",
-        "CFBundleDisplayName": "PUG",
-        "CFBundleIdentifier": "com.pug.app",
+        "CFBundleName": "CodeBone",
+        "CFBundleDisplayName": "CodeBone",
+        "CFBundleIdentifier": "com.codebone.app",
         "CFBundleShortVersionString": __version__,
         "CFBundleVersion": __version__,
-        "NSHumanReadableCopyright": "PUG",
+        "NSHumanReadableCopyright": "CodeBone",
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "11.0",
         "LSApplicationCategoryType": "public.app-category.developer-tools",

@@ -2,7 +2,7 @@
 import logging
 import subprocess
 
-logger = logging.getLogger("pug.battery")
+logger = logging.getLogger("codebone.battery")
 
 
 def on_battery_power() -> bool:

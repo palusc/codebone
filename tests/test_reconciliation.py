@@ -1,4 +1,4 @@
-"""Test suite for PUG's Smart Scan Adoption and AI Structural Reconciliation."""
+"""Test suite for CodeBone's Smart Scan Adoption and AI Structural Reconciliation."""
 import os
 import shutil
 import tempfile
@@ -130,27 +130,33 @@ def test_api_endpoints():
         app = create_app(service)
         client = TestClient(app)
 
-        # 1. Test GET /pug/scans
-        res = client.get("/pug/scans")
+        # 1. Test GET /codebone/scans (and /pug/scans)
+        res = client.get("/codebone/scans")
         assert res.status_code == 200
         data = res.json()
         assert "scans" in data
         assert data["count"] >= 1
+        assert client.get("/pug/scans").status_code == 200
 
-        # 2. Test GET /pug/status
-        status_res = client.get("/pug/status")
+        # 2. Test GET /codebone/status (and /pug/status)
+        status_res = client.get("/codebone/status")
         assert status_res.status_code == 200
         status_data = status_res.json()
         assert status_data["file_count"] == 1
+        assert client.get("/pug/status").status_code == 200
 
-        # 3. Test POST /pug/scans/adopt with a new moved folder
+        # 3. Test GET /codebone/context and /codebone/graph
+        assert client.get("/codebone/context").status_code == 200
+        assert client.get("/codebone/graph").status_code == 200
+
+        # 4. Test POST /codebone/scans/adopt with a new moved folder
         new_proj_dir = tmp_path / "my_api_project_moved"
         new_proj_dir.mkdir()
         (new_proj_dir / "app_v2.py").write_text((proj_dir / "app.py").read_text())
 
         latest_scan = data["scans"][0]["id"]
         adopt_res = client.post(
-            "/pug/scans/adopt",
+            "/codebone/scans/adopt",
             json={"scan_id": latest_scan, "project_path": str(new_proj_dir)},
         )
         assert adopt_res.status_code == 200
@@ -167,6 +173,46 @@ def test_api_endpoints():
         print("API endpoint tests passed successfully!")
 
 
+def test_deep_scan_force_resniff_and_missing_model():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        proj_dir = tmp_path / "proj"
+        proj_dir.mkdir()
+        (proj_dir / "app.py").write_text("@app.get('/ping')\ndef ping(): return 'pong'\n")
+
+        config = Config(config_file=tmp_path / "config.json")
+        config.data["project_path"] = str(proj_dir)
+        config.data["watched_extensions"] = [".py"]
+        config.data["ignore_dirs"] = []
+        config.data["brain_provider"] = "fallback"
+
+        from src.service import PugService
+
+        service = PugService(config)
+        total, sniffed, skipped = service.rescan_all()
+        assert (total, sniffed, skipped) == (1, 1, 0)
+
+        # No deep scan model configured -> refuses instead of silently using the fast brain
+        try:
+            service.run_deep_scan()
+            assert False, "expected ValueError for missing deep scan model"
+        except ValueError:
+            pass
+
+        # A normal rescan with unchanged content is skipped (content hash short-circuit)
+        total, sniffed, skipped = service.rescan_all()
+        assert (total, sniffed, skipped) == (1, 0, 1)
+
+        # force=True must bypass both the mtime AND the content-hash short-circuit,
+        # otherwise Deep Scan would never actually re-run unchanged files through the bigger model
+        total, sniffed, skipped = service.rescan_all(force=True)
+        assert (total, sniffed, skipped) == (1, 1, 0)
+
+        service.stop()
+        print("Deep scan force-resniff test passed successfully!")
+
+
 if __name__ == "__main__":
     test_scan_adoption_and_reconciliation()
     test_api_endpoints()
+    test_deep_scan_force_resniff_and_missing_model()

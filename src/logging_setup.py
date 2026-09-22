@@ -1,11 +1,11 @@
-"""File-based logging for PUG background service and macOS app."""
+"""File-based logging for CodeBone background service and macOS app."""
 import logging
 import logging.handlers
 import sys
 from pathlib import Path
 
-LOG_DIR = Path.home() / "Library" / "Logs" / "PUG"
-LOG_FILE = LOG_DIR / "pug.log"
+LOG_DIR = Path.home() / "Library" / "Logs" / "CodeBone"
+LOG_FILE = LOG_DIR / "codebone.log"
 
 
 def configure_logging(level: int = logging.INFO):

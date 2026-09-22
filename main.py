@@ -1,4 +1,4 @@
-"""PUG — Entry point."""
+"""CodeBone — Entry point."""
 from src.app import main
 
 if __name__ == "__main__":

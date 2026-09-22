@@ -1,4 +1,4 @@
-"""Local API server for PUG — binds strictly to localhost (127.0.0.1:3000).
+"""Local API server for CodeBone — binds strictly to localhost (127.0.0.1:3000).
 
 Provides structured semantic codebase context over localhost HTTP.
 """
@@ -10,19 +10,19 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, HTTPException, Response
 
-from .service import PugService
+from .service import CodeBoneService, PugService
 
-logger = logging.getLogger("pug.server")
+logger = logging.getLogger("codebone.server")
 
 
-def _format_context_markdown(service: PugService) -> str:
+def _format_context_markdown(service: CodeBoneService) -> str:
     storage = service.storage
     index = storage.entity_index()
     recent = storage.recent(10)
     edges = storage.graph_edges()
 
     lines = [
-        "# PUG — Codebase Context",
+        "# CodeBone — Codebase Context",
         f"*Status: {service.storage.file_count()} files indexed | Updated: {time.strftime('%Y-%m-%d %H:%M:%S')}*",
         "",
     ]
@@ -99,7 +99,7 @@ def _build_live_graph_html(port: int) -> str:
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>PUG — Live Code Graph</title>
+<title>CodeBone — Live Code Graph</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
@@ -160,7 +160,7 @@ def _build_live_graph_html(port: int) -> str:
 </div>
 <canvas id="canvas"></canvas>
 <div id="hud">
-  <div id="title">🦴 PUG Live Graph</div>
+  <div id="title">🦴 CodeBone Live Graph</div>
   <div id="subtitle">Semantic System Graph</div>
   <div id="stats">Loading…</div>
 </div>
@@ -198,8 +198,8 @@ window.addEventListener('resize', resize);
 
 async function fetchData() {{
   const [graphRes, contextRes] = await Promise.all([
-    fetch(`http://127.0.0.1:${{PORT}}/pug/graph`),
-    fetch(`http://127.0.0.1:${{PORT}}/pug/context?format=json`)
+    fetch(`http://127.0.0.1:${{PORT}}/codebone/graph`).catch(() => fetch(`http://127.0.0.1:${{PORT}}/pug/graph`)),
+    fetch(`http://127.0.0.1:${{PORT}}/codebone/context?format=json`).catch(() => fetch(`http://127.0.0.1:${{PORT}}/pug/context?format=json`))
   ]);
   graphData = await graphRes.json();
   const ctx2 = await contextRes.json();
@@ -372,10 +372,10 @@ function closeSidebar() {{ document.getElementById('sidebar').classList.remove('
 // Auto-refresh every 5 seconds
 setInterval(async () => {{
   try {{
-    const r = await fetch(`http://127.0.0.1:${{PORT}}/pug/graph`);
+    const r = await fetch(`http://127.0.0.1:${{PORT}}/codebone/graph`).catch(() => fetch(`http://127.0.0.1:${{PORT}}/pug/graph`));
     const d = await r.json();
     if (d.nodes.length !== nodes.filter(n=>n.type==='file').length) {{
-      const r2 = await fetch(`http://127.0.0.1:${{PORT}}/pug/context?format=json`);
+      const r2 = await fetch(`http://127.0.0.1:${{PORT}}/codebone/context?format=json`).catch(() => fetch(`http://127.0.0.1:${{PORT}}/pug/context?format=json`));
       buildGraph(d, await r2.json());
     }}
   }} catch(_) {{}}
@@ -388,9 +388,10 @@ resize();
 </html>"""
 
 
-def create_app(service: PugService) -> FastAPI:
-    app = FastAPI(title="PUG", description="Local semantic knowledge graph server")
+def create_app(service: CodeBoneService) -> FastAPI:
+    app = FastAPI(title="CodeBone", description="Local semantic knowledge graph server")
 
+    @app.get("/codebone/status")
     @app.get("/pug/status")
     def status():
         return {
@@ -405,10 +406,11 @@ def create_app(service: PugService) -> FastAPI:
             "brain_available": service.provider.available,
         }
 
+    @app.get("/codebone/context")
     @app.get("/pug/context")
     def context(format: str = "markdown", domain: str = "", file: str = "", query: str = ""):
         if not service.config.is_configured:
-            msg = "PUG is not configured yet. Please select a project folder in the menu bar."
+            msg = "CodeBone is not configured yet. Please select a project folder in the menu bar."
             return Response(content=msg, media_type="text/plain")
 
         # Level-of-Detail (LOD) filtering
@@ -448,39 +450,57 @@ def create_app(service: PugService) -> FastAPI:
                 }
 
             # Markdown LOD response
-            all_f = service.storage.all_files()
-            filtered = [f for f in all_f if f["path"] in (filtered_files or set())]
-            lines = [
-                "# PUG — Filtered Codebase Context",
-                f"*Filter: domain=`{domain or '*'}` file=`{file or '*'}` query=`{query or '*'}` | {len(filtered)} files*",
+            filtered_index = service.storage.filtered_entity_index(filtered_files or set())
+            active_domain_names = sorted(filtered_index.get("domains", {}).keys())
+            models = sorted(filtered_index.get("tables", {}).keys())
+            routes = sorted(filtered_index.get("routes", {}).keys())
+            events = sorted(filtered_index.get("events", {}).keys())
+
+            out_lines = [
+                f"# CodeBone — Filtered Context (`{lod_filter}`)",
+                f"Project: `{service.config.project_path}`",
+                f"Matching files: {len(filtered_files or set())}",
                 "",
+                "## 🌐 Matching Business Domains",
             ]
-            for entry in filtered[:40]:
-                lines.append(f"### `{entry['path']}`")
-                if entry.get("summary"):
-                    lines.append(f"*{entry['summary']}*")
-                if entry.get("tables"):
-                    lines.append("**Tables:** " + ", ".join(f"`{t}`" for t in entry["tables"]))
-                if entry.get("routes"):
-                    lines.append("**Routes:** " + ", ".join(f"`{r}`" for r in entry["routes"]))
-                if entry.get("events"):
-                    lines.append("**Events:** " + ", ".join(f"`{e}`" for e in entry["events"]))
-                if entry.get("domains"):
-                    lines.append("**Domains:** " + ", ".join(entry["domains"]))
-                lines.append("")
-            return Response(content="\n".join(lines), media_type="text/markdown; charset=utf-8")
+            out_lines.extend([f"- **{d}**" for d in active_domain_names] if active_domain_names else ["*(none)*"])
+            out_lines.extend(["", "## 🗄️ Matching Database Models / Tables"])
+            out_lines.extend([f"- `{m}`" for m in models] if models else ["*(none)*"])
+            out_lines.extend(["", "## 🔌 Matching API Routes / Endpoints"])
+            out_lines.extend([f"- `{r}`" for r in routes] if routes else ["*(none)*"])
+            out_lines.extend(["", "## ⚡ Matching Events & Logic Hooks"])
+            out_lines.extend([f"- `{e}`" for e in events] if events else ["*(none)*"])
+            out_lines.extend(["", "## 📁 Filtered Source Files"])
+            all_files_map = {f["path"]: f for f in service.storage.all_files()}
+            for fp in sorted(filtered_files or set()):
+                f_data = all_files_map.get(fp, {})
+                f_domains = f_data.get("domains", [])
+                out_lines.append(f"### `{fp}`" + (f" *({', '.join(f_domains)})*" if f_domains else ""))
+                summary = f_data.get("summary", "")
+                if summary:
+                    out_lines.append(summary)
+                f_routes = f_data.get("routes", [])
+                if f_routes:
+                    out_lines.append("**Routes:** " + ", ".join(f"`{r}`" for r in f_routes))
+                f_tables = f_data.get("tables", [])
+                if f_tables:
+                    out_lines.append("**Tables:** " + ", ".join(f"`{t}`" for t in f_tables))
+                out_lines.append("")
+
+            return Response(content="\n".join(out_lines), media_type="text/markdown; charset=utf-8")
 
         if format == "json":
             return {
                 "file_count": service.storage.file_count(),
-                "entities": service.storage.entity_index(),
-                "graph": service.storage.graph_edges(),
-                "recent_changes": service.storage.recent(15),
+                "domains": service.storage.all_domains(),
+                "files": service.storage.all_files(),
+                "graph_edges": service.storage.graph_edges(),
                 "generated_at": time.time(),
             }
 
         return Response(content=_format_context_markdown(service), media_type="text/markdown; charset=utf-8")
 
+    @app.get("/codebone/graph")
     @app.get("/pug/graph")
     def graph():
         return {
@@ -488,12 +508,14 @@ def create_app(service: PugService) -> FastAPI:
             "edges": service.storage.graph_edges(),
         }
 
+    @app.get("/codebone/graph/ui", response_class=Response)
     @app.get("/pug/graph/ui", response_class=Response)
     def graph_ui():
         port = service.config.get("server_port", 3000)
         html = _build_live_graph_html(port)
         return Response(content=html, media_type="text/html; charset=utf-8")
 
+    @app.get("/codebone/scans")
     @app.get("/pug/scans")
     def list_scans():
         scans = service.scans.list_scans()
@@ -502,6 +524,7 @@ def create_app(service: PugService) -> FastAPI:
             "count": len(scans),
         }
 
+    @app.post("/codebone/scans/adopt")
     @app.post("/pug/scans/adopt")
     def adopt_scan(payload: dict):
         scan_id_or_path = payload.get("scan_id") or payload.get("scan_path")
@@ -535,6 +558,7 @@ def create_app(service: PugService) -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
 
+    @app.post("/codebone/scans/export")
     @app.post("/pug/scans/export")
     def export_scan(payload: dict):
         scan_id = payload.get("scan_id")
@@ -554,7 +578,7 @@ def create_app(service: PugService) -> FastAPI:
 class ServerThread:
     """Runs uvicorn in a background daemon thread bound exclusively to 127.0.0.1."""
 
-    def __init__(self, service: PugService, host: str = "127.0.0.1"):
+    def __init__(self, service: CodeBoneService, host: str = "127.0.0.1"):
         self.service = service
         self.host = host
         self._server: uvicorn.Server | None = None
@@ -577,11 +601,11 @@ class ServerThread:
             try:
                 self._server.run()
             except Exception as exc:
-                logger.exception("PUG server thread encountered error: %s", exc)
+                logger.exception("CodeBone server thread encountered error: %s", exc)
 
-        self._thread = threading.Thread(target=_run, daemon=True, name="pug-uvicorn")
+        self._thread = threading.Thread(target=_run, daemon=True, name="codebone-uvicorn")
         self._thread.start()
-        logger.info("PUG server listening on http://%s:%d", self.host, port)
+        logger.info("CodeBone server listening on http://%s:%d", self.host, port)
 
     def stop(self):
         if self._server:
@@ -594,5 +618,5 @@ class ServerThread:
         port = self.service.config.get("server_port", 3000)
         return f"http://{self.host}:{port}"
 
-    def curl_command(self, path: str = "/pug/context") -> str:
+    def curl_command(self, path: str = "/codebone/context") -> str:
         return f"curl {self.url}{path}"

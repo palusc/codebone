@@ -1,9 +1,9 @@
-"""Prompt and parser for PUG's semantic code analysis."""
+"""Prompt and parser for CodeBone's semantic code analysis."""
 import re
 from typing import Dict, List, Tuple
 
 SYSTEM_PROMPT = (
-    "You are PUG. Analyze this code file. Identify database models and tables, "
+    "You are CodeBone. Analyze this code file. Identify database models and tables, "
     "API endpoints, events, and overarching business or system domains (e.g. 'Payment Processing', "
     "'User Authentication', 'Billing & Subscriptions', 'Notification Pipeline'). "
     "Summarize the logical purpose of the module in at most two sentences. Keep the response extremely brief.\n\n"
@@ -33,7 +33,7 @@ def build_prompt(file_path: str, code: str) -> str:
 
 
 def parse_analysis(raw_text: str) -> Tuple[List[str], List[str], List[str], List[str], str]:
-    """Parse structured output from PUG's analysis into:
+    """Parse structured output from CodeBone's analysis into:
     (tables, routes, events, domains, summary_flow).
     """
     tables: List[str] = []
@@ -101,7 +101,7 @@ def build_reconciliation_prompt(
     prev_dom_str = ", ".join(previous_domains[:10]) or "none"
 
     return (
-        "You are PUG. A codebase has been moved, renamed, or restructured based on an existing scan.\n"
+        "You are CodeBone. A codebase has been moved, renamed, or restructured based on an existing scan.\n"
         "Reconcile the changes with the previous architecture. Determine the active overarching business domains "
         "and summarize the structural evolution.\n\n"
         f"Previous Domains: {prev_dom_str}\n"

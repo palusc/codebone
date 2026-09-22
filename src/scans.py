@@ -14,11 +14,11 @@ from .prompts import parse_analysis
 from .providers import Provider
 from .storage import Storage
 
-logger = logging.getLogger("pug.scans")
+logger = logging.getLogger("codebone.scans")
 
 
 class ScanManager:
-    """Manages saved codebase scans, snapshots, and exports in ~/Library/Application Support/PUG/scans."""
+    """Manages saved codebase scans, snapshots, and exports in ~/Library/Application Support/CodeBone/scans."""
 
     def __init__(self, config: Config):
         self.config = config

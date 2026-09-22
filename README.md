@@ -74,6 +74,8 @@ cd pug
 
 A bone icon **🦴** appears in your macOS menu bar. Click it ➔ **Select Project Folder...** and pick your repo.
 
+> 💾 **Lightweight Footprint:** Only requires **~650 MB disk space** total (~390 MB model + ~260 MB virtualenv) and **< 1 GB RAM** on Apple Silicon.
+
 ---
 
 ## 💬 Usage with AI Assistants
@@ -152,10 +154,10 @@ Click the bone icon 🦴 ➔ **More...** ➔ **Brain Selection**:
 <br>
 
 ```bash
-# Remove app, background agents, and MCP registration:
+# Removes PUG.app, login items, and environment (keeps model for instant reinstall):
 ./uninstall.sh
 
-# Or completely remove all cached models and databases:
+# Completely wipes everything from disk, including the ~390 MB local LLM model:
 ./uninstall.sh --all
 ```
 

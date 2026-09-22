@@ -31,6 +31,18 @@ def _get_icon(path_str: str) -> str:
     alt = Path("resources") / p.name
     if alt.exists():
         return str(alt)
+    alt2 = Path(__file__).resolve().parent.parent / "resources" / p.name
+    if alt2.exists():
+        return str(alt2)
+    try:
+        import AppKit
+        res_dir = AppKit.NSBundle.mainBundle().resourcePath()
+        if res_dir:
+            bundle_icon = Path(res_dir) / p.name
+            if bundle_icon.exists():
+                return str(bundle_icon)
+    except Exception:
+        pass
     return path_str
 
 
@@ -70,12 +82,13 @@ def copy_to_clipboard(text: str):
 
 class PugApp(rumps.App):
     def __init__(self):
-        active_icon = _get_icon(ICON_INACTIVE)
-        super().__init__("PUG", icon=active_icon, quit_button=None)
-
         self.config = Config()
         self.service = PugService(self.config)
         self.server = ServerThread(self.service)
+
+        active_icon = _get_icon(ICON_ACTIVE if self.config.is_configured else ICON_INACTIVE)
+        super().__init__("PUG", icon=active_icon, template=True, quit_button=None)
+        self.template = True
 
         # Activity callbacks for sniffing status
         self.service.on_activity_start = self._on_sniff_start

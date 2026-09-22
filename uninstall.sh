@@ -12,8 +12,8 @@ if [[ "${1:-}" == "-a" || "${1:-}" == "--all" ]]; then
 fi
 
 echo "==> Quitting PUG"
-osascript -e 'quit app "PUG"' >/dev/null 2>&1 || true
 pkill -f "/PUG.app/" >/dev/null 2>&1 || true
+pkill -f "pug_main.py" >/dev/null 2>&1 || true
 
 echo "==> Removing login item"
 launchctl unload "$HOME/Library/LaunchAgents/com.pug.app.plist" >/dev/null 2>&1 || true
@@ -42,6 +42,7 @@ except Exception:
 fi
 
 echo "==> Removing the app"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "/Applications/PUG.app" "$HOME/Applications/PUG.app" >/dev/null 2>&1 || true
 rm -rf "/Applications/PUG.app" "$HOME/Applications/PUG.app"
 
 echo "==> Removing installed source + venv"

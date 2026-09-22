@@ -128,13 +128,21 @@ Returns Markdown structured specifically for LLMs:
 
 ---
 
-## ⚡ Smart Scan Adoption & AI Reconciliation
+## ⚡ Smart Scan Adoption
 
-Renamed a project folder, moved code to a new directory, or checked out a branch? **You never have to re-scan from scratch.**
+Renamed, moved, or branched a project folder? **Never re-scan from scratch.**
 
-PUG automatically saves persistent codebase snapshots in `~/Library/Application Support/PUG/scans/` and features an intelligent **Structural Reconciler**:
+PUG recognizes moved files via SHA-256 fingerprinting (0-cost instant reuse), sniffs only modified files, and uses the AI to reconcile overarching business domains.
 
-```
+* **Menu Bar:** Click 🦴 ➔ **Adopt / Link Existing Scan...** (or select a renamed folder for auto-detection).
+* **Backup & Share:** Click 🦴 ➔ **More...** ➔ **Export / Import Scan Snapshot (.sqlite3)**.
+
+<details>
+<summary><b>⚙️ How Smart Adoption Works (Click to expand)</b></summary>
+
+<br>
+
+```text
 [Target Project Folder] ◀── Compare ──▶ [Existing Codebase Scan]
           │
           ├── ⚡ Content Hash Match (SHA-256): 0-cost instant reuse (zero LLM latency)
@@ -143,23 +151,17 @@ PUG automatically saves persistent codebase snapshots in `~/Library/Application 
           └── 🗺️ AI Architecture Pass: LLM reconciles overarching business domains
 ```
 
-* **macOS Menu Bar:** Click 🦴 ➔ **Adopt / Link Existing Scan...** to select an existing scan or browse any `.sqlite3` snapshot. When choosing a renamed project folder via **Select Project Folder...**, PUG automatically recognizes matching project signatures and offers instant reconciliation.
-* **Snapshot Management:** Click 🦴 ➔ **More...** ➔ **Export Scan Snapshot...** or **Import Scan File (.sqlite3)...** to share or back up scans across machines.
-* **REST API:**
-  ```bash
-  # List all historical codebase scans and detected domains
-  curl http://localhost:3000/pug/scans
+```bash
+# List all saved codebase scans
+curl http://localhost:3000/pug/scans
 
-  # Adopt a scan for a moved or renamed project
-  curl -X POST http://localhost:3000/pug/scans/adopt \
-       -H "Content-Type: application/json" \
-       -d '{"scan_id": "my_app_1790102978", "project_path": "/Users/you/Desktop/my_app_renamed"}'
-  ```
-* **Native MCP Tools:**
-  * `pug_context()`: Retrieve live architecture, business domains, and Semantic System Graph.
-  * `pug_graph()`: Inspect cross-module conceptual and entity links.
-  * `pug_list_scans()`: List all saved codebase scans and snapshots.
-  * `pug_adopt_scan(scan_id_or_path, project_path)`: Adopt and reconcile an existing scan.
+# Adopt a scan for a moved or renamed project
+curl -X POST http://localhost:3000/pug/scans/adopt \
+     -H "Content-Type: application/json" \
+     -d '{"scan_id": "my_app_1790102978", "project_path": "/Users/you/Desktop/my_app_renamed"}'
+```
+
+</details>
 
 ---
 
@@ -176,10 +178,13 @@ Click the bone icon 🦴 ➔ **More...** ➔ **Brain Selection**:
 
 ---
 
-## 💡 Design Decisions
+## 💡 Built for 24/7 Background Operation
 
-* **Why 0.8B by default?** PUG runs continuously in the background on every file save (`Cmd + S`). A heavy 7B+ model would spin up fans and drain MacBook battery. Qwen 0.8B extracts routes, tables, and events in `< 1s` using only ~390 MB of memory, leaving unified RAM free for Docker, your IDE, and browser tabs. PUG doesn't generate code — that is the job of your frontier model (Claude 3.5 Sonnet, GPT-4o). PUG only acts as an ultra-fast structural indexer (with one-click switching to Ollama, LM Studio, or Cloud in the menu if you ever need deeper parsing on complex meta-programming).
-* **Why macOS Apple Silicon first?** Apple Silicon's unified memory architecture is uniquely suited for persistent background inference via Metal GPU with zero CPU stutter or PCIe bus transfer lag. While built natively for the macOS developer ecosystem today, headless cross-platform support is planned.
+PUG is designed to run silently 24/7 in your menu bar on every file save (`Cmd + S`):
+
+* **⚡ Ultra-Lightweight (0.8B default):** Heavy 7B+ models spin up fans and drain MacBook battery. Qwen 0.8B extracts routes, tables, and events in `< 1s` using only ~390 MB RAM. PUG indexes structure; your frontier model (Claude 3.5 Sonnet, GPT-4o) writes the code.
+* **🍏 Apple Silicon First:** Unified memory allows zero-copy, zero-stutter inference on Metal GPU without taxing the CPU.
+* **🎛️ Modular Brains:** Need deeper parsing on complex meta-programming? Switch to Ollama, LM Studio, custom GGUF, or Cloud BYOK in 1 click.
 
 ---
 

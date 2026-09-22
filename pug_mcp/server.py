@@ -63,8 +63,8 @@ def pug_status() -> str:
 
 @mcp.tool()
 def pug_context(format: str = "markdown") -> str:
-    """Retrieve the live codebase architecture, database models/tables, API routes,
-    events, and recent logical changes tracked by PUG.
+    """Retrieve the live codebase architecture, overarching business domains,
+    database models/tables, API routes, events, and the Semantic System Graph tracked by PUG.
     ALWAYS call this tool first whenever the user mentions 'PUG', 'pug', asks about
     project architecture, or asks you to build, implement, understand, or refactor code
     in the project, so you have full architectural context without reading all files manually.
@@ -74,9 +74,9 @@ def pug_context(format: str = "markdown") -> str:
 
 @mcp.tool()
 def pug_graph() -> str:
-    """Get the file-to-file connection graph derived by PUG from shared entities
-    (database tables, API routes, models, events). Use this to explore how files and
-    components depend on or interact with each other."""
+    """Get the Semantic System Graph derived by PUG from shared business domains,
+    database tables, API routes, and events. Reveals how files and components are logically
+    intertwined across the overarching system architecture, even when no direct code imports exist."""
     return _get("/pug/graph")
 
 

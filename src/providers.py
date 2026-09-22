@@ -71,6 +71,25 @@ class FastFallbackProvider(Provider):
         for m in re.finditer(r"(?:emit|dispatch|on|trigger)\s*\(\s*['\"]([^'\"]+)['\"]", code):
             events.add(m.group(1))
 
+        # Architectural and business domains
+        domains = set()
+        low_path = file_path.lower()
+        low_code = code.lower()
+
+        domain_patterns = [
+            ("Payment & Billing", (r"bill", r"pay", r"stripe", r"invoice", r"checkout", r"subscription", r"pricing")),
+            ("Authentication & Identity", (r"auth", r"login", r"signup", r"jwt", r"token", r"session", r"password", r"credential", r"oauth")),
+            ("Notifications & Messaging", (r"notif", r"email", r"sms", r"alert", r"webhook", r"mailer", r"push")),
+            ("Data Persistence & Storage", (r"model", r"schema", r"database", r"sqlite", r"postgres", r"migration", r"repository", r"dao")),
+            ("API & Routing", (r"router", r"endpoint", r"controller", r"handler", r"middleware", r"gateway", r"api")),
+            ("Search & Analytics", (r"search", r"query", r"filter", r"analytic", r"telemetry", r"metric", r"tracking")),
+            ("Configuration & Core", (r"config", r"setting", r"env", r"bootstrap", r"logging", r"constant")),
+        ]
+
+        for domain_name, terms in domain_patterns:
+            if any(term in low_path for term in terms) or any(re.search(rf"\b{term}", low_code) for term in terms):
+                domains.add(domain_name)
+
         defs = re.findall(r"(?:def|class|function|const)\s+([A-Za-z0-9_]+)", code)
         if defs:
             summary = f"Defines {', '.join(defs[:4])} in {Path(file_path).name}."
@@ -80,11 +99,13 @@ class FastFallbackProvider(Provider):
         t_str = ", ".join(sorted(tables)) if tables else "none"
         r_str = ", ".join(sorted(routes)) if routes else "none"
         e_str = ", ".join(sorted(events)) if events else "none"
+        d_str = ", ".join(sorted(domains)) if domains else "none"
 
         return (
             f"TABLES: {t_str}\n"
             f"ROUTES: {r_str}\n"
             f"EVENTS: {e_str}\n"
+            f"DOMAINS: {d_str}\n"
             f"FLOW: {summary}"
         )
 

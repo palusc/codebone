@@ -188,11 +188,12 @@ class PugService:
 
         self.last_synced = rel_path
         logger.info(
-            "Sniffed %s -> %d tables, %d routes, %d events",
+            "Sniffed %s -> %d tables, %d routes, %d events, %d domains",
             rel_path,
             len(res.get("tables", [])),
             len(res.get("routes", [])),
             len(res.get("events", [])),
+            len(res.get("domains", [])),
         )
 
     def _handle_delete(self, path: Path):

@@ -24,49 +24,63 @@ def _format_context_markdown(service: PugService) -> str:
         "# PUG — Codebase Context",
         f"*Status: {service.storage.file_count()} files indexed | Updated: {time.strftime('%Y-%m-%d %H:%M:%S')}*",
         "",
-        "## 1. Components & Entities",
     ]
 
-    # Tables
-    if index["tables"]:
-        lines.append("### Database Tables & Models")
-        for table, paths in sorted(index["tables"].items(), key=lambda kv: (-len(kv[1]), kv[0])):
-            files_str = ", ".join(f"`{p}`" for p in paths[:3])
-            more = f" (+{len(paths) - 3} more)" if len(paths) > 3 else ""
-            lines.append(f"- **`{table}`** (in: {files_str}{more})")
+    # Business Domains & Systems
+    if index.get("domains"):
+        lines.append("## 1. Business Domains & Systems")
+        for domain, paths in sorted(index["domains"].items(), key=lambda kv: (-len(kv[1]), kv[0])):
+            files_str = ", ".join(f"`{p}`" for p in paths[:4])
+            more = f" (+{len(paths) - 4} more)" if len(paths) > 4 else ""
+            lines.append(f"- **`{domain}`** (in: {files_str}{more})")
         lines.append("")
 
-    # Routes
-    if index["routes"]:
-        lines.append("### API Endpoints")
-        for route, paths in sorted(index["routes"].items()):
-            lines.append(f"- **`{route}`** (`{', '.join(paths)}`)")
-        lines.append("")
+    has_components = bool(index["tables"] or index["routes"] or index["events"])
+    if has_components:
+        lines.append("## 2. Components & Entities")
 
-    # Events
-    if index["events"]:
-        lines.append("### Events & Signals")
-        for event, paths in sorted(index["events"].items()):
-            lines.append(f"- **`{event}`** (`{', '.join(paths)}`)")
-        lines.append("")
+        # Tables
+        if index["tables"]:
+            lines.append("### Database Tables & Models")
+            for table, paths in sorted(index["tables"].items(), key=lambda kv: (-len(kv[1]), kv[0])):
+                files_str = ", ".join(f"`{p}`" for p in paths[:3])
+                more = f" (+{len(paths) - 3} more)" if len(paths) > 3 else ""
+                lines.append(f"- **`{table}`** (in: {files_str}{more})")
+            lines.append("")
 
-    if not index["tables"] and not index["routes"] and not index["events"]:
+        # Routes
+        if index["routes"]:
+            lines.append("### API Endpoints")
+            for route, paths in sorted(index["routes"].items()):
+                lines.append(f"- **`{route}`** (`{', '.join(paths)}`)")
+            lines.append("")
+
+        # Events
+        if index["events"]:
+            lines.append("### Events & Signals")
+            for event, paths in sorted(index["events"].items()):
+                lines.append(f"- **`{event}`** (`{', '.join(paths)}`)")
+            lines.append("")
+    elif not index.get("domains"):
+        lines.append("## 2. Components & Entities")
         lines.append("*No explicit tables, routes, or events detected.*")
         lines.append("")
 
-    # 2. Logical Connections
-    lines.append("## 2. Dependency Graph")
+    # 3. Semantic System Graph
+    lines.append("## 3. Semantic System Graph")
+    lines.append("*Maps cross-module business relationships beyond rigid code imports.*")
+    lines.append("")
     if edges:
-        for edge in edges[:15]:
+        for edge in edges[:20]:
             lines.append(f"- `{edge['from']}` <-> `{edge['to']}` (via {edge['type']}: **{edge['entity']}**)")
-        if len(edges) > 15:
-            lines.append(f"- *... and {len(edges) - 15} more connections.*")
+        if len(edges) > 20:
+            lines.append(f"- *... and {len(edges) - 20} more connections.*")
     else:
-        lines.append("*No cross-file entity connections detected.*")
+        lines.append("*No cross-file conceptual or entity connections detected.*")
     lines.append("")
 
-    # 3. Recent logical changes
-    lines.append("## 3. Recent Changes")
+    # 4. Recent logical changes
+    lines.append("## 4. Recent Changes")
     if recent:
         for entry in recent:
             p = entry["path"]
@@ -103,6 +117,7 @@ def create_app(service: PugService) -> FastAPI:
             return {
                 "file_count": service.storage.file_count(),
                 "entities": service.storage.entity_index(),
+                "graph": service.storage.graph_edges(),
                 "recent_changes": service.storage.recent(15),
                 "generated_at": time.time(),
             }

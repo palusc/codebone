@@ -49,16 +49,18 @@ PUG runs quietly in your macOS menu bar.
     🧠 Local AI Brain (Apple Silicon Metal GPU / Qwen2.5-Coder)
               │
               ▼
-    🗺️  SQLite Graph (Tables, Endpoints, Events & Connections)
+    🗺️  Semantic System Graph (Domains, Tables, Endpoints, Events & Logic)
               │
               ├── 🔗 Native MCP (Claude, Cursor, Gemini, Codex)
               └── 🌐 Localhost API (curl http://127.0.0.1:3000/pug/context)
 ```
 
 1. **Sniff**: Watches your repository files in real time with battery-aware debouncing.
-2. **Think**: Local Apple Silicon Metal-accelerated AI extracts models, routes, and events in <1s.
-3. **Map**: Maintains a lightweight relational graph in local SQLite (`~/Library/Application Support/PUG`).
+2. **Think**: Local Apple Silicon Metal-accelerated AI extracts business domains, models, routes, and events in <1s.
+3. **Map**: Synthesizes a relational Semantic System Graph linking files across overarching business capabilities in local SQLite (`~/Library/Application Support/PUG`).
 4. **Serve**: Delivers instant distilled architecture context to AI models via **MCP** or **curl**.
+
+> 💡 **Semantic System Graph:** PUG maps connections far beyond rigid code imports. Static parsers only see explicit `import` statements. PUG recognizes how files are logically intertwined through your overarching system architecture and business logic — connecting e.g. `billing.py` and `user_notification.py` through *Payment Processing* even when they never directly import each other.
 
 ---
 
@@ -117,8 +119,9 @@ curl http://localhost:3000/pug/context
 ```
 
 Returns Markdown structured specifically for LLMs:
+* **Business Domains & Systems**: High-level architectural capabilities grouping related modules.
 * **Entities**: Database models, ORM tables, API routes, and event emitters.
-* **Graph**: Cross-file dependency links (who calls which table/endpoint).
+* **Semantic System Graph**: Cross-module business relationships beyond rigid code imports.
 * **Recent Changes**: Chronological log of recent file modifications and their logical purpose.
 
 </details>

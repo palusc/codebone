@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS files (
     tables TEXT NOT NULL,
     routes TEXT NOT NULL,
     events TEXT NOT NULL,
+    domains TEXT NOT NULL DEFAULT '[]',
     summary TEXT NOT NULL,
     updated_at REAL NOT NULL,
     mtime REAL DEFAULT 0,
@@ -41,6 +42,8 @@ class Storage:
             self._conn.execute("ALTER TABLE files ADD COLUMN routes TEXT DEFAULT '[]'")
         if "events" not in columns:
             self._conn.execute("ALTER TABLE files ADD COLUMN events TEXT DEFAULT '[]'")
+        if "domains" not in columns:
+            self._conn.execute("ALTER TABLE files ADD COLUMN domains TEXT DEFAULT '[]'")
         self._has_entities_col = "entities" in columns
 
     def update_file(
@@ -50,19 +53,20 @@ class Storage:
         mtime: float = 0.0,
         content_hash: str = "",
     ) -> dict:
-        tables, routes, events, summary = parse_analysis(raw_output)
+        tables, routes, events, domains, summary = parse_analysis(raw_output)
 
         if self._has_entities_col:
-            all_entities = json.dumps(tables + routes + events)
+            all_entities = json.dumps(tables + routes + events + domains)
             self._conn.execute(
                 """
-                INSERT INTO files (path, entities, tables, routes, events, summary, updated_at, mtime, content_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO files (path, entities, tables, routes, events, domains, summary, updated_at, mtime, content_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(path) DO UPDATE SET
                     entities = excluded.entities,
                     tables = excluded.tables,
                     routes = excluded.routes,
                     events = excluded.events,
+                    domains = excluded.domains,
                     summary = excluded.summary,
                     updated_at = excluded.updated_at,
                     mtime = excluded.mtime,
@@ -74,6 +78,7 @@ class Storage:
                     json.dumps(tables),
                     json.dumps(routes),
                     json.dumps(events),
+                    json.dumps(domains),
                     summary,
                     time.time(),
                     mtime,
@@ -83,12 +88,13 @@ class Storage:
         else:
             self._conn.execute(
                 """
-                INSERT INTO files (path, tables, routes, events, summary, updated_at, mtime, content_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO files (path, tables, routes, events, domains, summary, updated_at, mtime, content_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(path) DO UPDATE SET
                     tables = excluded.tables,
                     routes = excluded.routes,
                     events = excluded.events,
+                    domains = excluded.domains,
                     summary = excluded.summary,
                     updated_at = excluded.updated_at,
                     mtime = excluded.mtime,
@@ -99,6 +105,7 @@ class Storage:
                     json.dumps(tables),
                     json.dumps(routes),
                     json.dumps(events),
+                    json.dumps(domains),
                     summary,
                     time.time(),
                     mtime,
@@ -111,6 +118,7 @@ class Storage:
             "tables": tables,
             "routes": routes,
             "events": events,
+            "domains": domains,
             "summary": summary,
         }
 
@@ -156,10 +164,11 @@ class Storage:
         return self._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
 
     def entity_index(self) -> dict:
-        """Returns inverted indexes: table -> [files], route -> [files], event -> [files]."""
+        """Returns inverted indexes: table -> [files], route -> [files], event -> [files], domain -> [files]."""
         tables_map: Dict[str, List[str]] = {}
         routes_map: Dict[str, List[str]] = {}
         events_map: Dict[str, List[str]] = {}
+        domains_map: Dict[str, List[str]] = {}
 
         for entry in self.all_files():
             p = entry["path"]
@@ -169,19 +178,23 @@ class Storage:
                 routes_map.setdefault(r, []).append(p)
             for e in entry.get("events", []):
                 events_map.setdefault(e, []).append(p)
+            for d in entry.get("domains", []):
+                domains_map.setdefault(d, []).append(p)
 
         return {
             "tables": tables_map,
             "routes": routes_map,
             "events": events_map,
+            "domains": domains_map,
         }
 
     def graph_edges(self) -> List[dict]:
-        """Files are logically connected if they share a DB table, API route, or event."""
+        """Files are logically connected if they share an overarching domain, DB table, API route, or event."""
         edges = []
         index = self.entity_index()
 
         for category, cat_map in [
+            ("domain", index.get("domains", {})),
             ("table", index["tables"]),
             ("route", index["routes"]),
             ("event", index["events"]),
@@ -212,6 +225,7 @@ class Storage:
             "tables": _parse(row["tables"]),
             "routes": _parse(row["routes"]),
             "events": _parse(row["events"]),
+            "domains": _parse(row["domains"]) if "domains" in row.keys() else [],
             "summary": row["summary"],
             "updated_at": row["updated_at"],
             "mtime": row["mtime"],

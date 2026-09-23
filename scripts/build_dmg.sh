@@ -1,134 +1,149 @@
-#!/usr/bin/env bash
-# ==============================================================================
-# codebone — Native macOS Application & DMG Packaging Pipeline
-# ==============================================================================
-# Builds and packages codebone into a standalone macOS drag-and-drop DMG installer
-# and ZIP archive for GitHub Releases distribution.
-#
-# Usage:
-#   ./scripts/build_dmg.sh [--release [vX.Y.Z]]
-# ==============================================================================
+#!/bin/bash
+# build_dmg.sh — Builds a distributable codebone-vX.X.X-arm64.dmg
+# Usage: ./scripts/build_dmg.sh
+# Requires: hdiutil (built-in), create-dmg (optional for fancy layout)
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DIST_DIR="$ROOT_DIR/dist"
-APP_NAME="codebone"
-VERSION=$(git describe --tags --always 2>/dev/null || echo "1.0.0")
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION=$(grep -o 'CURRENT_VERSION = "[^"]*"' "$REPO_DIR/src/updater.py" 2>/dev/null | grep -o '"[^"]*"' | tr -d '"' || echo "1.0.0")
+DMG_NAME="codebone-v${VERSION}-arm64"
+DMG_DIR="$REPO_DIR/dist"
+DMG_FINAL="$DMG_DIR/${DMG_NAME}.dmg"
+TMP_DIR="$(mktemp -d)"
+STAGING="$TMP_DIR/staging"
 
-echo "🦴 Building $APP_NAME DMG Package (version: $VERSION)..."
+mkdir -p "$STAGING" "$DMG_DIR"
 
-# Ensure dist directory
-rm -rf "$DIST_DIR"
-mkdir -p "$DIST_DIR"
+echo "🦴 Building codebone v${VERSION} DMG..."
 
-STAGE_APP="$DIST_DIR/$APP_NAME.app"
-DMG_NAME="$APP_NAME-macos-arm64-$VERSION.dmg"
-DMG_PATH="$DIST_DIR/$DMG_NAME"
-ZIP_PATH="$DIST_DIR/$APP_NAME-macos-arm64-$VERSION.zip"
-
-# Check if prebuilt /Applications/codebone.app exists, or build fresh
-if [[ -d "/Applications/$APP_NAME.app" ]]; then
-  echo "📦 Sourcing bundle from /Applications/$APP_NAME.app..."
-  cp -R "/Applications/$APP_NAME.app" "$STAGE_APP"
-else
-  echo "🔨 Creating application bundle at $STAGE_APP..."
-  mkdir -p "$STAGE_APP/Contents/MacOS"
-  mkdir -p "$STAGE_APP/Contents/Resources"
-  cp -R "$ROOT_DIR/src" "$STAGE_APP/Contents/Resources/"
-  cp -R "$ROOT_DIR/resources" "$STAGE_APP/Contents/Resources/"
-  if [[ -f "$ROOT_DIR/resources/AppIcon.icns" ]]; then
-    cp "$ROOT_DIR/resources/AppIcon.icns" "$STAGE_APP/Contents/Resources/"
-  fi
-  cat <<'EOF' > "$STAGE_APP/Contents/MacOS/codebone"
-#!/bin/bash
-DIR="$(cd "$(dirname "$0")" && pwd)"
-exec python3 "$DIR/../Resources/src/codebone_main.py"
-EOF
-  chmod +x "$STAGE_APP/Contents/MacOS/codebone"
-fi
-
-# Clean up build artifacts that invalidate bundle structure or inflate size
-rm -rf "$STAGE_APP/Contents/MacOS"/*.dSYM
-find "$STAGE_APP" -name ".DS_Store" -delete 2>/dev/null || true
-find "$STAGE_APP" -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-
-# Ensure clean permissions
-chmod -R 755 "$STAGE_APP"
-
-# Sanitize bundle symlinks: macOS Gatekeeper strictly rejects bundles containing symlinks that resolve outside the bundle.
-echo "🧹 Resolving external bundle symlinks..."
-find "$STAGE_APP" -type l | while IFS= read -r link; do
-  if [[ -L "$link" ]]; then
-    resolved=$(python3 -c "import os, sys; print(os.path.realpath(sys.argv[1]))" "$link" 2>/dev/null || true)
-    if [[ -n "$resolved" ]]; then
-      case "$resolved" in
-        "$STAGE_APP"/*)
-          # Internal relative symlink within bundle is permitted
-          ;;
-        *)
-          # External symlink pointing outside bundle -> replace with actual file
-          rm -f "$link"
-          cp -L "$resolved" "$link"
-          ;;
-      esac
-    fi
+# ─── 1. Find app bundle ────────────────────────────────────────────────────
+APP_BUNDLE=""
+for candidate in "/Applications/codebone.app" "$HOME/Applications/codebone.app"; do
+  if [[ -d "$candidate" && -f "$candidate/Contents/MacOS/codebone" ]]; then
+    APP_BUNDLE="$candidate"
+    break
   fi
 done
 
-# Strip all quarantine attributes and macOS provenance metadata
-xattr -cr "$STAGE_APP" 2>/dev/null || true
-
-# Ad-hoc sign the entire bundle structure so macOS Gatekeeper / installcoordinationd passes verification
-echo "🔏 Code-signing application bundle..."
-codesign --force --deep -s - "$STAGE_APP"
-codesign --verify --deep --strict "$STAGE_APP"
-
-# 1. Create ZIP Package
-echo "📦 Compressing $APP_NAME.app to $ZIP_PATH..."
-(cd "$DIST_DIR" && zip -q -r "$ZIP_PATH" "$APP_NAME.app")
-
-# 2. Build Drag-and-Drop DMG
-echo "💿 Building Apple Disk Image ($DMG_NAME)..."
-DMG_TMP="$DIST_DIR/dmg_staging"
-rm -rf "$DMG_TMP"
-mkdir -p "$DMG_TMP"
-
-# Copy App to staging
-cp -R "$STAGE_APP" "$DMG_TMP/"
-
-# Create symlink to /Applications for drag-and-drop install
-ln -s /Applications "$DMG_TMP/Applications"
-
-# Create disk image
-hdiutil create -volname "$APP_NAME" \
-  -srcfolder "$DMG_TMP" \
-  -ov -format UDZO \
-  "$DMG_PATH"
-
-rm -rf "$DMG_TMP"
-
-# Provide consistent unversioned artifact aliases
-GENERIC_DMG="$DIST_DIR/$APP_NAME-macos-arm64.dmg"
-GENERIC_ZIP="$DIST_DIR/$APP_NAME-macos-arm64.zip"
-cp "$DMG_PATH" "$GENERIC_DMG"
-cp "$ZIP_PATH" "$GENERIC_ZIP"
-
-echo ""
-echo "✅ Build Complete!"
-echo "   DMG: $DMG_PATH ($(du -sh "$DMG_PATH" | cut -f1))"
-echo "   ZIP: $ZIP_PATH ($(du -sh "$ZIP_PATH" | cut -f1))"
-echo ""
-
-# Optional GitHub Release upload
-if [[ "${1:-}" == "--release" ]]; then
-  TAG="${2:-$VERSION}"
-  echo "🚀 Uploading to GitHub Release $TAG via gh CLI..."
-  if command -v gh >/dev/null 2>&1; then
-    gh release upload "$TAG" "$GENERIC_DMG" "$GENERIC_ZIP" --clobber || \
-    gh release create "$TAG" "$GENERIC_DMG" "$GENERIC_ZIP" --title "codebone $TAG" --notes "Native Apple Silicon release of codebone."
-    echo "🎉 Successfully published release $TAG to GitHub!"
-  else
-    echo "⚠️ gh CLI not found. Upload $DMG_PATH manually to GitHub Releases."
-  fi
+if [[ -z "$APP_BUNDLE" ]]; then
+  echo "❌ codebone.app not found. Run ./install.sh first, then ./scripts/build_dmg.sh" >&2
+  exit 1
 fi
+echo "   Source: $APP_BUNDLE"
+
+# ─── 2. Copy app into staging ─────────────────────────────────────────────
+cp -R "$APP_BUNDLE" "$STAGING/codebone.app"
+
+# ─── 3. Strip quarantine & re-sign ────────────────────────────────────────
+xattr -cr "$STAGING/codebone.app" 2>/dev/null || true
+codesign --force --deep -s - "$STAGING/codebone.app" 2>/dev/null || true
+
+# ─── 4. Write README inside the DMG ───────────────────────────────────────
+cat > "$STAGING/Installation Instructions.txt" << 'READMEEOF'
+──────────────────────────────────────────────────────────────────
+  codebone — Installation Instructions
+──────────────────────────────────────────────────────────────────
+
+STEP 1 — Drag codebone.app into your Applications folder.
+
+STEP 2 — Open codebone.
+  • Double-click codebone.app in Applications.
+  • If macOS shows "codebone can't be opened because it is from
+    an unidentified developer", follow the steps below.
+
+──────────────────────────────────────────────────────────────────
+  GATEKEEPER / SECURITY WARNING — HOW TO ALLOW THE APP
+──────────────────────────────────────────────────────────────────
+
+Option A — Right-Click Method (easiest):
+  1. Right-click (or Control-click) codebone.app
+  2. Select "Open" from the menu
+  3. Click "Open" again in the dialog that appears
+  codebone will open and macOS remembers the exception.
+
+Option B — System Settings Method:
+  1. Try to open codebone.app (it will be blocked).
+  2. Open:  System Settings → Privacy & Security
+  3. Scroll down to the "Security" section.
+  4. You will see:
+     '"codebone" was blocked from use because it is not
+     from an identified developer.'
+  5. Click "Open Anyway".
+  6. Authenticate with your password or Touch ID.
+  codebone is now permanently allowed.
+
+Option C — Terminal (advanced users):
+  Run this command in Terminal.app:
+    xattr -cr /Applications/codebone.app
+
+──────────────────────────────────────────────────────────────────
+  WHY IS THERE A SECURITY WARNING?
+──────────────────────────────────────────────────────────────────
+codebone is open-source and free. We are not enrolled in Apple's
+paid Developer Program ($99/year), so the app is not notarized.
+It is completely safe — source code is publicly available at:
+  https://github.com/palusc/codebone
+
+──────────────────────────────────────────────────────────────────
+  AUTO-UPDATES
+──────────────────────────────────────────────────────────────────
+codebone checks GitHub for updates automatically.
+When an update is available, you'll see a notification in the
+menu bar. Click "Update" to install it in the background.
+
+Manual check: Click the 🦴 icon → "Check for Updates"
+──────────────────────────────────────────────────────────────────
+READMEEOF
+
+# ─── 5. Applications symlink (drag-install UX) ────────────────────────────
+ln -s /Applications "$STAGING/Applications"
+
+# ─── 6. Build DMG ─────────────────────────────────────────────────────────
+rm -f "$DMG_FINAL"
+
+if command -v create-dmg >/dev/null 2>&1; then
+  echo "   Using create-dmg for fancy layout..."
+  create-dmg \
+    --volname "codebone v${VERSION}" \
+    --window-pos 200 120 \
+    --window-size 660 400 \
+    --icon-size 128 \
+    --icon "codebone.app" 160 185 \
+    --hide-extension "codebone.app" \
+    --app-drop-link 500 185 \
+    --no-internet-enable \
+    "$DMG_FINAL" \
+    "$STAGING" 2>/dev/null || true
+fi
+
+# Fallback: plain hdiutil (always available on macOS)
+if [[ ! -f "$DMG_FINAL" ]]; then
+  echo "   Using hdiutil (plain layout)..."
+  TMP_DMG="$TMP_DIR/rw.dmg"
+  hdiutil create \
+    -srcfolder "$STAGING" \
+    -volname "codebone v${VERSION}" \
+    -fs HFS+ \
+    -fsargs "-c c=64,a=16,b=16" \
+    -format UDRW \
+    -size 400m \
+    "$TMP_DMG" >/dev/null 2>&1
+
+  hdiutil convert "$TMP_DMG" \
+    -format UDZO \
+    -imagekey zlib-level=9 \
+    -o "$DMG_FINAL" >/dev/null 2>&1
+fi
+
+rm -rf "$TMP_DIR"
+
+FILE_SIZE=$(du -sh "$DMG_FINAL" | awk '{print $1}')
+echo ""
+echo "✅ DMG built!"
+echo "   File:    $DMG_FINAL"
+echo "   Size:    $FILE_SIZE"
+echo "   Version: v${VERSION}"
+echo ""
+echo "   Upload to GitHub Releases:"
+echo "   https://github.com/palusc/codebone/releases/new"
+echo ""

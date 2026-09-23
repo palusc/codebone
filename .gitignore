@@ -1,0 +1,43 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Packaging & builds
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Database & SQLite temporary files
+*.sqlite3-wal
+*.sqlite3-shm
+
+# App runtime & caches
+.pug/
+.codebone/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+
+# macOS system files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example

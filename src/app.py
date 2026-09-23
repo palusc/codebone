@@ -1,0 +1,1252 @@
+"""The 'Bone' UI — codebone macOS menu bar app."""
+import json
+import logging
+import os
+import subprocess
+import threading
+from pathlib import Path
+from typing import Optional
+
+import objc
+import rumps
+from AppKit import (
+    NSOpenPanel,
+    NSApplication,
+    NSApplicationActivationPolicyAccessory,
+    NSFloatingWindowLevel,
+    NSFont,
+    NSFontAttributeName,
+    NSForegroundColorAttributeName,
+    NSUnderlineStyleAttributeName,
+    NSParagraphStyleAttributeName,
+    NSMutableParagraphStyle,
+    NSColor,
+    NSAttributedString,
+    NSView,
+    NSTextField,
+    NSSwitch,
+    NSImageView,
+    NSImage,
+    NSImageSymbolConfiguration,
+    NSBox,
+    NSBoxSeparator,
+    NSControl,
+    NSControlStateValueOn,
+    NSControlStateValueOff,
+    NSMenu,
+    NSRect,
+    NSPoint,
+    NSSize,
+    NSObject,
+    NSBezierPath,
+    NSTrackingArea,
+    NSTrackingMouseEnteredAndExited,
+    NSTrackingActiveAlways,
+    NSTrackingInVisibleRect,
+    NSCompositingOperationSourceOver,
+    NSCompositingOperationSourceAtop,
+    NSRectFillUsingOperation,
+    NSCursor,
+    NSLineBreakByTruncatingTail,
+)
+
+from .config import Config
+from .feedback import record_feedback
+from .logging_setup import configure_logging
+from .permissions import check_folder_access, open_full_disk_access_settings
+from .server import ServerThread
+from .service import CodeBoneService, PugService
+
+configure_logging()
+logger = logging.getLogger("codebone.app")
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+RESOURCES_DIR = BASE_DIR / "resources"
+
+ICON_ACTIVE = str(RESOURCES_DIR / "bone_active.png")
+ICON_INACTIVE = str(RESOURCES_DIR / "bone_inactive.png")
+
+
+def _get_icon(path_str: str) -> str:
+    p = Path(path_str)
+    if p.exists():
+        return str(p)
+    alt = Path("resources") / p.name
+    if alt.exists():
+        return str(alt)
+    alt2 = Path(__file__).resolve().parent.parent / "resources" / p.name
+    if alt2.exists():
+        return str(alt2)
+    try:
+        import AppKit
+        res_dir = AppKit.NSBundle.mainBundle().resourcePath()
+        if res_dir:
+            bundle_icon = Path(res_dir) / p.name
+            if bundle_icon.exists():
+                return str(bundle_icon)
+    except Exception:
+        pass
+    return path_str
+
+
+def _set_symbol_icon(menu_item: Optional[rumps.MenuItem], symbol_name: str, size: float = 14.0):
+    """Sets a native Apple SF Symbol vector icon on an NSMenuItem with standard point size."""
+    if menu_item is None:
+        return
+    raw_item = getattr(menu_item, "_menuitem", menu_item)
+    try:
+        img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(symbol_name, None)
+        if img:
+            try:
+                cfg = NSImageSymbolConfiguration.configurationWithPointSize_weight_(size, 4)
+                configured = img.imageWithSymbolConfiguration_(cfg)
+                if configured:
+                    img = configured
+            except Exception:
+                pass
+            img.setTemplate_(True)
+            raw_item.setImage_(img)
+    except Exception as exc:
+        logger.debug("Could not set SF Symbol '%s': %s", symbol_name, exc)
+
+
+def choose_folder(title: str) -> Optional[str]:
+    """Displays native macOS open folder panel with guaranteed focus and floating window level."""
+    try:
+        NSMenu.cancelTracking()
+    except Exception:
+        pass
+    app = NSApplication.sharedApplication()
+    app.activateIgnoringOtherApps_(True)
+
+    panel = NSOpenPanel.openPanel()
+    panel.setTitle_(title)
+    panel.setMessage_(title)
+    panel.setPrompt_("Select")
+    panel.setCanChooseFiles_(False)
+    panel.setCanChooseDirectories_(True)
+    panel.setAllowsMultipleSelection_(False)
+    panel.setResolvesAliases_(True)
+    panel.setCanCreateDirectories_(True)
+    panel.setFloatingPanel_(True)
+    panel.setLevel_(NSFloatingWindowLevel)
+    panel.center()
+
+    try:
+        response = panel.runModal()
+        if response == 1:  # NSModalResponseOK
+            urls = panel.URLs()
+            if urls and len(urls) > 0:
+                return str(urls[0].path())
+    finally:
+        panel.orderOut_(None)
+    return None
+
+
+def choose_file(title: str, extensions: list[str]) -> Optional[str]:
+    """Displays native macOS open file panel with guaranteed focus and floating window level."""
+    try:
+        NSMenu.cancelTracking()
+    except Exception:
+        pass
+    app = NSApplication.sharedApplication()
+    app.activateIgnoringOtherApps_(True)
+
+    panel = NSOpenPanel.openPanel()
+    panel.setTitle_(title)
+    panel.setMessage_(title)
+    panel.setPrompt_("Open")
+    panel.setCanChooseFiles_(True)
+    panel.setCanChooseDirectories_(False)
+    panel.setAllowsMultipleSelection_(False)
+    panel.setResolvesAliases_(True)
+    panel.setAllowedFileTypes_(extensions)
+    panel.setFloatingPanel_(True)
+    panel.setLevel_(NSFloatingWindowLevel)
+    panel.center()
+
+    try:
+        response = panel.runModal()
+        if response == 1:  # NSModalResponseOK
+            urls = panel.URLs()
+            if urls and len(urls) > 0:
+                return str(urls[0].path())
+    finally:
+        panel.orderOut_(None)
+    return None
+
+
+def copy_to_clipboard(text: str):
+    try:
+        subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True)
+    except Exception as exc:
+        logger.error("Failed to copy to clipboard: %s", exc)
+
+
+def _create_clean_graph_icon(size: float = 18.0) -> Optional[NSImage]:
+    """Creates a clean, native Apple SF Symbol vector icon for the graph card row."""
+    try:
+        sym = NSImage.imageWithSystemSymbolName_accessibilityDescription_("point.3.connected.trianglepath.dotted", None)
+        if not sym:
+            sym = NSImage.imageWithSystemSymbolName_accessibilityDescription_("network", None)
+        if sym:
+            sym = sym.copy()
+            sym.setSize_(NSSize(size, size))
+            sym.setTemplate_(True)
+            return sym
+    except Exception as exc:
+        logger.debug("Could not create clean graph icon: %s", exc)
+    return None
+
+
+class StatusDotView(NSView):
+    """Circular status indicator dot with a soft ambient glow."""
+
+    def initWithFrame_(self, frame):
+        self = objc.super(StatusDotView, self).initWithFrame_(frame)
+        if self is None:
+            return None
+        self._color = NSColor.systemGreenColor()
+        return self
+
+    def setColor_(self, color):
+        if self._color != color:
+            self._color = color
+            self.setNeedsDisplay_(True)
+
+    def drawRect_(self, rect):
+        bounds = self.bounds()
+        w = bounds.size.width
+        h = bounds.size.height
+
+        glow_rect = NSRect(NSPoint(1.0, 1.0), NSSize(w - 2.0, h - 2.0))
+        glow_path = NSBezierPath.bezierPathWithOvalInRect_(glow_rect)
+        self._color.colorWithAlphaComponent_(0.25).setFill()
+        glow_path.fill()
+
+        dot_rect = NSRect(NSPoint(3.0, 3.0), NSSize(w - 6.0, h - 6.0))
+        dot_path = NSBezierPath.bezierPathWithOvalInRect_(dot_rect)
+        self._color.setFill()
+        dot_path.fill()
+
+
+class CardRowView(NSControl):
+    """Custom clickable card row with hover and press highlights matching native macOS popovers."""
+
+    def initWithFrame_(self, frame):
+        self = objc.super(CardRowView, self).initWithFrame_(frame)
+        if self is None:
+            return None
+        self._target = None
+        self._action = None
+        self._is_hovered = False
+        self._is_pressed = False
+        tracking = NSTrackingArea.alloc().initWithRect_options_owner_userInfo_(
+            self.bounds(),
+            NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways | NSTrackingInVisibleRect,
+            self,
+            None,
+        )
+        self.addTrackingArea_(tracking)
+        return self
+
+    def setTarget_(self, target):
+        self._target = target
+
+    def setAction_(self, action):
+        self._action = action
+
+    def hitTest_(self, point):
+        res = objc.super(CardRowView, self).hitTest_(point)
+        if res is not None:
+            return self
+        return None
+
+    def resetCursorRects(self):
+        self.addCursorRect_cursor_(self.bounds(), NSCursor.pointingHandCursor())
+
+    def mouseEntered_(self, event):
+        self._is_hovered = True
+        self.setNeedsDisplay_(True)
+
+    def mouseExited_(self, event):
+        self._is_hovered = False
+        self._is_pressed = False
+        self.setNeedsDisplay_(True)
+
+    def mouseDown_(self, event):
+        self._is_pressed = True
+        self.setNeedsDisplay_(True)
+
+    def mouseUp_(self, event):
+        was_pressed = self._is_pressed
+        self._is_pressed = False
+        self.setNeedsDisplay_(True)
+        point = self.convertPoint_fromView_(event.locationInWindow(), None)
+        if was_pressed and self.mouse_inRect_(point, self.bounds()):
+            if self._target and self._action:
+                self.sendAction_to_(self._action, self._target)
+
+    def drawRect_(self, rect):
+        if self._is_pressed:
+            NSColor.labelColor().colorWithAlphaComponent_(0.15).setFill()
+            path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(self.bounds(), 6.0, 6.0)
+            path.fill()
+        elif self._is_hovered:
+            NSColor.labelColor().colorWithAlphaComponent_(0.08).setFill()
+            path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(self.bounds(), 6.0, 6.0)
+            path.fill()
+
+
+class FolderButton(NSTextField):
+    """Clickable, pixel-aligned folder label beneath 'codebone' that reveals the project folder in Finder."""
+
+    def initWithFrame_(self, frame):
+        self = objc.super(FolderButton, self).initWithFrame_(frame)
+        if self is None:
+            return None
+        self._target = None
+        self._action = None
+        self._is_hovered = False
+        self._folder_name = ""
+        self.setBezeled_(False)
+        self.setDrawsBackground_(False)
+        self.setEditable_(False)
+        self.setSelectable_(False)
+        self.cell().setLineBreakMode_(NSLineBreakByTruncatingTail)
+        self.setFont_(NSFont.systemFontOfSize_(11.5))
+        self.setTextColor_(NSColor.secondaryLabelColor())
+        self.setToolTip_("Click to reveal project folder in Finder")
+
+        tracking = NSTrackingArea.alloc().initWithRect_options_owner_userInfo_(
+            self.bounds(),
+            NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways | NSTrackingInVisibleRect,
+            self,
+            None,
+        )
+        self.addTrackingArea_(tracking)
+        return self
+
+    def setTarget_(self, target):
+        self._target = target
+
+    def setAction_(self, action):
+        self._action = action
+
+    def setFolderName_(self, name: str):
+        val = str(name or "")
+        if self._folder_name != val:
+            self._folder_name = val
+            self._update_appearance()
+
+    def resetCursorRects(self):
+        self.addCursorRect_cursor_(self.bounds(), NSCursor.pointingHandCursor())
+
+    def mouseEntered_(self, event):
+        self._is_hovered = True
+        self._update_appearance()
+
+    def mouseExited_(self, event):
+        self._is_hovered = False
+        self._update_appearance()
+
+    def mouseDown_(self, event):
+        pass
+
+    def mouseUp_(self, event):
+        point = self.convertPoint_fromView_(event.locationInWindow(), None)
+        if self.mouse_inRect_(point, self.bounds()):
+            try:
+                NSMenu.cancelTracking()
+            except Exception:
+                pass
+            if self._target and self._action:
+                self.sendAction_to_(self._action, self._target)
+
+    def _update_appearance(self):
+        color = NSColor.labelColor() if self._is_hovered else NSColor.secondaryLabelColor()
+        para = NSMutableParagraphStyle.alloc().init()
+        para.setLineBreakMode_(NSLineBreakByTruncatingTail)
+        attrs = {
+            NSFontAttributeName: NSFont.systemFontOfSize_(11.5),
+            NSForegroundColorAttributeName: color,
+            NSParagraphStyleAttributeName: para,
+        }
+        if self._is_hovered:
+            attrs[NSUnderlineStyleAttributeName] = 1
+        attr_str = NSAttributedString.alloc().initWithString_attributes_(self._folder_name, attrs)
+        self.setAttributedStringValue_(attr_str)
+
+
+class HeaderActionDelegate(NSObject):
+    """Action delegate for folder click and card row click."""
+
+    def initWithApp_(self, app):
+        self = objc.super(HeaderActionDelegate, self).init()
+        if self is None:
+            return None
+        self.app = app
+        return self
+
+    @objc.IBAction
+    def folderClicked_(self, sender):
+        if not self.app:
+            return
+        try:
+            NSMenu.cancelTracking()
+        except Exception:
+            pass
+        if self.app.config.is_configured and self.app.config.project_path and self.app.config.project_path.exists():
+            self.app.open_repo(None)
+        else:
+            self.app.choose_project(None)
+
+    @objc.IBAction
+    def cardClicked_(self, sender):
+        if not self.app:
+            return
+        try:
+            NSMenu.cancelTracking()
+        except Exception:
+            pass
+        if not self.app.config.is_configured:
+            self.app.choose_project(None)
+        else:
+            self.app.view_live_graph(None)
+
+
+class CodeBoneApp(rumps.App):
+    def __init__(self):
+        try:
+            NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+        except Exception:
+            pass
+
+        self.config = Config()
+        self.service = CodeBoneService(self.config)
+        self.server = ServerThread(self.service)
+
+        active_icon = _get_icon(ICON_ACTIVE if self.config.is_configured else ICON_INACTIVE)
+        super().__init__("codebone", icon=active_icon, template=True, quit_button=None)
+        self.template = True
+        if not self.icon:
+            self.title = "codebone"
+
+        # Activity callbacks for sniffing status
+        self.service.on_activity_start = self._on_sniff_start
+        self.service.on_activity_end = self._on_sniff_end
+
+        # Custom Header View (Title, Folder/Prompt, Status Dot, Divider, Knowledge Graph Card)
+        (
+            self.header_view,
+            self.header_action_delegate,
+            self.folder_btn,
+            self.status_dot,
+            self.card_stats_label,
+        ) = self._build_header_view()
+        self.header_item = rumps.MenuItem("codebone", callback=None)
+        try:
+            self.header_item._menuitem.setView_(self.header_view)
+        except Exception as exc:
+            logger.warning("Could not set custom header view: %s", exc)
+
+        # Primary Action: Select Project Folder
+        self.select_project_item = rumps.MenuItem("Select Project Folder...", callback=self.choose_project)
+        _set_symbol_icon(self.select_project_item, "folder")
+
+        # Model Selection Submenu (Dynamic active model list)
+        self.brain_menu = rumps.MenuItem("Model")
+        _set_symbol_icon(self.brain_menu, "brain")
+
+        # Settings Items
+        self.adopt_scan_item = rumps.MenuItem("Adopt / Link Existing Scan...", callback=self.choose_adopt_scan)
+        _set_symbol_icon(self.adopt_scan_item, "link")
+
+        self.copy_curl_item = rumps.MenuItem("Copy Context (curl)", callback=self.copy_curl)
+        _set_symbol_icon(self.copy_curl_item, "doc.on.clipboard")
+
+        self.rescan_item = rumps.MenuItem("Scan Project Now", callback=self.rescan_workspace)
+        _set_symbol_icon(self.rescan_item, "arrow.clockwise")
+
+        self.open_repo_item = rumps.MenuItem("Open Project in Finder...", callback=self.open_repo)
+        _set_symbol_icon(self.open_repo_item, "folder")
+
+        self.view_logs_item = rumps.MenuItem("View Logs...", callback=self.view_logs)
+        _set_symbol_icon(self.view_logs_item, "doc.text")
+
+        self.full_disk_access_item = rumps.MenuItem("macOS Disk Access Settings...", callback=self.open_disk_access_settings)
+        _set_symbol_icon(self.full_disk_access_item, "lock.shield")
+
+        self.export_scan_item = rumps.MenuItem("Export Scan Snapshot...", callback=self.export_scan_snapshot)
+        _set_symbol_icon(self.export_scan_item, "square.and.arrow.up")
+
+        self.import_scan_item = rumps.MenuItem("Import Scan File (.sqlite3)...", callback=self.import_scan_file)
+        _set_symbol_icon(self.import_scan_item, "square.and.arrow.down")
+
+        self.reset_map_item = rumps.MenuItem("Reset Knowledge Map", callback=self.reset_map)
+        _set_symbol_icon(self.reset_map_item, "trash")
+
+        self.settings_menu = rumps.MenuItem("Settings")
+        _set_symbol_icon(self.settings_menu, "gearshape")
+
+        self.feedback_item = rumps.MenuItem("Feedback & Bug Report...", callback=self.open_feedback_dialog)
+        _set_symbol_icon(self.feedback_item, "exclamationmark.bubble")
+
+        self.uninstall_item = rumps.MenuItem("Uninstall codebone...", callback=self.confirm_uninstall)
+        _set_symbol_icon(self.uninstall_item, "trash")
+        self.settings_menu.update([
+            self.brain_menu,
+            self.adopt_scan_item,
+            self.copy_curl_item,
+            None,
+            self.open_repo_item,
+            self.view_logs_item,
+            self.full_disk_access_item,
+            None,
+            self.export_scan_item,
+            self.import_scan_item,
+            self.reset_map_item,
+            None,
+            self.uninstall_item,
+        ])
+
+        self.about_item = rumps.MenuItem("About codebone...", callback=self.show_about)
+        _set_symbol_icon(self.about_item, "info.circle")
+
+        self.quit_item = rumps.MenuItem("Quit codebone", callback=self.quit_app)
+        _set_symbol_icon(self.quit_item, "power")
+
+        self.menu = [
+            self.header_item,
+            None,
+            self.rescan_item,
+            self.select_project_item,
+            None,
+            self.settings_menu,
+            None,
+            self.feedback_item,
+            self.about_item,
+            self.quit_item,
+        ]
+
+        self._update_brain_checks()
+        self._update_ui_state()
+
+        # Push live stats periodically
+        self._stats_timer = rumps.Timer(self._push_stats, 2)
+        self._stats_timer.start()
+
+        # Start background server
+        self.server.start()
+
+        # Start watcher if configured
+        if self.config.is_configured:
+            self.service.start(auto_scan=True)
+
+    def _build_header_view(self):
+        """Constructs the native macOS popover header view with live status indicator and knowledge graph card."""
+        w, h = 276.0, 94.0
+        container = NSView.alloc().initWithFrame_(NSRect(NSPoint(0, 0), NSSize(w, h)))
+        delegate = HeaderActionDelegate.alloc().initWithApp_(self)
+
+        # 1. Top row title: icon + "codebone" (bold 15pt)
+        icon_path = _get_icon(ICON_ACTIVE)
+        bone_img = None
+        if Path(icon_path).exists():
+            bone_img = NSImage.alloc().initWithContentsOfFile_(icon_path)
+        if not bone_img:
+            bone_img = NSImage.imageWithSystemSymbolName_accessibilityDescription_("point.3.connected.trianglepath.dotted", None)
+        if bone_img:
+            bone_img.setSize_(NSSize(16, 16))
+            bone_img.setTemplate_(True)
+            logo_iv = NSImageView.alloc().initWithFrame_(NSRect(NSPoint(14, 69), NSSize(16, 16)))
+            logo_iv.setImage_(bone_img)
+            container.addSubview_(logo_iv)
+
+        title_lbl = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(34, 66), NSSize(200, 20)))
+        title_lbl.setStringValue_("codebone")
+        title_lbl.setFont_(NSFont.boldSystemFontOfSize_(15.0))
+        title_lbl.setTextColor_(NSColor.labelColor())
+        title_lbl.setBezeled_(False)
+        title_lbl.setDrawsBackground_(False)
+        title_lbl.setEditable_(False)
+        title_lbl.setSelectable_(False)
+        container.addSubview_(title_lbl)
+
+        # 2. Top row folder link: small folder icon + name directly under "codebone"
+        folder_sym = NSImage.imageWithSystemSymbolName_accessibilityDescription_("folder", None)
+        if folder_sym:
+            folder_sym.setSize_(NSSize(13, 13))
+            folder_sym.setTemplate_(True)
+            f_iv = NSImageView.alloc().initWithFrame_(NSRect(NSPoint(14, 49), NSSize(13, 13)))
+            f_iv.setImage_(folder_sym)
+            container.addSubview_(f_iv)
+
+        folder_btn = FolderButton.alloc().initWithFrame_(NSRect(NSPoint(31, 47), NSSize(205, 17)))
+        folder_btn.setTarget_(delegate)
+        folder_btn.setAction_(objc.selector(delegate.folderClicked_, signature=b"v@:@"))
+        init_folder = self.config.project_path.name if (self.config.is_configured and self.config.project_path) else "Click to index local codebase"
+        folder_btn.setFolderName_(init_folder)
+        container.addSubview_(folder_btn)
+
+        # 3. Top row status indicator dot (Green = Active/Watching, Blue = Sniffing/Indexing, Gray = Unconfigured)
+        status_dot = StatusDotView.alloc().initWithFrame_(NSRect(NSPoint(248, 60), NSSize(14, 14)))
+        status_dot.setColor_(NSColor.systemGreenColor() if self.config.is_configured else NSColor.secondaryLabelColor())
+        container.addSubview_(status_dot)
+
+        # 4. Divider line
+        div = NSBox.alloc().initWithFrame_(NSRect(NSPoint(12, 41), NSSize(252, 1)))
+        div.setBoxType_(NSBoxSeparator)
+        container.addSubview_(div)
+
+        # 5. Bottom row: clickable CardRowView for Knowledge Graph HUD
+        card = CardRowView.alloc().initWithFrame_(NSRect(NSPoint(6, 5), NSSize(264, 32)))
+        card.setTarget_(delegate)
+        card.setAction_(objc.selector(delegate.cardClicked_, signature=b"v@:@"))
+        card.setToolTip_("Click to open interactive Live Graph in browser")
+
+        # 5a. Clean Apple SF Symbol vector icon
+        graph_img = _create_clean_graph_icon(18.0)
+        graph_iv = NSImageView.alloc().initWithFrame_(NSRect(NSPoint(8, 7), NSSize(18, 18)))
+        if graph_img:
+            graph_iv.setImage_(graph_img)
+        card.addSubview_(graph_iv)
+
+        # 5b. Card stats line (vertically centered, no extra subtitle below)
+        init_files = self.service.storage.file_count() if self.config.is_configured else 0
+        init_edges = len(self.service.storage.graph_edges()) if self.config.is_configured else 0
+        stats_lbl = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(34, 7), NSSize(204, 18)))
+        stats_lbl.setStringValue_(f"{init_files} Nodes  ·  {init_edges} Connections" if self.config.is_configured else "0 Nodes  ·  0 Connections")
+        stats_lbl.setFont_(NSFont.systemFontOfSize_(12.0))
+        stats_lbl.setTextColor_(NSColor.labelColor())
+        stats_lbl.setBezeled_(False)
+        stats_lbl.setDrawsBackground_(False)
+        stats_lbl.setEditable_(False)
+        stats_lbl.setSelectable_(False)
+        stats_lbl.cell().setLineBreakMode_(NSLineBreakByTruncatingTail)
+        card.addSubview_(stats_lbl)
+
+        # 5c. Chevron
+        chev = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(244, 7), NSSize(14, 18)))
+        chev.setStringValue_("›")
+        chev.setFont_(NSFont.boldSystemFontOfSize_(15.0))
+        chev.setTextColor_(NSColor.tertiaryLabelColor())
+        chev.setBezeled_(False)
+        chev.setDrawsBackground_(False)
+        chev.setEditable_(False)
+        chev.setSelectable_(False)
+        card.addSubview_(chev)
+
+        container.addSubview_(card)
+        return container, delegate, folder_btn, status_dot, stats_lbl
+
+    def show_about(self, _):
+        """Displays comprehensive project and architecture overview."""
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        rumps.alert(
+            title="About codebone",
+            message=(
+                "codebone (v1.0.0)\n"
+                "Real-time Local Codebase Intelligence & Knowledge Graph\n\n"
+                "Runs zero-cloud semantic indexing and provides live architecture "
+                "context (models, routes, events, and business domains) to AI coding agents.\n\n"
+                "• 100% Local & Private (Metal-accelerated GGUF)\n"
+                "• Incremental Real-time File System Watcher\n"
+                "• Interactive Visual Knowledge Graph HUD\n"
+                "• Model Context Protocol (MCP) Server\n\n"
+                "Developed by Paul Schirra"
+            ),
+            ok="OK",
+        )
+
+    def open_repo(self, _):
+        if self.config.project_path and self.config.project_path.exists():
+            subprocess.Popen(["open", str(self.config.project_path)])
+        else:
+            self.choose_project(_)
+
+    def rescan_workspace(self, _):
+        if not self.config.is_configured:
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            rumps.alert("codebone", "No project configured. Please select a project folder first.")
+            return
+        p_name = self.config.project_path.name if self.config.project_path else "project"
+        rumps.notification("codebone", "Scan Started", f"Scanning {p_name} and building knowledge graph...")
+
+        def _run():
+            try:
+                def _on_prog(cur, tot, f):
+                    self._push_stats()
+
+                total, sniffed, skipped = self.service.rescan_all(on_progress=_on_prog, force=True)
+                conn_count = len(self.service.storage.graph_edges())
+                rumps.notification(
+                    "codebone",
+                    "Scan Complete",
+                    f"Mapped {total} files & {conn_count} connections ({sniffed} updated, {skipped} cached).",
+                )
+            except Exception as exc:
+                logger.exception("Rescan failed")
+                rumps.notification("codebone", "Rescan Failed", str(exc))
+            finally:
+                self._update_ui_state()
+
+        threading.Thread(target=_run, daemon=True, name="codebone-rescan").start()
+
+    def _push_stats(self, _timer=None):
+        data = self.service.stats_snapshot()
+        configured = data.get("configured", False)
+        running = data.get("running", False)
+        sniffing = data.get("sniffing", False)
+        scan_progress = data.get("scan_progress")
+        repo_name = data.get("repo_name", "None")
+        file_count = data.get("file_count", 0)
+        connection_count = data.get("connection_count", 0)
+
+        # 1. Update top row folder button (folder name directly under 'codebone')
+        if hasattr(self, "folder_btn") and self.folder_btn is not None:
+            if configured and self.config.project_path:
+                folder_display = self.config.project_path.name
+                self.folder_btn.setToolTip_("Click to reveal project in Finder")
+            elif configured and repo_name != "None":
+                folder_display = repo_name
+                self.folder_btn.setToolTip_("Click to reveal project in Finder")
+            else:
+                folder_display = "Click to index local codebase"
+                self.folder_btn.setToolTip_("Click to select and index project folder")
+            self.folder_btn.setFolderName_(folder_display)
+
+        # 2. Update status indicator dot
+        if hasattr(self, "status_dot") and self.status_dot is not None:
+            if not configured:
+                self.status_dot.setColor_(NSColor.secondaryLabelColor())
+            elif sniffing:
+                self.status_dot.setColor_(NSColor.systemBlueColor())
+            elif running:
+                self.status_dot.setColor_(NSColor.systemGreenColor())
+            else:
+                self.status_dot.setColor_(NSColor.systemOrangeColor())
+
+        # 3. Update bottom card row stats label
+        if hasattr(self, "card_stats_label") and self.card_stats_label is not None:
+            if configured:
+                if sniffing and scan_progress:
+                    curr = scan_progress.get("current", 0)
+                    tot = scan_progress.get("total", 0)
+                    cur_f = scan_progress.get("current_file", "")
+                    short_f = Path(cur_f).name if cur_f else ""
+                    if short_f:
+                        stats_text = f"Indexing {short_f} ({curr}/{tot})"
+                    else:
+                        stats_text = f"Indexing ({curr}/{tot})  ·  {file_count} Nodes"
+                else:
+                    stats_text = f"{file_count} Nodes  ·  {connection_count} Connections"
+            else:
+                stats_text = "0 Nodes  ·  0 Connections"
+            self.card_stats_label.setStringValue_(stats_text)
+
+    def _update_ui_state(self):
+        """Updates the menu bar icon and refreshes menu status."""
+        self.icon = _get_icon(ICON_ACTIVE if self.config.is_configured else ICON_INACTIVE)
+        if not self.icon:
+            self.title = "codebone"
+        self._update_brain_checks()
+        self._push_stats()
+
+    def _on_sniff_start(self):
+        self._update_ui_state()
+
+    def _on_sniff_end(self):
+        self._update_ui_state()
+
+    def _update_brain_checks(self):
+        """Rebuilds the Model & Brain submenu with an active list of known models and providers."""
+        provider = self.config.get("brain_provider", "builtin")
+        current_model_path = self.config.get("model_path")
+
+        if getattr(self.brain_menu, "_menu", None) is not None:
+            self.brain_menu.clear()
+
+        # 1. Active list of known local models
+        for m in self.config.known_models:
+            m_name = m.get("name", "Model")
+            m_path = m.get("path")
+            item = rumps.MenuItem(
+                m_name,
+                callback=lambda _, p=m_path, n=m_name: self.select_model_by_path(p, n)
+            )
+            _set_symbol_icon(item, "cpu")
+            item.state = (provider == "builtin" and current_model_path == m_path)
+            self.brain_menu.add(item)
+
+        self.brain_menu.add(None)
+
+        # 2. Remote / Cloud options
+        self.brain_local_item = rumps.MenuItem(
+            "Local URL (Ollama / LM Studio)...",
+            callback=self.select_brain_local
+        )
+        _set_symbol_icon(self.brain_local_item, "network")
+        self.brain_local_item.state = (provider == "local_url")
+        self.brain_menu.add(self.brain_local_item)
+
+        self.brain_cloud_item = rumps.MenuItem(
+            "Cloud BYOK (OpenAI / Anthropic)...",
+            callback=self.select_brain_cloud
+        )
+        _set_symbol_icon(self.brain_cloud_item, "cloud")
+        self.brain_cloud_item.state = (provider == "cloud")
+        self.brain_menu.add(self.brain_cloud_item)
+
+        self.brain_menu.add(None)
+
+        # 3. Actions
+        self.add_model_item = rumps.MenuItem("Add Model File (.gguf)...", callback=self.add_model_file)
+        _set_symbol_icon(self.add_model_item, "plus")
+        self.brain_menu.add(self.add_model_item)
+
+        self.deep_scan_item = rumps.MenuItem("Deep Scan Mode (7B)...", callback=self.run_deep_scan)
+        _set_symbol_icon(self.deep_scan_item, "bolt")
+        self.brain_menu.add(self.deep_scan_item)
+
+    def select_model_by_path(self, path: str, name: str):
+        self.config.select_model(path)
+        self.config.set("brain_provider", "builtin")
+        self.service.reload_provider()
+        self._update_ui_state()
+        rumps.notification("codebone", "Model switched", f"Active model: {name}")
+
+    def choose_project(self, _):
+        path = choose_folder("Select Project Folder to Sniff")
+        if not path:
+            return
+        p = Path(path)
+
+        # Check macOS disk permissions / TCC
+        has_access, reason = check_folder_access(p)
+        if not has_access:
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            res = rumps.alert(
+                "Disk Access Restricted",
+                f"codebone cannot read files in '{p.name}' ({reason}).\n\n"
+                "macOS requires permissions to read folders like Desktop, Documents, Downloads, or external volumes.\n\n"
+                "Would you like to open macOS System Settings to grant Full Disk Access?",
+                ok="Open System Settings",
+                cancel="Cancel",
+            )
+            if res == 1:
+                open_full_disk_access_settings()
+            return
+
+        self.config.set("project_path", str(p))
+        self.service.stop()
+        self._update_ui_state()
+
+        # Step 1: Fast initial assessment (Baseline Overview)
+        baseline = self.service.inspect_baseline(p)
+        total = baseline["total_files"]
+        to_index = baseline["files_to_index"]
+        eta = baseline["estimated_time_str"]
+        langs = baseline["languages_summary"]
+
+        if total == 0:
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            rumps.alert("codebone", f"No supported code files found in folder '{p.name}'.")
+            return
+
+        # Check if an existing scan matches this folder
+        matching = self.service.scans.find_matching_scan(p)
+        if matching:
+            rumps.notification(
+                "codebone — Previous Scan Found",
+                f"{matching.get('project_name')} recognized",
+                "Reconciling project structure with AI...",
+            )
+
+            def _run_matched():
+                try:
+                    rep = self.service.adopt_scan(matching["id"])
+                    reused = rep.get("reused_count", 0)
+                    renamed = rep.get("renamed_count", 0)
+                    modified = rep.get("modified_count", 0)
+                    added = rep.get("added_count", 0)
+                    conn_count = len(self.service.storage.graph_edges())
+                    rumps.notification(
+                        "codebone — Baseline Reused",
+                        f"{matching.get('project_name')}",
+                        f"{reused} files reused, {renamed} renamed, {conn_count} connections mapped.",
+                    )
+                except Exception as exc:
+                    logger.warning("Matching scan adoption failed, falling back to rescan: %s", exc)
+                    self.service.rescan_all()
+                finally:
+                    self._update_ui_state()
+                    self.service.start(auto_scan=False)
+
+            threading.Thread(target=_run_matched, daemon=True, name="codebone-matched-adopt").start()
+        else:
+            # Baseline Overview Notification
+            rumps.notification(
+                f"codebone — Indexing Started",
+                f"{p.name} ({total} files, {langs})",
+                f"Analyzing semantic structures and building knowledge graph...",
+            )
+
+            def _run_initial():
+                import time
+                t0 = time.time()
+                try:
+                    def _on_prog(cur, tot, f):
+                        self._push_stats()
+
+                    total_scanned, sniffed, skipped = self.service.rescan_all(on_progress=_on_prog)
+                    dur = max(1, round(time.time() - t0))
+                    conn_count = len(self.service.storage.graph_edges())
+                    rumps.notification(
+                        f"codebone — Indexing Complete",
+                        f"{p.name} ready ({total_scanned} files)",
+                        f"Mapped {total_scanned} nodes & {conn_count} connections in {dur}s. Live watching active.",
+                    )
+                except Exception as exc:
+                    logger.exception("Initial baseline scan failed")
+                    rumps.notification("codebone — Scan Error", str(exc), "")
+                finally:
+                    self._update_ui_state()
+                    self.service.start(auto_scan=False)
+
+            threading.Thread(target=_run_initial, daemon=True, name="codebone-initial-scan").start()
+
+    def choose_adopt_scan(self, _):
+        if not self.config.is_configured:
+            path = choose_folder("Select Target Project Folder to Reconcile")
+            if not path:
+                return
+            self.config.set("project_path", path)
+            self.service.stop()
+            self._update_ui_state()
+
+        scans = self.service.scans.list_scans()
+        source_target = None
+
+        if scans:
+            msg_lines = ["Select an existing codebase scan to adopt:\n"]
+            for i, s in enumerate(scans[:8], 1):
+                name = s.get("project_name", "Unknown")
+                f_count = s.get("file_count", 0)
+                domains = ", ".join(s.get("domains", [])[:2]) or "no domains"
+                msg_lines.append(f"{i}. {name} ({f_count} files, {domains})")
+            msg_lines.append("\nEnter number (or leave empty to browse for a .sqlite3 file):")
+
+            window = rumps.Window(
+                message="\n".join(msg_lines),
+                title="Adopt / Link Existing Scan",
+                default_text="1",
+                ok="Adopt",
+                cancel="Cancel",
+            )
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            resp = window.run()
+            if not resp.clicked:
+                return
+
+            entered = resp.text.strip()
+            if entered.isdigit() and 1 <= int(entered) <= len(scans):
+                source_target = scans[int(entered) - 1]["id"]
+            elif entered:
+                for s in scans:
+                    if s.get("project_name", "").lower() == entered.lower() or s["id"] == entered:
+                        source_target = s["id"]
+                        break
+
+        if not source_target:
+            f_path = choose_file("Select Existing Scan Database (.sqlite3)", ["sqlite3", "db", "sqlite"])
+            if not f_path:
+                return
+            source_target = f_path
+
+        def _run_adopt():
+            rumps.notification(
+                "codebone",
+                "Reconciling Codebase Scan",
+                "Comparing file hash signatures & running AI reconciliation...",
+            )
+            try:
+                rep = self.service.adopt_scan(source_target)
+                reused = rep.get("reused_count", 0)
+                renamed = rep.get("renamed_count", 0)
+                modified = rep.get("modified_count", 0)
+                added = rep.get("added_count", 0)
+                rumps.notification(
+                    "codebone",
+                    "Scan Adoption Complete!",
+                    f"{reused} files reused, {renamed} renamed, {modified} modified, {added} added. Semantic Graph synchronized!",
+                )
+                self._update_ui_state()
+                self.service.start(auto_scan=False)
+            except Exception as exc:
+                logger.exception("Error during scan adoption: %s", exc)
+                rumps.notification("codebone", "Adoption Failed", str(exc))
+
+        threading.Thread(target=_run_adopt, daemon=True, name="codebone-user-adopt").start()
+
+    def export_scan_snapshot(self, _):
+        if not self.config.is_configured:
+            rumps.notification("codebone", "Not Configured", "Configure a project first to export its scan.")
+            return
+        dest_folder = choose_folder("Select Destination Folder for Scan Snapshot")
+        if not dest_folder:
+            return
+        p_name = self.config.project_path.name
+        dest_file = Path(dest_folder) / f"{p_name}_scan.sqlite3"
+        try:
+            self.service.storage.snapshot_to(dest_file)
+            rumps.notification("codebone", "Scan Exported", f"Saved to {dest_file.name}")
+        except Exception as exc:
+            rumps.notification("codebone", "Export Failed", str(exc))
+
+    def import_scan_file(self, _):
+        f_path = choose_file("Select Scan Snapshot File (.sqlite3)", ["sqlite3", "db", "sqlite"])
+        if not f_path:
+            return
+        try:
+            meta = self.service.scans.import_scan(Path(f_path))
+            rumps.notification("codebone", "Scan Imported", f"Imported '{meta['project_name']}' ({meta['file_count']} files).")
+        except Exception as exc:
+            rumps.notification("codebone", "Import Failed", str(exc))
+
+    def view_live_graph(self, _):
+        port = getattr(getattr(self, "server", None), "port", None) or self.config.get("active_port") or self.config.get("server_port", 8053)
+        url = f"http://127.0.0.1:{port}/codebone/graph/ui"
+        try:
+            subprocess.Popen(["open", url])
+        except Exception as exc:
+            logger.error("Failed to open graph UI: %s", exc)
+
+    def view_logs(self, _):
+        from .logging_setup import LOG_FILE
+        try:
+            subprocess.Popen(["open", "-a", "Console", str(LOG_FILE)])
+        except Exception:
+            try:
+                subprocess.Popen(["open", str(LOG_FILE)])
+            except Exception as exc:
+                logger.error("Failed to open log file: %s", exc)
+
+    def open_feedback_dialog(self, _):
+        """Displays in-app feedback & bug report dialog with automatic diagnostic bundling."""
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        window = rumps.Window(
+            message=(
+                "Describe your bug, feedback, or suggestion:\n\n"
+                "• System diagnostics and recent logs are automatically bundled\n"
+                "• Sensitive tokens (sk-..., bearer) are safely redacted\n"
+                "• Saved locally to ~/Library/Application Support/codebone/feedback.jsonl"
+            ),
+            title="codebone Feedback & Bug Report",
+            default_text="",
+            ok="Submit Report",
+            cancel="Cancel",
+            dimensions=(380, 110),
+        )
+        resp = window.run()
+        if resp.clicked and resp.text.strip():
+            user_text = resp.text.strip()
+            extra_diag = {
+                "project": str(self.config.project_path) if self.config.project_path else "none",
+                "brain_provider": self.config.get("brain_provider"),
+                "file_count": self.service.storage.file_count() if self.config.is_configured else 0,
+                "connection_count": len(self.service.storage.graph_edges()) if self.config.is_configured else 0,
+            }
+            first_line = user_text.splitlines()[0][:60]
+            f_type = "bug" if any(w in user_text.lower() for w in ("bug", "crash", "error", "fail", "broken", "issue")) else "feedback"
+
+            res = record_feedback(
+                feedback_type=f_type,
+                title=first_line,
+                description=user_text,
+                include_logs=True,
+                extra_diagnostics=extra_diag,
+            )
+
+            prompt = rumps.alert(
+                title="Feedback Recorded Locally!",
+                message=(
+                    "Your report has been saved to:\n"
+                    "~/Library/Application Support/codebone/feedback.jsonl\n\n"
+                    "Would you like to open a pre-filled GitHub Issue in your browser to submit it directly?"
+                ),
+                ok="Open in GitHub",
+                cancel="Done",
+            )
+            if prompt == 1 and res.get("github_url"):
+                subprocess.Popen(["open", res["github_url"]])
+
+    def confirm_uninstall(self, _):
+        """Launches the dedicated standalone uninstaller to completely wipe data and prepare app deletion."""
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        uninstaller_paths = [
+            Path("/Applications/Uninstall codebone.app"),
+            Path.home() / "Applications" / "Uninstall codebone.app",
+        ]
+        target = next((p for p in uninstaller_paths if p.exists()), None)
+
+        res = rumps.alert(
+            title="Uninstall codebone",
+            message=(
+                "Do you want to run the codebone Uninstaller?\n\n"
+                "The uninstaller will:\n"
+                "• Stop all running background processes\n"
+                "• Delete all local data, databases, and AI models\n"
+                "• Remove MCP configurations from Claude & Cursor\n"
+                "• Prepare codebone.app to be dragged into the Trash"
+            ),
+            ok="Open Uninstaller",
+            cancel="Cancel",
+        )
+        if res == 1:
+            if target:
+                subprocess.Popen(["open", str(target)])
+            else:
+                fallback_sh = Path(__file__).resolve().parent.parent / "uninstall.sh"
+                if fallback_sh.exists():
+                    subprocess.Popen(["open", "-a", "Terminal", str(fallback_sh)])
+                else:
+                    rumps.alert("Uninstaller Not Found", "Please run ./uninstall.sh from the repository.")
+
+    def open_disk_access_settings(self, _):
+        try:
+            open_full_disk_access_settings()
+        except Exception as exc:
+            logger.error("Failed to open Full Disk Access settings: %s", exc)
+
+    def copy_curl(self, _):
+        cmd = self.server.curl_command()
+        copy_to_clipboard(cmd)
+        rumps.notification("codebone", "Copied to clipboard", cmd)
+
+    def select_brain_builtin(self, _):
+        self.config.set("brain_provider", "builtin")
+        self._update_brain_checks()
+        self.service.reload_provider()
+        rumps.notification("codebone", "Model switched", "Built-in Qwen 0.5B (Metal) active.")
+
+    def select_brain_local(self, _):
+        current = self.config.get("brain_local_url", "http://localhost:11434/api/generate")
+        window = rumps.Window(
+            message="Enter the URL of your local LLM server (Ollama / LM Studio):",
+            title="Local URL Provider",
+            default_text=current,
+            ok="Save",
+            cancel="Cancel",
+        )
+        resp = window.run()
+        if resp.clicked and resp.text:
+            self.config.set("brain_local_url", resp.text.strip())
+            self.config.set("brain_provider", "local_url")
+            self._update_brain_checks()
+            self.service.reload_provider()
+            rumps.notification("codebone", "Model switched", f"Local URL active: {resp.text.strip()}")
+
+    def select_brain_cloud(self, _):
+        current_vendor = self.config.get("brain_cloud_vendor", "openai")
+        current_key = self.config.get("brain_cloud_api_key", "")
+        window = rumps.Window(
+            message="Enter your API key:\nFormat: 'openai:sk-...' or 'anthropic:sk-ant-...'",
+            title="Cloud BYOK",
+            default_text=f"{current_vendor}:{current_key}" if current_key else "openai:",
+            ok="Save",
+            cancel="Cancel",
+        )
+        resp = window.run()
+        if resp.clicked and resp.text:
+            parts = resp.text.strip().split(":", 1)
+            vendor = parts[0].lower() if len(parts) == 2 else "openai"
+            api_key = parts[1].strip() if len(parts) == 2 else parts[0].strip()
+            self.config.set("brain_cloud_vendor", vendor)
+            self.config.set("brain_cloud_api_key", api_key)
+            self.config.set("brain_provider", "cloud")
+            self._update_brain_checks()
+            self.service.reload_provider()
+            rumps.notification("codebone", "Model switched", f"Cloud BYOK ({vendor.upper()}) active.")
+
+    def add_model_file(self, _):
+        path = choose_file("Select .gguf Model File", ["gguf"])
+        if path:
+            entry = self.config.add_model(path)
+            self.config.select_model(path)
+            self.config.set("brain_provider", "builtin")
+            self._update_brain_checks()
+            self.service.reload_provider()
+            rumps.notification("codebone", "Model added", f"Loaded model: {entry['name']}")
+
+    def run_deep_scan(self, _):
+        if not self.config.is_configured:
+            rumps.alert("Deep Scan Mode", "Please select a project folder first.")
+            return
+
+        model_path = self.config.get("deep_scan_model_path")
+        if not model_path or not Path(model_path).exists():
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            proceed = rumps.alert(
+                title="Deep Scan Mode",
+                message=(
+                    "Deep Scan re-analyzes your whole project with a larger, slower local model "
+                    "(e.g. Qwen 7B) for more thorough architecture extraction.\n\n"
+                    "This uses far more RAM, disk, and time than the default 0.5B brain. "
+                    "Only turn this on if you know what you're doing.\n\n"
+                    "Choose a .gguf model file to continue."
+                ),
+                ok="Choose Model...",
+                cancel="Cancel",
+            )
+            if proceed != 1:
+                return
+            path = choose_file("Select Deep Scan Model (.gguf, e.g. Qwen 7B)", ["gguf"])
+            if not path:
+                return
+            self.config.set("deep_scan_model_path", path)
+            model_path = path
+
+        def _run():
+            rumps.notification("codebone", "Deep Scan Started", f"Re-analyzing project with {Path(model_path).name}...")
+            try:
+                total, sniffed, _ = self.service.run_deep_scan()
+                rumps.notification("codebone", "Deep Scan Complete", f"{sniffed}/{total} files re-analyzed.")
+            except Exception as exc:
+                logger.exception("Deep scan failed")
+                rumps.notification("codebone", "Deep Scan Failed", str(exc))
+            finally:
+                self._update_ui_state()
+
+        threading.Thread(target=_run, daemon=True, name="codebone-deep-scan").start()
+
+    def reset_map(self, _):
+        self.service.reset_map()
+        self._update_ui_state()
+        rumps.notification("codebone", "Map reset", "Semantic knowledge graph cleared.")
+        if self.config.is_configured:
+            threading.Thread(target=self.service.rescan_all, daemon=True).start()
+
+    def quit_app(self, _):
+        self._stats_timer.stop()
+        self.service.stop()
+        self.server.stop()
+        rumps.quit_application()
+
+
+def main():
+    try:
+        from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+        NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+    except Exception:
+        pass
+    app = CodeBoneApp()
+    app.run()
+
+
+# Backwards compatibility alias
+PugApp = CodeBoneApp
+
+
+if __name__ == "__main__":
+    main()

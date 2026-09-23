@@ -9,41 +9,99 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-# Locate a Python >= 3.10 interpreter
-PYTHON_BIN=""
-for candidate in "${PYTHON:-}" "python3" "python3.14" "python3.13" "python3.12" "python3.11" "python3.10" "/opt/homebrew/bin/python3" "/usr/local/bin/python3"; do
-  [[ -z "$candidate" ]] && continue
-  if command -v "$candidate" >/dev/null 2>&1; then
-    RESOLVED_BIN="$(command -v "$candidate")"
-    if "$RESOLVED_BIN" -c 'import sys; exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
-      PYTHON_BIN="$RESOLVED_BIN"
-      break
+echo "0/5 Performing system preflight & dependency check..."
+
+# 1. Ensure Homebrew environment is active if installed
+if [[ -x "/opt/homebrew/bin/brew" ]]; then
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+elif [[ -x "/usr/local/bin/brew" ]]; then
+  eval "$(/usr/local/bin/brew shellenv)"
+fi
+
+# 2. Check Xcode Command Line Tools
+if ! xcode-select -p >/dev/null 2>&1; then
+  echo "   ⚠️ Xcode Command Line Tools not detected. Prompting installation..."
+  xcode-select --install 2>/dev/null || true
+fi
+
+# 3. Search for Python >= 3.10
+find_python() {
+  local candidates=(
+    "${PYTHON:-}"
+    "python3"
+    "python3.14"
+    "python3.13"
+    "python3.12"
+    "python3.11"
+    "python3.10"
+    "/opt/homebrew/bin/python3"
+    "/opt/homebrew/bin/python3.13"
+    "/opt/homebrew/bin/python3.12"
+    "/opt/homebrew/bin/python3.11"
+    "/usr/local/bin/python3"
+    "$HOME/.local/bin/python3"
+  )
+  for p in "$HOME"/.local/share/uv/python/*/bin/python3; do
+    [[ -x "$p" ]] && candidates+=("$p")
+  done
+
+  for candidate in "${candidates[@]}"; do
+    [[ -z "$candidate" ]] && continue
+    if command -v "$candidate" >/dev/null 2>&1; then
+      local resolved
+      resolved="$(command -v "$candidate")"
+      if "$resolved" -c 'import sys; exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+        echo "$resolved"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+PYTHON_BIN="$(find_python || true)"
+
+# 4. Auto-install Python >= 3.10 if missing
+if [[ -z "$PYTHON_BIN" ]]; then
+  echo "   ⚠️ Python >= 3.10 not found (macOS system Python is too old)."
+  echo "   🔄 Automatically installing required Python runtime..."
+
+  # Attempt 1: Homebrew
+  if command -v brew >/dev/null 2>&1; then
+    echo "   📦 Installing Python via Homebrew..."
+    brew install python
+    if [[ -x "/opt/homebrew/bin/brew" ]]; then
+      eval "$(/opt/homebrew/bin/brew shellenv)"
+    elif [[ -x "/usr/local/bin/brew" ]]; then
+      eval "$(/usr/local/bin/brew shellenv)"
+    fi
+    PYTHON_BIN="$(find_python || true)"
+  fi
+
+  # Attempt 2: uv standalone Python (rootless, ultra-fast, no sudo needed)
+  if [[ -z "$PYTHON_BIN" ]]; then
+    echo "   📦 Installing standalone Python 3.12 via Astral uv..."
+    if ! command -v uv >/dev/null 2>&1 && [[ ! -x "$HOME/.local/bin/uv" ]]; then
+      curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 || true
+    fi
+    UV_BIN="$(command -v uv 2>/dev/null || echo "$HOME/.local/bin/uv")"
+    if [[ -x "$UV_BIN" ]]; then
+      "$UV_BIN" python install 3.12 >/dev/null 2>&1 || true
+      PYTHON_BIN="$(find_python || true)"
     fi
   fi
-done
+fi
 
 if [[ -z "$PYTHON_BIN" ]]; then
-  echo "❌ Error: Python 3.10 or higher is required to run codebone." >&2
-  CURRENT_PY="$(python3 --version 2>&1 || echo 'none')"
-  echo "   Current system default: $CURRENT_PY (at $(which python3 2>/dev/null || echo 'not found'))" >&2
-  echo "" >&2
-  echo "   macOS default system Python is too old (< 3.10). Modern FastAPI, PyObjC," >&2
-  echo "   and Model Context Protocol (MCP) packages strictly require Python >= 3.10." >&2
-  echo "" >&2
-  if command -v brew >/dev/null 2>&1; then
-    echo "   👉 Please install Python via Homebrew:" >&2
-    echo "      brew install python" >&2
-  else
-    echo "   👉 Please install Python 3.12+ from python.org:" >&2
-    echo "      https://www.python.org/downloads/macos/" >&2
-    echo "      (or install Homebrew first: https://brew.sh)" >&2
-  fi
-  echo "" >&2
+  echo "❌ Error: Could not automatically install Python >= 3.10." >&2
+  echo "   Please install Python manually via:" >&2
+  echo "     brew install python" >&2
+  echo "   or download from https://www.python.org/downloads/macos/" >&2
   exit 1
 fi
 
 PY_VER="$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")')"
-echo "   Found Python $PY_VER ($PYTHON_BIN)"
+echo "   ✅ Python runtime ready: Python $PY_VER ($PYTHON_BIN)"
 
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -145,6 +203,14 @@ ln -sfn "$APP_VENV" "$CODEBONE_HOME/venv"
 echo "4/5 Installing dependencies with Apple Silicon Metal acceleration..."
 export CMAKE_ARGS="-DGGML_METAL=on"
 "$APP_VENV/bin/pip" install --quiet -r "$RESOURCES/src/requirements.txt"
+
+# Verify that critical packages are importable; auto-reinstall if any missed
+for pkg in fastapi uvicorn rumps watchdog pydantic mcp httpx pathspec; do
+  if ! "$APP_VENV/bin/python3" -c "import $pkg" >/dev/null 2>&1; then
+    echo "    📦 Missing '$pkg' detected. Installing '$pkg'..."
+    "$APP_VENV/bin/pip" install --quiet "$pkg" || true
+  fi
+done
 
 # Link source dir into site-packages so codebone_mcp and src imports work globally
 "$APP_VENV/bin/python3" -c "import site; from pathlib import Path; sp = Path(site.getsitepackages()[0]); (sp / 'pug.pth').unlink(missing_ok=True); (sp / 'codebone.pth').write_text('$RESOURCES/src\n')"
@@ -330,4 +396,14 @@ echo "   Logs:        $HOME/Library/Logs/codebone/codebone.log"
 echo ""
 echo "Starting codebone now..."
 open "$APP_BUNDLE" || true
+
+# Health check: verify the server starts listening on localhost:8053
+sleep 1.5
+for i in {1..5}; do
+  if curl -s -m 1 http://localhost:8053/codebone/status >/dev/null 2>&1 || curl -s -m 1 http://localhost:8053/pug/status >/dev/null 2>&1; then
+    echo "🟢 codebone server is active and responding on http://localhost:8053"
+    break
+  fi
+  sleep 0.5
+done
 

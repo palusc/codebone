@@ -125,8 +125,8 @@ if [[ "${1:-}" == "--release" ]]; then
   TAG="${2:-$VERSION}"
   echo "🚀 Uploading to GitHub Release $TAG via gh CLI..."
   if command -v gh >/dev/null 2>&1; then
-    gh release upload "$TAG" "$DMG_PATH" "$ZIP_PATH" "$GENERIC_DMG" "$GENERIC_ZIP" --clobber || \
-    gh release create "$TAG" "$DMG_PATH" "$ZIP_PATH" "$GENERIC_DMG" "$GENERIC_ZIP" --title "codebone $TAG" --notes "Native Apple Silicon release of codebone."
+    gh release upload "$TAG" "$GENERIC_DMG" "$GENERIC_ZIP" --clobber || \
+    gh release create "$TAG" "$GENERIC_DMG" "$GENERIC_ZIP" --title "codebone $TAG" --notes "Native Apple Silicon release of codebone."
     echo "🎉 Successfully published release $TAG to GitHub!"
   else
     echo "⚠️ gh CLI not found. Upload $DMG_PATH manually to GitHub Releases."

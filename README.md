@@ -2,7 +2,7 @@
 
 # 🦴 codebone
 
-### Real-time codebase knowledge graph for your macOS menu bar.
+### Your codebase has a structure. Give your AI access to it!
 **Stop dumping dozens of files into your prompt. Let the dog sniff it.** 🐾
 
 <br>

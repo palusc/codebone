@@ -89,17 +89,33 @@ codebone auto-registers during `./install.sh`. For manual setup, add to `claude_
 {
   "mcpServers": {
     "codebone": {
+      "command": "npx",
+      "args": ["-y", "codebone-mcp"]
+    }
+  }
+}
+```
+
+That's it — no Python paths, no manual configuration.
+
+<details>
+<summary>Manual path (if npx isn't available)</summary>
+
+```json
+{
+  "mcpServers": {
+    "codebone": {
       "command": "/Users/YOUR_USERNAME/Library/Application Support/codebone/venv/bin/python3",
       "args": ["-m", "codebone_mcp.server"],
-      "env": {
-        "CODEBONE_PORT": "8053"
-      }
+      "env": { "CODEBONE_PORT": "8053" }
     }
   }
 }
 ```
 
 Replace `YOUR_USERNAME` with the output of `whoami`.
+
+</details>
 
 </details>
 

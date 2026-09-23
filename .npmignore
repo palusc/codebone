@@ -1,0 +1,17 @@
+# Python
+src/
+codebone_mcp/
+tests/
+scripts/
+resources/
+dist/
+*.py
+*.pyc
+*.sh
+requirements.txt
+setup.py
+main.py
+codebone_main.py
+install.sh
+uninstall.sh
+Formula/

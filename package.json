@@ -1,0 +1,22 @@
+{
+  "name": "codebone-mcp",
+  "version": "1.2.0",
+  "description": "MCP server bridge for codebone — real-time codebase knowledge graph for macOS",
+  "keywords": ["mcp", "codebone", "codebase", "ai", "claude", "cursor", "context"],
+  "homepage": "https://github.com/palusc/codebone",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/palusc/codebone.git"
+  },
+  "license": "MIT",
+  "bin": {
+    "codebone-mcp": "./bin/codebone-mcp.js"
+  },
+  "files": [
+    "bin/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": ["darwin"]
+}

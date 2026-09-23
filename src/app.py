@@ -13,7 +13,6 @@ from AppKit import (
     NSOpenPanel,
     NSApplication,
     NSApplicationActivationPolicyAccessory,
-    NSFloatingWindowLevel,
     NSFont,
     NSFontAttributeName,
     NSForegroundColorAttributeName,
@@ -111,7 +110,7 @@ def _set_symbol_icon(menu_item: Optional[rumps.MenuItem], symbol_name: str, size
 
 
 def choose_folder(title: str) -> Optional[str]:
-    """Displays native macOS open folder panel with guaranteed focus and floating window level."""
+    """Displays native macOS open folder panel with guaranteed focus."""
     try:
         NSMenu.cancelTracking()
     except Exception:
@@ -128,8 +127,6 @@ def choose_folder(title: str) -> Optional[str]:
     panel.setAllowsMultipleSelection_(False)
     panel.setResolvesAliases_(True)
     panel.setCanCreateDirectories_(True)
-    panel.setFloatingPanel_(True)
-    panel.setLevel_(NSFloatingWindowLevel)
     panel.center()
 
     try:
@@ -144,7 +141,7 @@ def choose_folder(title: str) -> Optional[str]:
 
 
 def choose_file(title: str, extensions: list[str]) -> Optional[str]:
-    """Displays native macOS open file panel with guaranteed focus and floating window level."""
+    """Displays native macOS open file panel with guaranteed focus."""
     try:
         NSMenu.cancelTracking()
     except Exception:
@@ -161,8 +158,6 @@ def choose_file(title: str, extensions: list[str]) -> Optional[str]:
     panel.setAllowsMultipleSelection_(False)
     panel.setResolvesAliases_(True)
     panel.setAllowedFileTypes_(extensions)
-    panel.setFloatingPanel_(True)
-    panel.setLevel_(NSFloatingWindowLevel)
     panel.center()
 
     try:

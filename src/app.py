@@ -9,10 +9,12 @@ from typing import Optional
 
 import objc
 import rumps
+from Foundation import NSRunLoop, NSDate
 from AppKit import (
     NSOpenPanel,
     NSApplication,
     NSApplicationActivationPolicyAccessory,
+    NSApplicationActivationPolicyRegular,
     NSFont,
     NSFontAttributeName,
     NSForegroundColorAttributeName,
@@ -110,64 +112,98 @@ def _set_symbol_icon(menu_item: Optional[rumps.MenuItem], symbol_name: str, size
 
 
 def choose_folder(title: str) -> Optional[str]:
-    """Displays native macOS open folder panel with guaranteed focus."""
+    """Displays native macOS open folder panel with clean runloop draining and proper activation."""
     try:
         NSMenu.cancelTracking()
     except Exception:
         pass
-    app = NSApplication.sharedApplication()
-    app.activateIgnoringOtherApps_(True)
 
-    panel = NSOpenPanel.openPanel()
-    panel.setTitle_(title)
-    panel.setMessage_(title)
-    panel.setPrompt_("Select")
-    panel.setCanChooseFiles_(False)
-    panel.setCanChooseDirectories_(True)
-    panel.setAllowsMultipleSelection_(False)
-    panel.setResolvesAliases_(True)
-    panel.setCanCreateDirectories_(True)
-    panel.center()
-
+    # Drain runloop so any active NSMenu tracking window dismisses completely from screen
     try:
+        run_loop = NSRunLoop.currentRunLoop()
+        run_loop.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.15))
+    except Exception:
+        pass
+
+    app = NSApplication.sharedApplication()
+    prev_policy = app.activationPolicy()
+    try:
+        app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+        app.activateIgnoringOtherApps_(True)
+
+        panel = NSOpenPanel.openPanel()
+        panel.setTitle_(title)
+        panel.setMessage_(title)
+        panel.setPrompt_("Select")
+        panel.setCanChooseFiles_(False)
+        panel.setCanChooseDirectories_(True)
+        panel.setAllowsMultipleSelection_(False)
+        panel.setResolvesAliases_(True)
+        panel.setCanCreateDirectories_(True)
+        panel.center()
+
         response = panel.runModal()
         if response == 1:  # NSModalResponseOK
             urls = panel.URLs()
             if urls and len(urls) > 0:
                 return str(urls[0].path())
     finally:
-        panel.orderOut_(None)
+        try:
+            panel.orderOut_(None)
+        except Exception:
+            pass
+        try:
+            app.setActivationPolicy_(prev_policy)
+        except Exception:
+            pass
     return None
 
 
 def choose_file(title: str, extensions: list[str]) -> Optional[str]:
-    """Displays native macOS open file panel with guaranteed focus."""
+    """Displays native macOS open file panel with clean runloop draining and proper activation."""
     try:
         NSMenu.cancelTracking()
     except Exception:
         pass
-    app = NSApplication.sharedApplication()
-    app.activateIgnoringOtherApps_(True)
 
-    panel = NSOpenPanel.openPanel()
-    panel.setTitle_(title)
-    panel.setMessage_(title)
-    panel.setPrompt_("Open")
-    panel.setCanChooseFiles_(True)
-    panel.setCanChooseDirectories_(False)
-    panel.setAllowsMultipleSelection_(False)
-    panel.setResolvesAliases_(True)
-    panel.setAllowedFileTypes_(extensions)
-    panel.center()
-
+    # Drain runloop so any active NSMenu tracking window dismisses completely from screen
     try:
+        run_loop = NSRunLoop.currentRunLoop()
+        run_loop.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.15))
+    except Exception:
+        pass
+
+    app = NSApplication.sharedApplication()
+    prev_policy = app.activationPolicy()
+    try:
+        app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+        app.activateIgnoringOtherApps_(True)
+
+        panel = NSOpenPanel.openPanel()
+        panel.setTitle_(title)
+        panel.setMessage_(title)
+        panel.setPrompt_("Open")
+        panel.setCanChooseFiles_(True)
+        panel.setCanChooseDirectories_(False)
+        panel.setAllowsMultipleSelection_(False)
+        panel.setResolvesAliases_(True)
+        panel.setAllowedFileTypes_(extensions)
+        panel.center()
+
         response = panel.runModal()
         if response == 1:  # NSModalResponseOK
             urls = panel.URLs()
             if urls and len(urls) > 0:
                 return str(urls[0].path())
     finally:
-        panel.orderOut_(None)
+        try:
+            panel.orderOut_(None)
+        except Exception:
+            pass
+        try:
+            app.setActivationPolicy_(prev_policy)
+        except Exception:
+            pass
     return None
 
 

@@ -2,7 +2,8 @@
 # codebone Installer — Minimal, robust, local-first setup for macOS.
 set -euo pipefail
 
-echo "🦴 Installing codebone (The Semantic Local-Server)..."
+COMMIT=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --short HEAD 2>/dev/null || echo "latest")
+echo "🦴 Installing codebone ($COMMIT) — The Semantic Local-Server..."
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "Error: codebone is designed specifically for macOS (Metal / Menu Bar)." >&2
@@ -63,13 +64,13 @@ PYTHON_BIN="$(find_python || true)"
 
 # 4. Auto-install Python >= 3.10 if missing
 if [[ -z "$PYTHON_BIN" ]]; then
-  echo "   ⚠️ Python >= 3.10 not found (macOS system Python is too old)."
+  echo "   ⚠️ Python >= 3.10 not found (macOS system Python is 3.9)."
   echo "   🔄 Automatically installing required Python runtime..."
 
   # Attempt 1: Homebrew
   if command -v brew >/dev/null 2>&1; then
-    echo "   📦 Installing Python via Homebrew..."
-    brew install python
+    echo "   📦 Installing Python via Homebrew (this may take 1-2 minutes)..."
+    HOMEBREW_NO_AUTO_UPDATE=1 brew install python || true
     if [[ -x "/opt/homebrew/bin/brew" ]]; then
       eval "$(/opt/homebrew/bin/brew shellenv)"
     elif [[ -x "/usr/local/bin/brew" ]]; then
@@ -81,22 +82,37 @@ if [[ -z "$PYTHON_BIN" ]]; then
   # Attempt 2: uv standalone Python (rootless, ultra-fast, no sudo needed)
   if [[ -z "$PYTHON_BIN" ]]; then
     echo "   📦 Installing standalone Python 3.12 via Astral uv..."
-    if ! command -v uv >/dev/null 2>&1 && [[ ! -x "$HOME/.local/bin/uv" ]]; then
+    if ! command -v uv >/dev/null 2>&1 && [[ ! -x "$HOME/.local/bin/uv" ]] && [[ ! -x "$HOME/.cargo/bin/uv" ]]; then
       curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 || true
     fi
-    UV_BIN="$(command -v uv 2>/dev/null || echo "$HOME/.local/bin/uv")"
-    if [[ -x "$UV_BIN" ]]; then
+    UV_BIN=""
+    for cand in "uv" "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv" "/opt/homebrew/bin/uv" "/usr/local/bin/uv"; do
+      if command -v "$cand" >/dev/null 2>&1; then
+        UV_BIN="$(command -v "$cand")"
+        break
+      elif [[ -x "$cand" ]]; then
+        UV_BIN="$cand"
+        break
+      fi
+    done
+    if [[ -n "$UV_BIN" ]]; then
+      echo "   Downloading Python 3.12..."
       "$UV_BIN" python install 3.12 >/dev/null 2>&1 || true
-      PYTHON_BIN="$(find_python || true)"
+      UV_PY="$("$UV_BIN" python find 3.12 2>/dev/null || "$UV_BIN" python find 2>/dev/null || true)"
+      if [[ -x "$UV_PY" ]]; then
+        PYTHON_BIN="$UV_PY"
+      fi
     fi
   fi
 fi
 
 if [[ -z "$PYTHON_BIN" ]]; then
   echo "❌ Error: Could not automatically install Python >= 3.10." >&2
-  echo "   Please install Python manually via:" >&2
+  echo "   macOS built-in /usr/bin/python3 is Python 3.9, which is incompatible with modern packages." >&2
+  echo "   Please run in your terminal:" >&2
   echo "     brew install python" >&2
-  echo "   or download from https://www.python.org/downloads/macos/" >&2
+  echo "   or download the official installer from:" >&2
+  echo "     https://www.python.org/downloads/macos/" >&2
   exit 1
 fi
 
@@ -183,7 +199,7 @@ APP_VENV="$RESOURCES/venv"
 
 # If an existing venv exists, ensure it actually runs Python >= 3.10
 if [[ -d "$APP_VENV" ]]; then
-  if ! "$APP_VENV/bin/python3" -c 'import sys; exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+  if [[ ! -x "$APP_VENV/bin/python3" ]] || ! "$APP_VENV/bin/python3" -c 'import sys; exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
     echo "    Re-creating existing virtualenv with Python $PY_VER (older Python version detected)..."
     rm -rf "$APP_VENV"
   fi
@@ -197,20 +213,20 @@ if [[ -e "$CODEBONE_HOME/venv" && ! -L "$CODEBONE_HOME/venv" ]]; then
 fi
 ln -sfn "$APP_VENV" "$CODEBONE_HOME/venv"
 
-# Ensure pip & wheel are up to date
-"$APP_VENV/bin/pip" install --quiet --upgrade pip wheel
+# Ensure pip, wheel, setuptools are up to date
+"$APP_VENV/bin/pip" install --quiet --upgrade pip wheel setuptools
 
 echo "4/5 Installing dependencies with Apple Silicon Metal acceleration..."
 export CMAKE_ARGS="-DGGML_METAL=on"
-"$APP_VENV/bin/pip" install --quiet -r "$RESOURCES/src/requirements.txt"
 
-# Verify that critical packages are importable; auto-reinstall if any missed
-for pkg in fastapi uvicorn rumps watchdog pydantic mcp httpx pathspec; do
-  if ! "$APP_VENV/bin/python3" -c "import $pkg" >/dev/null 2>&1; then
-    echo "    📦 Missing '$pkg' detected. Installing '$pkg'..."
-    "$APP_VENV/bin/pip" install --quiet "$pkg" || true
-  fi
-done
+# Try installing all requirements; if full requirements fail, fallback to core dependencies
+if ! "$APP_VENV/bin/pip" install --quiet -r "$RESOURCES/src/requirements.txt"; then
+  echo "    ⚠️ Full requirements install encountered an issue. Retrying core dependencies..."
+  "$APP_VENV/bin/pip" install --quiet fastapi uvicorn rumps watchdog pydantic requests mcp httpx pathspec pytest || true
+  "$APP_VENV/bin/pip" install --quiet llama-cpp-python 2>/dev/null || {
+    echo "    Note: llama-cpp-python native Metal compilation skipped. FastFallbackProvider will be active."
+  }
+fi
 
 # Link source dir into site-packages so codebone_mcp and src imports work globally
 "$APP_VENV/bin/python3" -c "import site; from pathlib import Path; sp = Path(site.getsitepackages()[0]); (sp / 'pug.pth').unlink(missing_ok=True); (sp / 'codebone.pth').write_text('$RESOURCES/src\n')"
@@ -276,7 +292,7 @@ PYTHON_CFLAGS=$("$PYTHON_CONFIG" --cflags 2>/dev/null || echo "")
 PYTHON_LDFLAGS=$("$PYTHON_CONFIG" --ldflags --embed 2>/dev/null || "$PYTHON_CONFIG" --ldflags 2>/dev/null || echo "")
 
 if command -v clang >/dev/null 2>&1 && [[ -n "$PYTHON_CFLAGS" && -n "$PYTHON_LDFLAGS" ]]; then
-  clang -O2 $PYTHON_CFLAGS -o "$MACOS/codebone" -x c - $PYTHON_LDFLAGS << 'EOF'
+  if clang -O2 $PYTHON_CFLAGS -o "$MACOS/codebone" -x c - $PYTHON_LDFLAGS 2>/dev/null << 'EOF'
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <mach-o/dyld.h>
@@ -299,7 +315,15 @@ int main(int argc, char *argv[]) {
     return Py_BytesMain(2, py_argv);
 }
 EOF
-  rm -rf "$MACOS/codebone.dSYM"
+  then
+    rm -rf "$MACOS/codebone.dSYM"
+  else
+    cat > "$MACOS/codebone" <<EOF
+#!/bin/bash
+DIR="\$(cd "\$(dirname "\$0")" && pwd)"
+exec "\$DIR/../Resources/venv/bin/python3" "\$DIR/../Resources/src/codebone_main.py"
+EOF
+  fi
 else
   cat > "$MACOS/codebone" <<EOF
 #!/bin/bash

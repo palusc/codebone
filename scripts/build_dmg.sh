@@ -16,27 +16,62 @@ mkdir -p "$STAGING" "$DMG_DIR"
 
 echo "🦴 Building codebone v${VERSION} DMG..."
 
-# ─── 1. Find app bundle ────────────────────────────────────────────────────
-APP_BUNDLE=""
-for candidate in "/Applications/codebone.app" "$HOME/Applications/codebone.app"; do
-  if [[ -d "$candidate" && -f "$candidate/Contents/MacOS/codebone" ]]; then
-    APP_BUNDLE="$candidate"
-    break
-  fi
-done
+# ─── 1-3. Build a self-contained, portable app bundle ─────────────────────
+# Bundles python-build-standalone as Resources/venv (relocatable, no Homebrew
+# dependency) and a bash launcher, so the .app runs on any Apple Silicon Mac.
+PBS_TAG="20260901"; PBS_PY="3.13.15"
+APP="$STAGING/codebone.app"; RES="$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$RES/src"
 
-if [[ -z "$APP_BUNDLE" ]]; then
-  echo "❌ codebone.app not found. Run ./install.sh first, then ./scripts/build_dmg.sh" >&2
-  exit 1
-fi
-echo "   Source: $APP_BUNDLE"
+echo "   Fetching portable Python ${PBS_PY}..."
+curl -fsSL "https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_TAG}/cpython-${PBS_PY}+${PBS_TAG}-aarch64-apple-darwin-install_only.tar.gz" | tar -xz -C "$TMP_DIR"
+mv "$TMP_DIR/python" "$RES/venv"
 
-# ─── 2. Copy app into staging ─────────────────────────────────────────────
-cp -R "$APP_BUNDLE" "$STAGING/codebone.app"
+rsync -a --exclude .git --exclude __pycache__ --exclude venv --exclude .venv --exclude dist --exclude build "$REPO_DIR/" "$RES/src/"
+cp "$REPO_DIR/resources/AppIcon.icns" "$REPO_DIR/resources/bone_active.png" "$REPO_DIR/resources/bone_inactive.png" "$RES/"
 
-# ─── 3. Strip quarantine & re-sign ────────────────────────────────────────
-xattr -cr "$STAGING/codebone.app" 2>/dev/null || true
-codesign --force --deep -s - "$STAGING/codebone.app" 2>/dev/null || true
+echo "   Installing dependencies (Metal build of llama-cpp-python)..."
+export CMAKE_ARGS="-DGGML_METAL=on"
+"$RES/venv/bin/python3" -m pip install --quiet --no-cache-dir -r "$REPO_DIR/requirements.txt"
+# relative to sys.prefix (Resources/venv) so it survives being moved out of staging
+echo "import sys, os; sys.path.append(os.path.join(sys.prefix, '..', 'src'))" > "$RES/venv/lib/python3.13/site-packages/codebone.pth"
+
+cat > "$APP/Contents/Info.plist" <<PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleName</key><string>codebone</string>
+<key>CFBundleDisplayName</key><string>codebone</string>
+<key>CFBundleIdentifier</key><string>com.codebone.app</string>
+<key>CFBundleVersion</key><string>${VERSION}</string>
+<key>CFBundleShortVersionString</key><string>${VERSION}</string>
+<key>CFBundleExecutable</key><string>codebone</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
+<key>LSUIElement</key><true/>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSDocumentsFolderUsageDescription</key><string>codebone requires access to your Documents folder to index code repositories located there.</string>
+<key>NSDesktopFolderUsageDescription</key><string>codebone requires access to your Desktop folder to index code repositories located there.</string>
+<key>NSDownloadsFolderUsageDescription</key><string>codebone requires access to your Downloads folder to index code repositories located there.</string>
+<key>NSRemovableVolumesUsageDescription</key><string>codebone requires access to external volumes to index code repositories stored on external drives.</string>
+</dict></plist>
+PLISTEOF
+
+# Native launcher: Python must run inside the bundle's main executable or macOS
+# won't attach the menu-bar icon (a bash launcher that exec's python3 shows no icon).
+PYINC=$(echo "$RES"/venv/include/python3.*)
+clang -O2 -arch arm64 -I"$PYINC" "$REPO_DIR/scripts/launcher.c" -L"$RES/venv/lib" -lpython3.13 \
+  -Wl,-rpath,@executable_path/../Resources/venv/lib -o "$APP/Contents/MacOS/codebone"
+
+# Smoke test: no Homebrew paths, core imports work
+if otool -L "$RES/venv/bin/python3" | grep -q /opt/homebrew; then echo "❌ python links Homebrew" >&2; exit 1; fi
+if otool -L "$APP/Contents/MacOS/codebone" | grep -q /opt/homebrew; then echo "❌ launcher links Homebrew" >&2; exit 1; fi
+"$RES/venv/bin/python3" -c "import fastapi, uvicorn, mcp, rumps, watchdog, httpx, pathspec"
+
+# Precompile so the first launch is fast (no .pyc generation, no lag before the menu-bar icon shows)
+"$RES/venv/bin/python3" -m compileall -q -j 0 "$RES/venv/lib" "$RES/src" >/dev/null || true
+xattr -cr "$APP" 2>/dev/null || true
+codesign --force --deep -s - "$APP"
 
 # ─── 4. Write README inside the DMG ───────────────────────────────────────
 cat > "$STAGING/Installation Instructions.txt" << 'READMEEOF'

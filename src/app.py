@@ -1556,6 +1556,16 @@ def main():
     except Exception:
         pass
     app = CodeBoneApp()
+
+    # Menu-bar-only app: clicking the .app while it runs would otherwise do nothing visible.
+    def _reopen(self, sender, has_windows):
+        try:
+            app._nsapp.nsstatusitem.button().performClick_(None)
+        except Exception:
+            pass
+        return False
+
+    rumps.rumps.NSApp.applicationShouldHandleReopen_hasVisibleWindows_ = _reopen
     app.run()
 
 

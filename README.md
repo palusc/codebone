@@ -32,7 +32,7 @@ codebone runs in your macOS menu bar, watches every file save, and delivers a li
 
 ## 🚀 Download & Install
 
-### [⬇️ Download](https://github.com/palusc/codebone/releases/download/v1.2.2/codebone-macos-arm64.dmg)
+### [⬇️ Download](https://github.com/palusc/codebone/releases/latest/download/codebone-macos-arm64.dmg)
 
 Drag `codebone.app` to `/Applications` — done. A 🦴 appears in your menu bar.
 

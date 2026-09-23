@@ -1,4 +1,5 @@
 """Persistent codebone configuration (project path, brain provider, server port)."""
+from __future__ import annotations
 import json
 import os
 import time

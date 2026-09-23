@@ -20,22 +20,49 @@ logger = logging.getLogger("codebone.server")
 
 
 def patch_mcp_configs(port: int, project_path: Optional[Path] = None):
-    """Automatically patches Claude Desktop and Cursor MCP configs with the active port."""
+    """Automatically patches Claude Desktop, Cursor, and Gemini/Antigravity MCP configs with the active port."""
     claude_cfg = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
     cursor_global_cfg = Path.home() / ".cursor" / "mcp.json"
+    gemini_global_cfg = Path.home() / ".gemini" / "config" / "mcp_config.json"
+    gemini_ide_cfg = Path.home() / ".gemini" / "antigravity-ide" / "mcp_config.json"
 
-    targets = [claude_cfg, cursor_global_cfg]
+    targets = [claude_cfg, cursor_global_cfg, gemini_global_cfg, gemini_ide_cfg]
     if project_path:
         targets.append(Path(project_path) / ".cursor" / "mcp.json")
+        targets.append(Path(project_path) / ".gemini" / "mcp_config.json")
+        targets.append(Path(project_path) / ".agents" / "mcp_config.json")
 
-    venv_python = Path.home() / "Library" / "Application Support" / "codebone" / "venv" / "bin" / "python"
-    python_cmd = str(venv_python) if venv_python.exists() else "python3"
+    # Ensure venv symlink if installed from DMG or App bundle
+    app_support_venv = Path.home() / "Library" / "Application Support" / "codebone" / "venv"
+    app_bundle_venv = Path("/Applications/codebone.app/Contents/Resources/venv")
+    if not app_support_venv.exists() and app_bundle_venv.exists():
+        try:
+            app_support_venv.parent.mkdir(parents=True, exist_ok=True)
+            app_support_venv.symlink_to(app_bundle_venv)
+        except Exception:
+            pass
+
+    python_candidates = [
+        app_support_venv / "bin" / "python3",
+        app_support_venv / "bin" / "python",
+        app_bundle_venv / "bin" / "python3",
+        Path(__file__).resolve().parents[1] / "venv" / "bin" / "python3",
+    ]
+    python_cmd = "python3"
+    for cand in python_candidates:
+        if cand.exists():
+            try:
+                cand.chmod(cand.stat().st_mode | 0o755)
+            except Exception:
+                pass
+            python_cmd = str(cand)
+            break
 
     for target in targets:
         try:
             target_dir = target.parent
             if not target_dir.exists():
-                if ".cursor" in target.parts:
+                if any(part in (".cursor", ".gemini", ".agents", "antigravity-ide") for part in target.parts):
                     target_dir.mkdir(parents=True, exist_ok=True)
                 else:
                     continue
@@ -52,11 +79,11 @@ def patch_mcp_configs(port: int, project_path: Optional[Path] = None):
 
             # Update or create 'codebone' entry
             codebone_entry = data["mcpServers"].get("codebone", {})
-            if not codebone_entry:
-                codebone_entry = {
-                    "command": python_cmd,
-                    "args": ["-m", "codebone_mcp.server"],
-                }
+            if not codebone_entry or not isinstance(codebone_entry, dict):
+                codebone_entry = {}
+
+            codebone_entry["command"] = python_cmd
+            codebone_entry["args"] = ["-m", "codebone_mcp.server"]
             env = codebone_entry.setdefault("env", {})
             env["CODEBONE_PORT"] = str(port)
             data["mcpServers"]["codebone"] = codebone_entry
@@ -151,6 +178,8 @@ def create_app(service: CodeBoneService) -> FastAPI:
             "file_count": service.storage.file_count(),
             "brain_provider": service.config.get("brain_provider"),
             "brain_available": service.provider.available,
+            "is_first_days": service.config.is_first_days(),
+            "mcp_guide_url": "https://github.com/palusc/codebone#mcp-setup",
         }
 
     @app.get("/codebone/baseline")

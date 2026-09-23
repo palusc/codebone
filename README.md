@@ -123,8 +123,7 @@ open http://localhost:8053/codebone/graph/ui
 
 </details>
 
----
-
+<a id="mcp-setup"></a>
 ## 💬 Usage with AI Assistants
 
 Prompt naturally:
@@ -132,12 +131,12 @@ Prompt naturally:
 
 The model calls `codebone_context()` and receives the exact schemas, routes, and relationships it needs — no file dumping required.
 
-<details>
-<summary><b>⚙️ Claude Desktop & Cursor Configuration</b></summary>
+<details open>
+<summary><b>⚙️ Claude Desktop, Cursor & Gemini / Antigravity Configuration</b></summary>
 
 <br>
 
-codebone auto-registers during `./install.sh`. For manual setup, add to `claude_desktop_config.json` or `.cursor/mcp.json`:
+codebone auto-registers during `./install.sh` and on application start. For manual setup in `claude_desktop_config.json`, `.cursor/mcp.json`, or `~/.gemini/config/mcp_config.json` (`~/.gemini/antigravity-ide/mcp_config.json`):
 
 ```json
 {
@@ -153,7 +152,7 @@ codebone auto-registers during `./install.sh`. For manual setup, add to `claude_
 That's it — no Python paths, no manual configuration.
 
 <details>
-<summary>Manual path (if npx isn't available)</summary>
+<summary>Direct Python Path (macOS bundle & source installs)</summary>
 
 ```json
 {

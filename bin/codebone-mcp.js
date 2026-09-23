@@ -26,9 +26,12 @@ const VENV_PYTHON = join(
   "python3"
 );
 
+const APP_BUNDLE_PYTHON = "/Applications/codebone.app/Contents/Resources/venv/bin/python3";
+
 function findPython() {
   if (process.env.CODEBONE_PYTHON) return process.env.CODEBONE_PYTHON;
   if (existsSync(VENV_PYTHON)) return VENV_PYTHON;
+  if (existsSync(APP_BUNDLE_PYTHON)) return APP_BUNDLE_PYTHON;
   return "python3"; // fallback — source install or Homebrew
 }
 

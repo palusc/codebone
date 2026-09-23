@@ -302,6 +302,101 @@ def build_live_graph_html(port: int) -> str:
     transform: scale(1.05);
   }}
 
+  /* MCP Setup Ping Card & Pulse Beacon */
+  .mcp-ping-card {{
+    padding: 10px 14px;
+    background: linear-gradient(135deg, rgba(30, 41, 59, 0.92) 0%, rgba(15, 23, 42, 0.95) 100%);
+    border: 1px solid rgba(129, 140, 248, 0.35);
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 4px 20px rgba(99, 102, 241, 0.15), 0 1px 3px rgba(0, 0, 0, 0.4);
+  }}
+  .mcp-ping-card:hover {{
+    transform: translateY(-1px);
+    border-color: rgba(129, 140, 248, 0.65);
+    background: linear-gradient(135deg, rgba(39, 51, 75, 0.96) 0%, rgba(17, 27, 50, 0.98) 100%);
+    box-shadow: 0 6px 24px rgba(99, 102, 241, 0.25);
+  }}
+  .mcp-ping-content {{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }}
+  .mcp-ping-beacon {{
+    position: relative;
+    width: 14px;
+    height: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }}
+  .mcp-ping-core {{
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #818cf8;
+    box-shadow: 0 0 8px #818cf8;
+  }}
+  .mcp-ping-ring {{
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 2px solid #818cf8;
+    opacity: 0.8;
+    animation: beacon-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+  }}
+  @keyframes beacon-ping {{
+    0% {{ transform: scale(0.6); opacity: 1; }}
+    80%, 100% {{ transform: scale(2.2); opacity: 0; }}
+  }}
+  .mcp-ping-text {{
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }}
+  .mcp-ping-title {{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #f8fafc;
+    letter-spacing: -0.2px;
+  }}
+  .mcp-ping-sub {{
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: rgba(129, 140, 248, 0.16);
+    color: #a5b4fc;
+    border: 1px solid rgba(129, 140, 248, 0.25);
+  }}
+  .mcp-ping-desc {{
+    font-size: 11px;
+    color: #94a3b8;
+    line-height: 1.3;
+  }}
+  .mcp-ping-close {{
+    background: none;
+    border: none;
+    color: #64748b;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    transition: color 0.15s;
+    line-height: 1;
+  }}
+  .mcp-ping-close:hover {{
+    color: #f1f5f9;
+    background: rgba(255, 255, 255, 0.08);
+  }}
   /* Hover Tooltip */
   #tooltip {{
     position: fixed;
@@ -688,6 +783,24 @@ def build_live_graph_html(port: int) -> str:
       </button>
     </div>
   </div>
+
+  <!-- MCP Setup Ping Banner (First Days / Setup Reminder) -->
+  <div id="mcp-ping-banner" class="glass-card mcp-ping-card" style="display:none;" onclick="openMcpGuide()">
+    <div class="mcp-ping-content">
+      <div class="mcp-ping-beacon">
+        <span class="mcp-ping-ring"></span>
+        <span class="mcp-ping-core"></span>
+      </div>
+      <div class="mcp-ping-text">
+        <div class="mcp-ping-title">
+          <span>⚡ Connect AI Assistant (MCP)</span>
+          <span class="mcp-ping-sub">Claude · Cursor · Gemini</span>
+        </div>
+        <div class="mcp-ping-desc">codebone serves live architecture to your AI. Click to view auto-setup guide.</div>
+      </div>
+      <button class="mcp-ping-close" onclick="dismissMcpPing(event)" title="Dismiss for now">✕</button>
+    </div>
+  </div>
 </div>
 
 <!-- Legend Bar -->
@@ -892,6 +1005,37 @@ function updateHUDTelemetry(status, ctxData) {{
   document.getElementById('count-tables').textContent = Object.keys(entities.tables || {{}}).length;
   document.getElementById('count-routes').textContent = Object.keys(entities.routes || {{}}).length;
   document.getElementById('count-events').textContent = Object.keys(entities.events || {{}}).length;
+
+  checkMcpPing(status);
+}}
+
+const MCP_GUIDE_URL = "https://github.com/palusc/codebone#mcp-setup";
+
+function openMcpGuide() {{
+  window.open(MCP_GUIDE_URL, "_blank", "noopener,noreferrer");
+}}
+
+function dismissMcpPing(e) {{
+  if (e) e.stopPropagation();
+  const banner = document.getElementById("mcp-ping-banner");
+  if (banner) banner.style.display = "none";
+  localStorage.setItem("codebone_mcp_ping_dismissed", String(Date.now()));
+}}
+
+function checkMcpPing(statusData) {{
+  const banner = document.getElementById("mcp-ping-banner");
+  if (!banner) return;
+  const dismissedAt = localStorage.getItem("codebone_mcp_ping_dismissed");
+  if (dismissedAt && (Date.now() - Number(dismissedAt) < 24 * 3600 * 1000)) {{
+    banner.style.display = "none";
+    return;
+  }}
+  const isFirstDays = (statusData && statusData.is_first_days !== undefined) ? statusData.is_first_days : true;
+  if (isFirstDays) {{
+    banner.style.display = "block";
+  }} else {{
+    banner.style.display = "none";
+  }}
 }}
 
 function buildGraph(graphData, ctxData) {{

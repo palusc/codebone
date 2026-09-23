@@ -488,6 +488,10 @@ class CodeBoneApp(rumps.App):
         self.select_project_item = rumps.MenuItem("Select Project Folder...", callback=self.choose_project)
         _set_symbol_icon(self.select_project_item, "folder")
 
+        # MCP AI Assistants Setup
+        self.mcp_setup_item = rumps.MenuItem("Connect AI Assistants (MCP)...", callback=self.open_mcp_setup)
+        _set_symbol_icon(self.mcp_setup_item, "bolt.fill")
+
         # Recent Projects / History Submenu (Verlauf)
         self.recent_projects_menu = rumps.MenuItem("Recent Projects")
         _set_symbol_icon(self.recent_projects_menu, "clock.arrow.circlepath")
@@ -560,6 +564,7 @@ class CodeBoneApp(rumps.App):
 
         self.menu = [
             self.header_item,
+            self.mcp_setup_item,
             None,
             self.rescan_item,
             self.select_project_item,
@@ -899,6 +904,7 @@ class CodeBoneApp(rumps.App):
     def _apply_all_icons(self):
         """Applies native Apple SF Symbol vector icons across the entire menu hierarchy."""
         # Top-level menu items
+        _set_symbol_icon(self.mcp_setup_item, "bolt.fill")
         _set_symbol_icon(self.rescan_item, "arrow.clockwise")
         _set_symbol_icon(self.select_project_item, "folder")
         _set_symbol_icon(self.recent_projects_menu, "clock.arrow.circlepath")
@@ -925,6 +931,11 @@ class CodeBoneApp(rumps.App):
         self.icon = _get_icon(ICON_ACTIVE if self.config.is_configured else ICON_INACTIVE)
         if not self.icon:
             self.title = "codebone"
+        if hasattr(self, "mcp_setup_item") and self.mcp_setup_item:
+            if self.config.is_first_days():
+                self.mcp_setup_item.title = "⚡ Connect AI Assistants (MCP)..."
+            else:
+                self.mcp_setup_item.title = "Connect AI Assistants (MCP)..."
         self._apply_all_icons()
         self._update_recent_projects_menu()
         self._update_brain_checks()
@@ -1285,6 +1296,19 @@ class CodeBoneApp(rumps.App):
             rumps.notification("codebone", "Scan Imported", f"Imported '{meta['project_name']}' ({meta['file_count']} files).")
         except Exception as exc:
             rumps.notification("codebone", "Import Failed", str(exc))
+
+    def open_mcp_setup(self, _):
+        """Opens the GitHub MCP setup instructions section and re-patches MCP configs."""
+        try:
+            from .server import patch_mcp_configs
+            server_port = getattr(getattr(self, "server", None), "port", None) or self.config.get("active_port") or self.config.get("server_port", 8053)
+            patch_mcp_configs(server_port, self.service.config.project_path)
+        except Exception as exc:
+            logger.warning("Could not patch MCP configs during open_mcp_setup: %s", exc)
+        from AppKit import NSURL, NSWorkspace
+        url = NSURL.URLWithString_("https://github.com/palusc/codebone#mcp-setup")
+        if url:
+            NSWorkspace.sharedWorkspace().openURL_(url)
 
     def view_live_graph(self, _):
         port = getattr(getattr(self, "server", None), "port", None) or self.config.get("active_port") or self.config.get("server_port", 8053)

@@ -238,9 +238,9 @@ if command -v claude >/dev/null 2>&1; then
   fi
 fi
 
-# Register with local MCP configuration if present (Gemini / other JSON-based configs)
-GEMINI_MCP="$HOME/.gemini/config/mcp_config.json"
-if [[ -f "$GEMINI_MCP" ]]; then
+# Register with local MCP configuration if present (Gemini / Antigravity / other JSON-based configs)
+for GEMINI_MCP in "$HOME/.gemini/config/mcp_config.json" "$HOME/.gemini/antigravity-ide/mcp_config.json"; do
+  mkdir -p "$(dirname "$GEMINI_MCP")"
   if command -v npx > /dev/null 2>&1; then
     MCP_COMMAND="npx"
     MCP_ARGS='["-y", "codebone-mcp"]'
@@ -258,14 +258,17 @@ except Exception:
     data = {}
 servers = data.setdefault('mcpServers', {})
 servers.pop('pug', None)
-servers['codebone'] = {
+entry = {
     'command': '$MCP_COMMAND',
     'args': $MCP_ARGS
 }
+if '$MCP_COMMAND' != 'npx':
+    entry['env'] = {'CODEBONE_PORT': '8053'}
+servers['codebone'] = entry
 with open(p, 'w') as f:
     json.dump(data, f, indent=2)
 " 2>/dev/null || true
-fi
+done
 
 # Build standalone Uninstaller application alongside codebone.app
 if [[ -f "$REPO_DIR/scripts/build_uninstaller.sh" ]]; then

@@ -45,6 +45,8 @@ def test_issue_1_dynamic_port_probe_and_mcp_patch():
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         proj_cursor_mcp = tmp_path / ".cursor" / "mcp.json"
+        proj_agents_mcp = tmp_path / ".agents" / "mcp_config.json"
+        proj_gemini_mcp = tmp_path / ".gemini" / "mcp_config.json"
 
         # Patch configs
         patch_mcp_configs(port=next_port, project_path=tmp_path)
@@ -53,6 +55,16 @@ def test_issue_1_dynamic_port_probe_and_mcp_patch():
         data = json.loads(proj_cursor_mcp.read_text(encoding="utf-8"))
         assert "codebone" in data["mcpServers"]
         assert data["mcpServers"]["codebone"]["env"]["CODEBONE_PORT"] == str(next_port)
+
+        assert proj_agents_mcp.exists(), ".agents/mcp_config.json should be created/updated"
+        data_agents = json.loads(proj_agents_mcp.read_text(encoding="utf-8"))
+        assert "codebone" in data_agents["mcpServers"]
+        assert data_agents["mcpServers"]["codebone"]["env"]["CODEBONE_PORT"] == str(next_port)
+
+        assert proj_gemini_mcp.exists(), ".gemini/mcp_config.json should be created/updated"
+        data_gemini = json.loads(proj_gemini_mcp.read_text(encoding="utf-8"))
+        assert "codebone" in data_gemini["mcpServers"]
+        assert data_gemini["mcpServers"]["codebone"]["env"]["CODEBONE_PORT"] == str(next_port)
 
 
 def test_issue_2_smart_ignoring():
@@ -210,3 +222,41 @@ def test_issue_5_syntax_error_resilience():
         assert files[0]["path"] == "worker.py"
         # Database preserved previous valid hash and record
         assert files[0]["content_hash"] == hashes_before["worker.py"]
+ 
+ 
+def test_issue_6_initial_days_and_status_mcp_metadata():
+    """Verify is_first_days initializes first_run_at, expires after 7 days, and status includes MCP metadata."""
+    import time
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        cfg_file = tmp_path / "config.json"
+        cfg = Config(cfg_file)
+        
+        # Initially None
+        assert cfg.data.get("first_run_at") is None
+        # is_first_days sets it to now and returns True
+        assert cfg.is_first_days(days=7) is True
+        assert cfg.data.get("first_run_at") is not None
+
+        # Simulate 8 days in the future
+        cfg.data["first_run_at"] = time.time() - (8 * 86400)
+        assert cfg.is_first_days(days=7) is False
+
+        # Create service & test status endpoint response
+        db_file = tmp_path / "test.sqlite3"
+        cfg.data["project_path"] = str(tmp_path)
+        cfg.data["first_run_at"] = time.time()  # reset to today
+        cfg.save()
+        service = CodeBoneService(cfg)
+        service.storage = Storage(db_file)
+        app = create_app(service)
+        client = TestClient(app)
+
+        resp = client.get("/codebone/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "is_first_days" in data
+        assert data["is_first_days"] is True
+        assert "mcp_guide_url" in data
+        assert "mcp-setup" in data["mcp_guide_url"]
+

@@ -1,6 +1,7 @@
 """Persistent codebone configuration (project path, brain provider, server port)."""
 import json
 import os
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -253,6 +254,7 @@ DEFAULTS = {
     "brain_cloud_model": "gpt-6",
     "deep_scan_model_path": None,
     "recent_projects": [],
+    "first_run_at": None,
 }
 
 
@@ -299,6 +301,20 @@ class Config:
     def set(self, key: str, value):
         self.data[key] = value
         self.save()
+
+    def is_first_days(self, days: int = 7) -> bool:
+        """Returns True if the app was first run within the specified number of days."""
+        first_run = self.data.get("first_run_at")
+        now = time.time()
+        if first_run is None:
+            self.data["first_run_at"] = now
+            self.save()
+            return True
+        try:
+            return (now - float(first_run)) < (days * 86400)
+        except (ValueError, TypeError):
+            return True
+
 
     @property
     def project_path(self) -> Optional[Path]:

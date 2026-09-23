@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.2.1] - 2026-09-23
 
 ### Added
+- **Multi-Client MCP Auto-Registration**: Full out-of-the-box auto-patching for Gemini / Antigravity IDE (`~/.gemini/config/mcp_config.json`, `~/.gemini/antigravity-ide/mcp_config.json`, and `<project>/.agents/mcp_config.json`) alongside Claude Desktop and Cursor.
+- **Initial-Days Visual Setup "Ping"**: Interactive pulsing beacon banner in the Live Graph UI and dedicated menu item in the macOS menu bar popover for the first 7 days, providing one-click direct access to `#mcp-setup`.
+- **Intelligent Bundle Venv & Permissions Resolver**: Auto-creates Application Support venv symlink and ensures execute permissions on bundled python binaries for seamless DMG drag-and-drop installations.
 - **In-App Auto-Updater**: Direct one-click update checking, background package download, signature verification, atomic app bundle replacement, and graceful restart via **Settings ➔ Check for Updates...**.
 - **Recent Projects History (Verlauf)**: One-click project switching directly from the main menu, automatically remembering up to 10 previously scanned codebases with active state indicators.
 - **Full Disk Access Guidance & Automation**: Automatic TCC probing to register codebone with macOS System Settings, accompanied by a guided setup dialog and **Reveal in Finder** action for effortless drag-and-drop.

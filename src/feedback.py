@@ -14,7 +14,7 @@ from .logging_setup import LOG_FILE
 logger = logging.getLogger("codebone.feedback")
 FEEDBACK_FILE = CONFIG_DIR / "feedback.jsonl"
 GITHUB_REPO_URL = "https://github.com/palusc/codebone/issues/new"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 
 
 def _sanitize_log_line(line: str) -> str:

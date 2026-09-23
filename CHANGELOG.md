@@ -5,6 +5,17 @@ All notable changes to codebone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-09-23
+
+### Added
+- **In-App Auto-Updater**: Direct one-click update checking, background package download, signature verification, atomic app bundle replacement, and graceful restart via **Settings ➔ Check for Updates...**.
+- **Recent Projects History (Verlauf)**: One-click project switching directly from the main menu, automatically remembering up to 10 previously scanned codebases with active state indicators.
+- **Full Disk Access Guidance & Automation**: Automatic TCC probing to register codebone with macOS System Settings, accompanied by a guided setup dialog and **Reveal in Finder** action for effortless drag-and-drop.
+- **Comprehensive SF Symbol Icons**: Crisp Apple SF Symbol vector icons across the entire menu hierarchy (main menu, settings submenu, and model picker).
+
+### Changed
+- Streamlined release packaging to remove redundant asset duplicates, providing two clear, fast downloads: `codebone-macos-arm64.dmg` and `codebone-macos-arm64.zip`.
+
 ## [1.2.0] - 2026-09-23
 
 ### Added

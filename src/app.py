@@ -54,7 +54,7 @@ from AppKit import (
 from .config import Config
 from .feedback import record_feedback
 from .logging_setup import configure_logging
-from .permissions import check_folder_access, open_full_disk_access_settings
+from .permissions import check_folder_access, open_full_disk_access_settings, reveal_codebone_in_finder
 from .server import ServerThread
 from .service import CodeBoneService, PugService
 from .updater import CURRENT_VERSION, check_for_updates, download_and_install_update, restart_app
@@ -1087,15 +1087,21 @@ class CodeBoneApp(rumps.App):
         if not has_access:
             NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
             res = rumps.alert(
-                "Disk Access Restricted",
-                f"codebone cannot read files in '{p.name}' ({reason}).\n\n"
-                "macOS requires permissions to read folders like Desktop, Documents, Downloads, or external volumes.\n\n"
-                "Would you like to open macOS System Settings to grant Full Disk Access?",
-                ok="Open System Settings",
+                title="Disk Access Restricted",
+                message=(
+                    f"codebone cannot read files in '{p.name}' ({reason}).\n\n"
+                    "macOS requires permissions to read folders like Desktop, Documents, Downloads, or external volumes.\n\n"
+                    "How to enable:\n"
+                    "1. Find 'codebone' in Full Disk Access and toggle it ON.\n"
+                    "2. If not listed, drag codebone.app from Finder into the list.\n\n"
+                    "Click 'Open Settings & Reveal' to open both windows automatically."
+                ),
+                ok="Open Settings & Reveal",
                 cancel="Cancel",
             )
             if res == 1:
                 open_full_disk_access_settings()
+                reveal_codebone_in_finder()
             return
 
         self.config.add_recent_project(str(p))
@@ -1380,10 +1386,29 @@ class CodeBoneApp(rumps.App):
                     rumps.alert("Uninstaller Not Found", "Please run ./uninstall.sh from the repository.")
 
     def open_disk_access_settings(self, _):
+        """Opens Full Disk Access in macOS System Settings and provides a guided dialog with 1-click Finder reveal."""
         try:
             open_full_disk_access_settings()
         except Exception as exc:
             logger.error("Failed to open Full Disk Access settings: %s", exc)
+
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        res = rumps.alert(
+            title="Enable Full Disk Access",
+            message=(
+                "codebone requires Full Disk Access to scan projects located in Desktop, Documents, "
+                "Downloads, or external volumes.\n\n"
+                "How to enable:\n"
+                "1. Look for 'codebone' in the Full Disk Access list in System Settings and toggle it ON (🔵).\n\n"
+                "2. If 'codebone' is not listed:\n"
+                "   Click 'Reveal in Finder' below, then drag codebone.app directly into the System Settings window.\n\n"
+                "3. macOS will prompt to restart codebone to apply permissions."
+            ),
+            ok="Reveal in Finder",
+            cancel="Done",
+        )
+        if res == 1:
+            reveal_codebone_in_finder()
 
     def copy_curl(self, _):
         cmd = self.server.curl_command()

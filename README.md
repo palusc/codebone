@@ -188,6 +188,11 @@ SHA-256 fingerprinting reuses unchanged files instantly. Only modified files are
 
 ## 🗑️ Uninstall
 
+<details>
+<summary><b>How to completely remove codebone</b></summary>
+
+<br>
+
 **Option A — Uninstaller App (recommended):**
 Double-click `Uninstall codebone.app` → **Clean All Data**. Removes all processes, databases, models, logs, and MCP entries. Then drag `codebone.app` to the Trash.
 
@@ -197,7 +202,10 @@ Double-click `Uninstall codebone.app` → **Clean All Data**. Removes all proces
 ./uninstall.sh --keep-data  # keep databases & model for fast reinstall
 ```
 
+</details>
+
 ---
+
 
 <div align="center">
 

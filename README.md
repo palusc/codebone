@@ -74,7 +74,7 @@ A bone icon **🦴** appears in your macOS menu bar. Click it ➔ **Select Proje
 
 codebone runs continuously in the background without getting in your way:
 
-* **0.5B Model by Default**: Fast (`< 1s`), tiny (~390 MB RAM), and completely silent. Your Mac's fans stay off and your battery is preserved. codebone indexes structure; your frontier model (Claude Sonnet 4.5, GPT-6) writes the code.
+* **0.5B Model by Default**: Fast (`< 1s`), tiny (~390 MB RAM), and completely silent. Your Mac's fans stay off and your battery is preserved. codebone indexes structure; your frontier model (Claude Sonnet 4.5, GPT-4.1) writes the code.
 * **Apple Silicon Metal GPU**: Zero CPU overhead. Runs entirely on unified memory via Metal shaders.
 * **Smart Scan Adoption**: SHA-256 fingerprinting recognizes moved or renamed files instantly. You never have to re-scan a project from scratch after renaming a directory or switching branches.
 * **100% Localhost**: Binds strictly to `127.0.0.1:8053` (with automatic incremental fallback to `8054+` if occupied). Zero cloud, zero telemetry, zero tokens leaving your machine.
@@ -314,7 +314,7 @@ Click the bone icon 🦴 ➔ **Settings** ➔ **Model**:
 |---|---|
 | **Built-in (Qwen 0.5B)** *(default)* | Apple Silicon Metal GPU-accelerated. Zero cost, zero cloud, instant setup. |
 | **Local URL** | Connect to local Ollama (`http://localhost:11434/api/generate`) or LM Studio. |
-| **Cloud BYOK** | Use your own API key for OpenAI (`GPT-6`) or Anthropic (`Claude Sonnet 4.5`). |
+| **Cloud BYOK** | Use your own API key for OpenAI (`GPT-4.1`) or Anthropic (`Claude Sonnet 4.5`). |
 | **Custom .gguf** | Load any local GGUF model file (e.g. Qwen 7B, Llama 3) via native file dialog. |
 
 ---

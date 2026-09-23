@@ -250,7 +250,7 @@ DEFAULTS = {
     "brain_local_url": "http://localhost:11434/api/generate",
     "brain_cloud_vendor": "openai",  # "openai" | "anthropic"
     "brain_cloud_api_key": "",
-    "brain_cloud_model": "gpt-4o",
+    "brain_cloud_model": "gpt-4.1-mini",
     "deep_scan_model_path": None,
 }
 
@@ -279,8 +279,8 @@ class Config:
                 if self.data.get("server_port") in (3000, 3077):
                     self.data["server_port"] = 8053
                     self.save()
-                if self.data.get("brain_cloud_model") == "gpt-6-luna":
-                    self.data["brain_cloud_model"] = "gpt-4o"
+                if self.data.get("brain_cloud_model") in ("gpt-6-luna", "gpt-4o", "gpt-4o-mini"):
+                    self.data["brain_cloud_model"] = "gpt-4.1-mini"
                     self.save()
             except (json.JSONDecodeError, OSError):
                 pass
@@ -347,7 +347,7 @@ class Config:
             return f"Local URL ({url.split('://')[-1].split('/')[0]})" if url else "Local URL (Ollama)"
         elif provider == "cloud":
             vendor = self.data.get("brain_cloud_vendor", "openai")
-            model = self.data.get("brain_cloud_model", "gpt-4o")
+            model = self.data.get("brain_cloud_model", "gpt-4.1-mini")
             return f"Cloud ({vendor.title()} {model})"
         return "Unknown"
 

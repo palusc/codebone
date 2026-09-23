@@ -159,7 +159,7 @@ Interactive node-link diagram of your codebase. Dark glassmorphism theme, real-t
 |---|---|
 | **Built-in (Qwen 0.5B)** *(default)* | Metal GPU-accelerated. Zero cost, zero cloud. |
 | **Local URL** | Ollama, LM Studio, or any OpenAI-compatible endpoint. |
-| **Cloud BYOK** | Your own API key — OpenAI (`GPT-4.1`) or Anthropic (`Claude Sonnet 4.5`). |
+| **Cloud BYOK** | Your own API key — OpenAI (`GPT-6`) or Anthropic (`Claude Sonnet 5`). |
 | **Custom .gguf** | Any local GGUF model via file dialog (e.g. Qwen 7B, Llama 3). |
 
 🦴 ➔ **Settings** ➔ **Model** to switch at any time.

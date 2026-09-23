@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Apple SF Symbols**: Native vector icons across all menu bar items, adapting automatically to dark and light modes.
 
 ### Changed
-- Default Cloud BYOK models updated to `claude-sonnet-4-5` (Anthropic) and `gpt-4.1` / `gpt-4.1-mini` (OpenAI).
+- Default Cloud BYOK models updated to `claude-sonnet-5` (Anthropic) and `gpt-6` / `gpt-6` (OpenAI).
 
 ## [1.1.0] - 2026-09-22
 

@@ -9,10 +9,42 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "Error: python3 not found. Please install Python 3.10+ (e.g. via 'brew install python')." >&2
+# Locate a Python >= 3.10 interpreter
+PYTHON_BIN=""
+for candidate in "${PYTHON:-}" "python3" "python3.14" "python3.13" "python3.12" "python3.11" "python3.10" "/opt/homebrew/bin/python3" "/usr/local/bin/python3"; do
+  [[ -z "$candidate" ]] && continue
+  if command -v "$candidate" >/dev/null 2>&1; then
+    RESOLVED_BIN="$(command -v "$candidate")"
+    if "$RESOLVED_BIN" -c 'import sys; exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+      PYTHON_BIN="$RESOLVED_BIN"
+      break
+    fi
+  fi
+done
+
+if [[ -z "$PYTHON_BIN" ]]; then
+  echo "❌ Error: Python 3.10 or higher is required to run codebone." >&2
+  CURRENT_PY="$(python3 --version 2>&1 || echo 'none')"
+  echo "   Current system default: $CURRENT_PY (at $(which python3 2>/dev/null || echo 'not found'))" >&2
+  echo "" >&2
+  echo "   macOS default system Python is too old (< 3.10). Modern FastAPI, PyObjC," >&2
+  echo "   and Model Context Protocol (MCP) packages strictly require Python >= 3.10." >&2
+  echo "" >&2
+  if command -v brew >/dev/null 2>&1; then
+    echo "   👉 Please install Python via Homebrew:" >&2
+    echo "      brew install python" >&2
+  else
+    echo "   👉 Please install Python 3.12+ from python.org:" >&2
+    echo "      https://www.python.org/downloads/macos/" >&2
+    echo "      (or install Homebrew first: https://brew.sh)" >&2
+  fi
+  echo "" >&2
   exit 1
 fi
+
+PY_VER="$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")')"
+echo "   Found Python $PY_VER ($PYTHON_BIN)"
+
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CODEBONE_HOME="$HOME/Library/Application Support/codebone"
@@ -90,8 +122,17 @@ ln -sfn "$RESOURCES/src" "$CODEBONE_HOME/src"
 
 echo "3/5 Configuring Python virtual environment inside App Bundle..."
 APP_VENV="$RESOURCES/venv"
+
+# If an existing venv exists, ensure it actually runs Python >= 3.10
+if [[ -d "$APP_VENV" ]]; then
+  if ! "$APP_VENV/bin/python3" -c 'import sys; exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+    echo "    Re-creating existing virtualenv with Python $PY_VER (older Python version detected)..."
+    rm -rf "$APP_VENV"
+  fi
+fi
+
 if [[ ! -d "$APP_VENV" ]]; then
-  python3 -m venv "$APP_VENV"
+  "$PYTHON_BIN" -m venv "$APP_VENV"
 fi
 if [[ -e "$CODEBONE_HOME/venv" && ! -L "$CODEBONE_HOME/venv" ]]; then
   rm -rf "$CODEBONE_HOME/venv"
@@ -160,8 +201,13 @@ EOF
 
 # Compile native Mach-O executable launcher embedding Python directly.
 # This prevents PID/audit token mismatches that cause MenuBarAgent to reject status items on macOS.
-PYTHON_CFLAGS=$(python3-config --cflags 2>/dev/null || echo "")
-PYTHON_LDFLAGS=$(python3-config --ldflags --embed 2>/dev/null || python3-config --ldflags 2>/dev/null || echo "")
+PYTHON_CONFIG="${PYTHON_BIN}-config"
+if ! command -v "$PYTHON_CONFIG" >/dev/null 2>&1; then
+  PYTHON_CONFIG="python3-config"
+fi
+
+PYTHON_CFLAGS=$("$PYTHON_CONFIG" --cflags 2>/dev/null || echo "")
+PYTHON_LDFLAGS=$("$PYTHON_CONFIG" --ldflags --embed 2>/dev/null || "$PYTHON_CONFIG" --ldflags 2>/dev/null || echo "")
 
 if command -v clang >/dev/null 2>&1 && [[ -n "$PYTHON_CFLAGS" && -n "$PYTHON_LDFLAGS" ]]; then
   clang -O2 $PYTHON_CFLAGS -o "$MACOS/codebone" -x c - $PYTHON_LDFLAGS << 'EOF'
@@ -205,7 +251,7 @@ find "$APP_BUNDLE" -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 # Sanitize bundle symlinks (prevent Gatekeeper rejection if bundle is packaged or inspected)
 find "$APP_BUNDLE" -type l | while IFS= read -r link; do
   if [[ -L "$link" ]]; then
-    resolved=$(python3 -c "import os, sys; print(os.path.realpath(sys.argv[1]))" "$link" 2>/dev/null || true)
+    resolved=$("$PYTHON_BIN" -c "import os, sys; print(os.path.realpath(sys.argv[1]))" "$link" 2>/dev/null || true)
     if [[ -n "$resolved" ]]; then
       case "$resolved" in
         "$APP_BUNDLE"/*)

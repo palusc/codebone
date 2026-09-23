@@ -20,22 +20,88 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-echo "0/5 Performing system preflight & dependency check..."
+echo "0/5 ── Preflight system dependency check ──────────────────────────────"
+echo ""
+echo "   Checking every required tool and auto-installing anything missing."
+echo ""
 
-# 1. Ensure Homebrew environment is active if installed
+# ─── Helper ────────────────────────────────────────────────────────────────
+ok()   { echo "   ✅  $*"; }
+warn() { echo "   ⚠️   $*"; }
+fix()  { echo "   🔄  $*"; }
+fail() { echo "   ❌  $*" >&2; }
+
+# ─── 1. Homebrew ────────────────────────────────────────────────────────────
 if [[ -x "/opt/homebrew/bin/brew" ]]; then
   eval "$(/opt/homebrew/bin/brew shellenv)"
+  ok "Homebrew — $(/opt/homebrew/bin/brew --version | head -1)"
 elif [[ -x "/usr/local/bin/brew" ]]; then
   eval "$(/usr/local/bin/brew shellenv)"
+  ok "Homebrew — $(/usr/local/bin/brew --version | head -1)"
+else
+  warn "Homebrew not found. Auto-installing..."
+  fix "Running Homebrew installer (needs internet, ~2 min)..."
+  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" 2>/dev/null || true
+  if [[ -x "/opt/homebrew/bin/brew" ]]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    ok "Homebrew installed — $(/opt/homebrew/bin/brew --version | head -1)"
+  elif [[ -x "/usr/local/bin/brew" ]]; then
+    eval "$(/usr/local/bin/brew shellenv)"
+    ok "Homebrew installed — $(/usr/local/bin/brew --version | head -1)"
+  else
+    warn "Homebrew could not be installed. Will attempt fallback installers."
+  fi
 fi
 
-# 2. Check Xcode Command Line Tools
-if ! xcode-select -p >/dev/null 2>&1; then
-  echo "   ⚠️ Xcode Command Line Tools not detected. Prompting installation..."
+# ─── 2. Xcode Command Line Tools (clang, make, git) ────────────────────────
+if xcode-select -p >/dev/null 2>&1 && command -v clang >/dev/null 2>&1; then
+  ok "Xcode CLT — clang present"
+else
+  warn "Xcode Command Line Tools not found. Installing..."
   xcode-select --install 2>/dev/null || true
+  sleep 2
+  if xcode-select -p >/dev/null 2>&1; then
+    ok "Xcode CLT installed."
+  else
+    warn "Xcode CLT installer launched. Click 'Install' if prompted, then re-run ./install.sh"
+  fi
 fi
 
-# 3. Search for Python >= 3.10
+# ─── 3. cmake (needed to compile llama-cpp-python with Metal) ──────────────
+if command -v cmake >/dev/null 2>&1; then
+  ok "cmake — $(cmake --version | head -1)"
+else
+  warn "cmake not found (needed for Metal/GPU acceleration). Installing..."
+  if command -v brew >/dev/null 2>&1; then
+    fix "brew install cmake"
+    HOMEBREW_NO_AUTO_UPDATE=1 brew install cmake 2>/dev/null || true
+  fi
+  if command -v cmake >/dev/null 2>&1; then
+    ok "cmake installed — $(cmake --version | head -1)"
+  else
+    warn "cmake not available. Metal GPU compilation skipped (FastFallbackProvider active)."
+  fi
+fi
+
+# ─── 4. git ─────────────────────────────────────────────────────────────────
+if command -v git >/dev/null 2>&1; then
+  ok "git — $(git --version)"
+else
+  warn "git not found. Installing..."
+  command -v brew >/dev/null 2>&1 && HOMEBREW_NO_AUTO_UPDATE=1 brew install git 2>/dev/null || true
+  command -v git >/dev/null 2>&1 && ok "git installed." || warn "git could not be installed."
+fi
+
+# ─── 5. curl ────────────────────────────────────────────────────────────────
+if command -v curl >/dev/null 2>&1; then
+  ok "curl — $(curl --version | head -1 | awk '{print $1, $2}')"
+else
+  warn "curl not found. Installing..."
+  command -v brew >/dev/null 2>&1 && HOMEBREW_NO_AUTO_UPDATE=1 brew install curl 2>/dev/null || true
+  command -v curl >/dev/null 2>&1 && ok "curl installed." || warn "curl not available."
+fi
+
+# ─── 6. Python >= 3.10 ─────────────────────────────────────────────────────
 find_python() {
   local candidates=(
     "${PYTHON:-}"
@@ -55,7 +121,6 @@ find_python() {
   for p in "$HOME"/.local/share/uv/python/*/bin/python3; do
     [[ -x "$p" ]] && candidates+=("$p")
   done
-
   for candidate in "${candidates[@]}"; do
     [[ -z "$candidate" ]] && continue
     if command -v "$candidate" >/dev/null 2>&1; then
@@ -65,6 +130,11 @@ find_python() {
         echo "$resolved"
         return 0
       fi
+    elif [[ -x "$candidate" ]]; then
+      if "$candidate" -c 'import sys; exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+        echo "$candidate"
+        return 0
+      fi
     fi
   done
   return 1
@@ -72,62 +142,77 @@ find_python() {
 
 PYTHON_BIN="$(find_python || true)"
 
-# 4. Auto-install Python >= 3.10 if missing
 if [[ -z "$PYTHON_BIN" ]]; then
-  echo "   ⚠️ Python >= 3.10 not found (macOS system Python is 3.9)."
-  echo "   🔄 Automatically installing required Python runtime..."
+  warn "Python >= 3.10 not found (macOS system Python is 3.9 — incompatible)."
 
-  # Attempt 1: Homebrew
+  # Attempt A: Homebrew python
   if command -v brew >/dev/null 2>&1; then
-    echo "   📦 Installing Python via Homebrew (this may take 1-2 minutes)..."
-    HOMEBREW_NO_AUTO_UPDATE=1 brew install python || true
-    if [[ -x "/opt/homebrew/bin/brew" ]]; then
-      eval "$(/opt/homebrew/bin/brew shellenv)"
-    elif [[ -x "/usr/local/bin/brew" ]]; then
-      eval "$(/usr/local/bin/brew shellenv)"
-    fi
+    fix "brew install python (this may take 1-2 minutes)..."
+    HOMEBREW_NO_AUTO_UPDATE=1 brew install python 2>/dev/null || true
+    if [[ -x "/opt/homebrew/bin/brew" ]]; then eval "$(/opt/homebrew/bin/brew shellenv)"; fi
     PYTHON_BIN="$(find_python || true)"
   fi
 
-  # Attempt 2: uv standalone Python (rootless, ultra-fast, no sudo needed)
+  # Attempt B: uv standalone (rootless, no sudo needed)
   if [[ -z "$PYTHON_BIN" ]]; then
-    echo "   📦 Installing standalone Python 3.12 via Astral uv..."
-    if ! command -v uv >/dev/null 2>&1 && [[ ! -x "$HOME/.local/bin/uv" ]] && [[ ! -x "$HOME/.cargo/bin/uv" ]]; then
-      curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 || true
-    fi
+    fix "Installing Python 3.12 via Astral uv (rootless, no sudo needed)..."
     UV_BIN=""
     for cand in "uv" "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv" "/opt/homebrew/bin/uv" "/usr/local/bin/uv"; do
-      if command -v "$cand" >/dev/null 2>&1; then
-        UV_BIN="$(command -v "$cand")"
-        break
-      elif [[ -x "$cand" ]]; then
-        UV_BIN="$cand"
-        break
-      fi
+      if command -v "$cand" >/dev/null 2>&1; then UV_BIN="$(command -v "$cand")"; break
+      elif [[ -x "$cand" ]]; then UV_BIN="$cand"; break; fi
     done
+    if [[ -z "$UV_BIN" ]]; then
+      fix "Installing uv first..."
+      curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 || true
+      for cand in "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv"; do
+        [[ -x "$cand" ]] && UV_BIN="$cand" && break
+      done
+    fi
     if [[ -n "$UV_BIN" ]]; then
-      echo "   Downloading Python 3.12..."
       "$UV_BIN" python install 3.12 >/dev/null 2>&1 || true
       UV_PY="$("$UV_BIN" python find 3.12 2>/dev/null || "$UV_BIN" python find 2>/dev/null || true)"
-      if [[ -x "$UV_PY" ]]; then
-        PYTHON_BIN="$UV_PY"
-      fi
+      [[ -x "$UV_PY" ]] && PYTHON_BIN="$UV_PY"
     fi
   fi
 fi
 
 if [[ -z "$PYTHON_BIN" ]]; then
-  echo "❌ Error: Could not automatically install Python >= 3.10." >&2
-  echo "   macOS built-in /usr/bin/python3 is Python 3.9, which is incompatible with modern packages." >&2
-  echo "   Please run in your terminal:" >&2
-  echo "     brew install python" >&2
-  echo "   or download the official installer from:" >&2
-  echo "     https://www.python.org/downloads/macos/" >&2
+  fail "Could not automatically install Python >= 3.10."
+  fail "Please run:  brew install python"
+  fail "Or download: https://www.python.org/downloads/macos/"
   exit 1
 fi
 
 PY_VER="$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")')"
-echo "   ✅ Python runtime ready: Python $PY_VER ($PYTHON_BIN)"
+ok "Python $PY_VER — $PYTHON_BIN"
+
+# ─── 7. pip (via the Python interpreter found above) ───────────────────────
+if "$PYTHON_BIN" -m pip --version >/dev/null 2>&1; then
+  ok "pip — $("$PYTHON_BIN" -m pip --version | awk '{print $1, $2}')"
+else
+  warn "pip not available for $PYTHON_BIN. Bootstrapping..."
+  "$PYTHON_BIN" -m ensurepip --upgrade 2>/dev/null || \
+    curl -sS https://bootstrap.pypa.io/get-pip.py | "$PYTHON_BIN" 2>/dev/null || true
+  "$PYTHON_BIN" -m pip --version >/dev/null 2>&1 && ok "pip bootstrapped." || warn "pip unavailable — venv pip will be used."
+fi
+
+# ─── 8. Node.js / npx (optional — for MCP npm bridge) ──────────────────────
+if command -v npx >/dev/null 2>&1; then
+  ok "Node.js / npx — $(node --version 2>/dev/null || echo 'present') — MCP npm bridge available"
+else
+  warn "Node.js / npx not found (optional). Will use Python MCP bridge instead."
+  if command -v brew >/dev/null 2>&1; then
+    fix "brew install node (optional — for npx MCP bridge)..."
+    HOMEBREW_NO_AUTO_UPDATE=1 brew install node 2>/dev/null || true
+    command -v npx >/dev/null 2>&1 && ok "Node.js installed — npx MCP bridge active." || warn "Node.js not installed. Using Python MCP bridge."
+  fi
+fi
+
+echo ""
+echo "   ─── Preflight complete ────────────────────────────────────────────"
+echo ""
+
+
 
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

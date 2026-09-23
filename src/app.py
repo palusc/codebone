@@ -488,6 +488,10 @@ class CodeBoneApp(rumps.App):
         self.select_project_item = rumps.MenuItem("Select Project Folder...", callback=self.choose_project)
         _set_symbol_icon(self.select_project_item, "folder")
 
+        # Recent Projects / History Submenu (Verlauf)
+        self.recent_projects_menu = rumps.MenuItem("Recent Projects")
+        _set_symbol_icon(self.recent_projects_menu, "clock.arrow.circlepath")
+
         # Model Selection Submenu (Dynamic active model list)
         self.brain_menu = rumps.MenuItem("Model")
         _set_symbol_icon(self.brain_menu, "brain")
@@ -559,6 +563,7 @@ class CodeBoneApp(rumps.App):
             None,
             self.rescan_item,
             self.select_project_item,
+            self.recent_projects_menu,
             None,
             self.settings_menu,
             None,
@@ -896,6 +901,7 @@ class CodeBoneApp(rumps.App):
         # Top-level menu items
         _set_symbol_icon(self.rescan_item, "arrow.clockwise")
         _set_symbol_icon(self.select_project_item, "folder")
+        _set_symbol_icon(self.recent_projects_menu, "clock.arrow.circlepath")
         _set_symbol_icon(self.settings_menu, "gearshape")
         _set_symbol_icon(self.feedback_item, "exclamationmark.bubble")
         _set_symbol_icon(self.about_item, "info.circle")
@@ -920,6 +926,7 @@ class CodeBoneApp(rumps.App):
         if not self.icon:
             self.title = "codebone"
         self._apply_all_icons()
+        self._update_recent_projects_menu()
         self._update_brain_checks()
         self._push_stats()
 
@@ -986,11 +993,94 @@ class CodeBoneApp(rumps.App):
         self._update_ui_state()
         rumps.notification("codebone", "Model switched", f"Active model: {name}")
 
+    def _update_recent_projects_menu(self):
+        """Rebuilds the Recent Projects / History submenu from saved config and scan snapshots."""
+        if getattr(self.recent_projects_menu, "_menu", None) is not None:
+            self.recent_projects_menu.clear()
+
+        # Gather recent projects from config MRU and scan registry
+        seen_paths = set()
+        recent_list = []
+
+        # 1. From config.recent_projects
+        for p_str in self.config.recent_projects:
+            if not p_str:
+                continue
+            p = Path(p_str)
+            if p.exists() and str(p) not in seen_paths:
+                seen_paths.add(str(p))
+                recent_list.append(p)
+
+        # 2. From saved scan snapshots (scans_registry.json)
+        try:
+            for s in self.service.scans.list_scans():
+                p_str = s.get("project_path")
+                if p_str:
+                    p = Path(p_str)
+                    if p.exists() and str(p) not in seen_paths:
+                        seen_paths.add(str(p))
+                        recent_list.append(p)
+        except Exception:
+            pass
+
+        # Also ensure current project is in list if configured
+        current_proj = self.config.project_path
+        if current_proj and current_proj.exists() and str(current_proj) not in seen_paths:
+            self.config.add_recent_project(str(current_proj))
+            recent_list.insert(0, current_proj)
+
+        if not recent_list:
+            empty_item = rumps.MenuItem("No Recent Projects", callback=None)
+            self.recent_projects_menu.add(empty_item)
+            return
+
+        for p in recent_list[:10]:
+            name = p.name or str(p)
+            try:
+                rel_to_home = f"~/{p.relative_to(Path.home())}"
+            except Exception:
+                rel_to_home = str(p)
+
+            item_label = f"{name}  ({rel_to_home})"
+            item = rumps.MenuItem(
+                item_label,
+                callback=lambda _, target_path=p: self.open_project_path(target_path),
+            )
+            _set_symbol_icon(item, "folder")
+            if current_proj and current_proj.resolve() == p.resolve():
+                item.state = True
+            self.recent_projects_menu.add(item)
+
+        self.recent_projects_menu.add(None)
+        clear_item = rumps.MenuItem("Clear Recent Projects", callback=self.clear_recent_projects)
+        _set_symbol_icon(clear_item, "trash")
+        self.recent_projects_menu.add(clear_item)
+
+    def clear_recent_projects(self, _):
+        """Clears the recent projects list and refreshes the submenu."""
+        self.config.clear_recent_projects()
+        self._update_recent_projects_menu()
+        rumps.notification("codebone", "Recent Projects Cleared", "The project history has been reset.")
+
     def choose_project(self, _):
         path = choose_folder("Select Project Folder to Sniff")
         if not path:
             return
-        p = Path(path)
+        self.open_project_path(Path(path))
+
+    def open_project_path(self, p: Path):
+        """Activates and switches to the specified project folder."""
+        if not p or not p.exists():
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            rumps.alert("Project Not Found", f"The folder '{p}' no longer exists on disk.")
+            self.config.remove_recent_project(str(p))
+            self._update_recent_projects_menu()
+            return
+
+        current_proj = self.config.project_path
+        if current_proj and current_proj.resolve() == p.resolve() and self.service.watching:
+            rumps.notification("codebone", "Already Active", f"'{p.name}' is already the active project.")
+            return
 
         # Check macOS disk permissions / TCC
         has_access, reason = check_folder_access(p)
@@ -1008,6 +1098,7 @@ class CodeBoneApp(rumps.App):
                 open_full_disk_access_settings()
             return
 
+        self.config.add_recent_project(str(p))
         self.config.set("project_path", str(p))
         self.service.stop()
         self._update_ui_state()
@@ -1072,6 +1163,11 @@ class CodeBoneApp(rumps.App):
                     total_scanned, sniffed, skipped = self.service.rescan_all(on_progress=_on_prog)
                     dur = max(1, round(time.time() - t0))
                     conn_count = len(self.service.storage.graph_edges())
+                    self.service.scans.save_snapshot(
+                        project_name=p.name,
+                        project_path=p,
+                        storage=self.service.storage,
+                    )
                     rumps.notification(
                         f"codebone — Indexing Complete",
                         f"{p.name} ready ({total_scanned} files)",

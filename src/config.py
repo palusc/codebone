@@ -252,6 +252,7 @@ DEFAULTS = {
     "brain_cloud_api_key": "",
     "brain_cloud_model": "gpt-6",
     "deep_scan_model_path": None,
+    "recent_projects": [],
 }
 
 
@@ -365,6 +366,36 @@ class Config:
 
     def select_model(self, path: str):
         self.data["model_path"] = path
+        self.save()
+
+    @property
+    def recent_projects(self) -> list[str]:
+        return self.data.get("recent_projects", [])
+
+    def add_recent_project(self, project_path: str):
+        """Adds a project path to the MRU recent projects list (max 10)."""
+        try:
+            resolved = str(Path(project_path).resolve())
+        except Exception:
+            resolved = str(project_path)
+        recents = [p for p in self.data.get("recent_projects", []) if p != resolved]
+        recents.insert(0, resolved)
+        self.data["recent_projects"] = recents[:10]
+        self.save()
+
+    def remove_recent_project(self, project_path: str):
+        """Removes a project path from the recent projects list."""
+        try:
+            resolved = str(Path(project_path).resolve())
+        except Exception:
+            resolved = str(project_path)
+        recents = [p for p in self.data.get("recent_projects", []) if p != resolved]
+        self.data["recent_projects"] = recents
+        self.save()
+
+    def clear_recent_projects(self):
+        """Clears all recent projects."""
+        self.data["recent_projects"] = []
         self.save()
 
     def get_ignore_dirs(self, project_path: Optional[Path] = None) -> set[str]:

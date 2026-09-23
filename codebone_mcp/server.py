@@ -134,8 +134,27 @@ def codebone_status() -> str:
 
 
 @mcp.tool()
+def cb(format: str = "markdown", domain: str = "", file: str = "", query: str = "") -> str:
+    """Universal shortcut 'cb' for codebone_context.
+    
+    Trigger this tool whenever the user types 'cb', 'cb: <task>', 'cb overview', or asks for
+    codebase architecture and semantic context.
+    
+    LEVEL-OF-DETAIL (LOD) PARAMETERS:
+    - Calling without parameters (`cb()`) returns the High-Level Architectural Overview and Business Domains.
+    - Drill down to conserve tokens:
+      - `domain`: e.g. `domain="billing"` to receive models, routes, events, and file summaries for that domain.
+      - `file`: e.g. `file="auth.py"` to inspect a specific file or module.
+      - `query`: e.g. `query="stripe"` to search matching tables, endpoints, and connections.
+    """
+    return codebone_context(format=format, domain=domain, file=file, query=query)
+
+
+@mcp.tool()
 def codebone_context(format: str = "markdown", domain: str = "", file: str = "", query: str = "") -> str:
     """Retrieve live codebase architecture, overarching business domains, and semantic context.
+    
+    SHORTCUT: Can also be triggered directly as `cb` or whenever the user writes 'cb' in their prompt.
     
     LEVEL-OF-DETAIL (LOD) USAGE:
     - Calling without parameters (`codebone_context()`) returns a token-efficient High-Level Architectural Overview and Business Domains list.
@@ -182,14 +201,16 @@ def codebone_adopt_scan(scan_id_or_path: str, project_path: str | None = None) -
     return _post("/codebone/scans/adopt", payload)
 
 
+@mcp.prompt("cb")
 @mcp.prompt("codebone")
 def codebone_prompt() -> str:
-    """Prompt for building or understanding code using codebone's live codebase map."""
+    """Universal shortcut prompt 'cb' for understanding code using codebone's live codebase map."""
     return (
         "You have access to codebone (live codebase semantic knowledge graph). "
-        "1. First, call `codebone_context()` with no parameters to inspect the high-level architecture and overarching business domains. "
+        "Official shortcut: 'cb'. "
+        "1. First, call `cb()` or `codebone_context()` with no parameters to inspect the high-level architecture and overarching business domains. "
         "2. When implementing a feature or exploring a specific domain, execute a targeted sub-query such as "
-        "`codebone_context(domain=\"billing\")` or `codebone_context(query=\"stripe\")` to retrieve granular database models, "
+        "`cb(domain=\"billing\")` or `cb(query=\"stripe\")` to retrieve granular database models, "
         "routes, and file summaries without exceeding context token limits."
     )
 

@@ -62,6 +62,18 @@ cd codebone
 
 ---
 
+## ⚡ The `cb` Shortcut
+
+You don't need to write long prompts like *"use codebone"* or *"inspect architecture"*. Simply type **`cb`** in any AI assistant (Claude, Cursor, Gemini):
+
+* **`cb`** — Injects the live high-level architecture & active business domains into your AI context.
+* **`cb: how does billing work?`** — Directly queries database models, API routes, and events for Billing.
+* **`cb auth.py`** — Returns instant semantic context and cross-module links for that specific file.
+
+codebone provides native `cb` MCP tools and prompts, recognized across all major AI agent environments.
+
+---
+
 ## 🐾 How It Works
 
 1. **Sniff** — Watches your repository on every `Cmd + S` with battery-aware debouncing (0.5s AC, 15s Battery).

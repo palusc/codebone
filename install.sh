@@ -204,14 +204,25 @@ touch "$APP_BUNDLE"
 if command -v claude >/dev/null 2>&1; then
   echo "Wiring up codebone to Claude via MCP..."
   claude mcp remove pug >/dev/null 2>&1 || true
-  claude mcp add -s user codebone -- "$APP_VENV/bin/python3" "$RESOURCES/src/codebone_mcp/server.py" 2>/dev/null || true
+  if command -v npx > /dev/null 2>&1; then
+    claude mcp add -s user codebone -- npx -y codebone-mcp 2>/dev/null || true
+  else
+    claude mcp add -s user codebone -- "$APP_VENV/bin/python3" -m codebone_mcp.server 2>/dev/null || true
+  fi
 fi
 
-# Register with local MCP configuration if present
+# Register with local MCP configuration if present (Gemini / other JSON-based configs)
 GEMINI_MCP="$HOME/.gemini/config/mcp_config.json"
 if [[ -f "$GEMINI_MCP" ]]; then
+  if command -v npx > /dev/null 2>&1; then
+    MCP_COMMAND="npx"
+    MCP_ARGS='["-y", "codebone-mcp"]'
+  else
+    MCP_COMMAND="$APP_VENV/bin/python3"
+    MCP_ARGS='["-m", "codebone_mcp.server"]'
+  fi
   "$APP_VENV/bin/python3" -c "
-import json
+import json, os
 p = '$GEMINI_MCP'
 try:
     with open(p, 'r') as f:
@@ -221,9 +232,8 @@ except Exception:
 servers = data.setdefault('mcpServers', {})
 servers.pop('pug', None)
 servers['codebone'] = {
-    'command': '$APP_VENV/bin/python3',
-    'args': ['$RESOURCES/src/codebone_mcp/server.py'],
-    'env': {'CODEBONE_PORT': '8053'}
+    'command': '$MCP_COMMAND',
+    'args': $MCP_ARGS
 }
 with open(p, 'w') as f:
     json.dump(data, f, indent=2)

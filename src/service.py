@@ -2,10 +2,11 @@
 import hashlib
 import logging
 import threading
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from .config import Config
+from .config import Config, is_watched_file, load_gitignore_spec
 from .providers import Provider, build_provider
 from .scans import ScanManager, ScanReconciler
 from .storage import Storage
@@ -25,13 +26,15 @@ class CodeBoneService:
         self.last_error: Optional[str] = None
         self.last_reconciliation: Optional[dict] = None
         self.sniffing = False
+        self.scan_progress: Optional[dict] = None
+        self.last_baseline: Optional[dict] = None
         self.on_activity_start: Optional[Callable[[], None]] = None
         self.on_activity_end: Optional[Callable[[], None]] = None
         self._lock = threading.Lock()
 
     def start(self, auto_scan: bool = True, on_progress: Optional[Callable[[int, int, str], None]] = None):
         if not self.config.is_configured:
-            logger.warning("CodeBone not configured — skipping sniffer start")
+            logger.warning("codebone not configured — skipping sniffer start")
             return
         project_path = self.config.project_path
         ignore_dirs = list(self.config.get_ignore_dirs(project_path))
@@ -63,16 +66,134 @@ class CodeBoneService:
         """Call after brain settings change."""
         self.provider = build_provider(self.config)
 
+    def inspect_baseline(self, project_path: Optional[Path] = None) -> dict:
+        """Fast pre-scan assessment that produces a baseline overview:
+        counts files, groups languages, determines files needing indexing vs cached,
+        and calculates an estimated initial load duration."""
+        proj = project_path or self.config.project_path
+        if not proj or not proj.exists():
+            return {
+                "total_files": 0,
+                "files_to_index": 0,
+                "cached_files": 0,
+                "languages": [],
+                "languages_summary": "No files",
+                "estimated_seconds": 0,
+                "estimated_time_str": "0s",
+            }
+
+        extensions = set(self.config.get("watched_extensions"))
+        ignore_dirs = self.config.get_ignore_dirs(proj)
+        gitignore_spec = load_gitignore_spec(proj)
+
+        matching_files: list[Path] = []
+        try:
+            for path in proj.rglob("*"):
+                if is_watched_file(path, extensions, ignore_dirs, gitignore_spec=gitignore_spec, project_path=proj):
+                    matching_files.append(path)
+        except OSError:
+            logger.exception("Error during baseline inspection of %s", proj)
+            return {
+                "total_files": 0,
+                "files_to_index": 0,
+                "cached_files": 0,
+                "languages": [],
+                "languages_summary": "Error reading files",
+                "estimated_seconds": 0,
+                "estimated_time_str": "0s",
+            }
+
+        total = len(matching_files)
+        existing_mtimes = self.storage.get_file_mtimes()
+
+        # Count per extension
+        ext_counts: dict[str, int] = {}
+        files_to_sniff = 0
+        cached_count = 0
+
+        for p in matching_files:
+            ext = p.suffix.lower() if p.suffix else p.name
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+            try:
+                rel = str(p.relative_to(proj))
+                mtime = p.stat().st_mtime
+            except (ValueError, OSError):
+                files_to_sniff += 1
+                continue
+
+            if rel in existing_mtimes and existing_mtimes[rel] >= mtime:
+                cached_count += 1
+            else:
+                files_to_sniff += 1
+
+        # Format top languages
+        ext_map = {
+            ".py": "Python", ".js": "JavaScript", ".ts": "TypeScript",
+            ".tsx": "React TSX", ".jsx": "React JSX", ".go": "Go",
+            ".rs": "Rust", ".java": "Java", ".rb": "Ruby", ".php": "PHP",
+            ".swift": "Swift", ".kt": "Kotlin", ".c": "C", ".cpp": "C++",
+            ".h": "C/C++ Header", ".sql": "SQL", ".graphql": "GraphQL",
+            ".sh": "Shell Script", ".bash": "Shell Script", ".zsh": "Shell Script",
+            ".json": "JSON Config", ".yaml": "YAML Config", ".yml": "YAML Config",
+            ".toml": "TOML Config", ".xml": "XML", ".ini": "Config",
+            ".md": "Markdown", ".txt": "Text Doc", ".html": "HTML", ".css": "CSS",
+            ".scss": "SCSS", ".vue": "Vue", ".svelte": "Svelte", ".prisma": "Prisma",
+        }
+        sorted_exts = sorted(ext_counts.items(), key=lambda kv: kv[1], reverse=True)
+        languages = [f"{ext_map.get(ext, ext)} ({cnt})" for ext, cnt in sorted_exts]
+        languages_summary = ", ".join(languages[:3]) if languages else "None"
+
+        # Time estimation based on active provider
+        provider_type = self.config.get("brain_provider", "builtin")
+        if provider_type == "builtin":
+            sec_per_file = 0.35  # Apple Silicon Metal Qwen 0.5B
+        elif provider_type == "local_url":
+            sec_per_file = 0.5   # Ollama / Local HTTP
+        elif provider_type == "cloud":
+            sec_per_file = 0.4   # Cloud API
+        else:
+            sec_per_file = 0.05
+
+        est_seconds = max(1, round(files_to_sniff * sec_per_file + cached_count * 0.002))
+        if files_to_sniff == 0 and total > 0:
+            est_time_str = "< 1 second (all cached)"
+        elif est_seconds < 5:
+            est_time_str = "~3–5 seconds"
+        elif est_seconds < 60:
+            est_time_str = f"~{est_seconds} seconds"
+        else:
+            mins = round(est_seconds / 60, 1)
+            est_time_str = f"~{mins} minutes"
+
+        res = {
+            "total_files": total,
+            "files_to_index": files_to_sniff,
+            "cached_files": cached_count,
+            "languages": languages,
+            "languages_summary": languages_summary,
+            "estimated_seconds": est_seconds,
+            "estimated_time_str": est_time_str,
+        }
+        self.last_baseline = res
+        return res
+
+    @property
+    def is_running(self) -> bool:
+        return self.sniffer is not None and self.sniffer.is_alive()
+
     def stats_snapshot(self) -> dict:
         """Lightweight status/counts payload for the menu bar dashboard."""
         index = self.storage.entity_index()
         proj = self.config.project_path
         return {
             "configured": self.config.is_configured,
+            "running": self.is_running,
             "project_path": str(proj) if proj else None,
             "repo_name": proj.name if proj else "None",
             "model_name": self.config.active_model_display_name,
             "sniffing": self.sniffing,
+            "scan_progress": self.scan_progress,
+            "baseline": self.last_baseline,
             "last_synced": self.last_synced,
             "file_count": self.storage.file_count(),
             "connection_count": len(self.storage.graph_edges()),
@@ -105,13 +226,12 @@ class CodeBoneService:
 
         extensions = set(self.config.get("watched_extensions"))
         ignore_dirs = self.config.get_ignore_dirs(project_path)
+        gitignore_spec = load_gitignore_spec(project_path)
 
         matching_files: list[Path] = []
         try:
             for path in project_path.rglob("*"):
-                if path.is_file() and path.suffix in extensions and not any(
-                    part in ignore_dirs for part in path.parts
-                ):
+                if is_watched_file(path, extensions, ignore_dirs, gitignore_spec=gitignore_spec, project_path=project_path):
                     matching_files.append(path)
         except OSError:
             logger.exception("Error scanning project path %s", project_path)
@@ -123,6 +243,7 @@ class CodeBoneService:
 
         sniffed = 0
         skipped = 0
+        start_time = time.time()
 
         with self._lock:
             self.sniffing = True
@@ -135,6 +256,26 @@ class CodeBoneService:
                     except ValueError:
                         rel_path = str(path)
                     active_rel_paths.add(rel_path)
+
+                    elapsed = max(0.01, time.time() - start_time)
+                    rate = idx / elapsed
+                    remaining_count = total - idx
+                    eta_sec = max(0, round(remaining_count / rate)) if rate > 0 else 0
+                    if eta_sec < 60:
+                        eta_str = f"~{eta_sec}s"
+                    else:
+                        eta_str = f"~{round(eta_sec / 60, 1)}m"
+
+                    self.scan_progress = {
+                        "current": idx,
+                        "total": total,
+                        "sniffed": sniffed,
+                        "skipped": skipped,
+                        "pct": int((idx / total) * 100),
+                        "eta_seconds": eta_sec,
+                        "eta_str": eta_str,
+                        "current_file": rel_path,
+                    }
 
                     if on_progress:
                         on_progress(idx, total, rel_path)
@@ -153,8 +294,8 @@ class CodeBoneService:
                     try:
                         self._sniff_file(path, mtime=mtime, force=force)
                         sniffed += 1
-                    except Exception:
-                        logger.exception("Error sniffing %s during rescan", path)
+                    except Exception as exc:
+                        logger.debug("Tolerated error sniffing %s during rescan: %s", path, exc)
 
                 # Clean up deleted files
                 deleted_paths = [p for p in existing_mtimes.keys() if p not in active_rel_paths]
@@ -164,6 +305,7 @@ class CodeBoneService:
 
             finally:
                 self.sniffing = False
+                self.scan_progress = None
                 if self.on_activity_end:
                     self.on_activity_end()
 
@@ -253,8 +395,8 @@ class CodeBoneService:
                 self.on_activity_start()
             try:
                 self._sniff_file(path)
-            except Exception:
-                logger.exception("Error sniffing %s", path)
+            except Exception as exc:
+                logger.debug("Tolerated error sniffing %s: %s", path, exc)
             finally:
                 self.sniffing = False
                 if self.on_activity_end:
@@ -285,23 +427,59 @@ class CodeBoneService:
             # File content has not actually changed
             return
 
-        raw_output = self.provider.sniff(rel_path, code[:6000])
-        res = self.storage.update_file(
-            rel_path,
-            raw_output,
-            mtime=mtime,
-            content_hash=content_hash,
-        )
+        # Syntax-error-resilience for incomplete code during edits (Issue #5):
+        # If code has broken syntax (e.g. unclosed parenthesis/quotes during typing),
+        # quietly preserve the last known good state in SQLite without error logs.
+        if path.suffix == ".py":
+            try:
+                import ast
+                ast.parse(code)
+            except SyntaxError as syn_err:
+                logger.debug(
+                    "Tolerated syntax error in incomplete file %s during edit (preserving previous state): %s",
+                    rel_path,
+                    syn_err,
+                )
+                return
+        elif path.suffix == ".json":
+            try:
+                import json
+                json.loads(code)
+            except Exception as json_err:
+                logger.debug(
+                    "Tolerated malformed JSON in %s during edit (preserving previous state): %s",
+                    rel_path,
+                    json_err,
+                )
+                return
 
-        self.last_synced = rel_path
-        logger.info(
-            "Sniffed %s -> %d tables, %d routes, %d events, %d domains",
-            rel_path,
-            len(res.get("tables", [])),
-            len(res.get("routes", [])),
-            len(res.get("events", [])),
-            len(res.get("domains", [])),
-        )
+        try:
+            raw_output = self.provider.sniff(rel_path, code[:6000])
+            res = self.storage.update_file(
+                rel_path,
+                raw_output,
+                mtime=mtime,
+                content_hash=content_hash,
+            )
+            self.last_synced = rel_path
+            logger.info(
+                "Sniffed %s -> %d tables, %d routes, %d events, %d domains",
+                rel_path,
+                len(res.get("tables", [])),
+                len(res.get("routes", [])),
+                len(res.get("events", [])),
+                len(res.get("domains", [])),
+            )
+        except (SyntaxError, ValueError) as exc:
+            logger.debug(
+                "Tolerated parsing error in %s (preserved previous state): %s",
+                rel_path,
+                exc,
+            )
+            return
+        except Exception as exc:
+            logger.debug("Non-fatal parsing issue for %s: %s", rel_path, exc)
+            return
 
     def _handle_batch(self, changed: set[Path], deleted: set[Path]):
         """Handles burst changes (e.g. git checkout, branch switch, mass file moves/refactors)."""
@@ -373,7 +551,7 @@ class CodeBoneService:
                             self._sniff_file(p)
                         except Exception as exc:
                             self.last_error = str(exc)
-                            logger.exception("Error sniffing file %s in batch", p)
+                            logger.debug("Tolerated error sniffing file %s in batch: %s", p, exc)
 
                 # 4. If this was a large batch (e.g. branch switch with >= 8 files), auto-save snapshot
                 if len(changed) + len(deleted) >= 8:

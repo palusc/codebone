@@ -18,7 +18,7 @@ logger = logging.getLogger("codebone.scans")
 
 
 class ScanManager:
-    """Manages saved codebase scans, snapshots, and exports in ~/Library/Application Support/CodeBone/scans."""
+    """Manages saved codebase scans, snapshots, and exports in ~/Library/Application Support/codebone/scans."""
 
     def __init__(self, config: Config):
         self.config = config

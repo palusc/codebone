@@ -1,4 +1,4 @@
-"""Test suite for CodeBone's Smart Scan Adoption and AI Structural Reconciliation."""
+"""Test suite for codebone's Smart Scan Adoption and AI Structural Reconciliation."""
 import os
 import shutil
 import tempfile
@@ -145,9 +145,15 @@ def test_api_endpoints():
         assert status_data["file_count"] == 1
         assert client.get("/pug/status").status_code == 200
 
-        # 3. Test GET /codebone/context and /codebone/graph
+        # 3. Test GET /codebone/context, /codebone/graph, and /codebone/graph/ui
         assert client.get("/codebone/context").status_code == 200
-        assert client.get("/codebone/graph").status_code == 200
+        graph_res = client.get("/codebone/graph")
+        assert graph_res.status_code == 200
+        assert "files" in graph_res.json()
+        ui_res = client.get("/codebone/graph/ui")
+        assert ui_res.status_code == 200
+        assert "codebone — Semantic Code Graph" in ui_res.text
+        assert "metrics-bar" in ui_res.text
 
         # 4. Test POST /codebone/scans/adopt with a new moved folder
         new_proj_dir = tmp_path / "my_api_project_moved"

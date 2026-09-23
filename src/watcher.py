@@ -8,11 +8,12 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from .battery import on_battery_power
+from .config import is_watched_file, load_gitignore_spec
 
 logger = logging.getLogger("codebone.watcher")
 
-DEBOUNCE_SECONDS = 0.8
-DEBOUNCE_SECONDS_ON_BATTERY = 2.5
+DEBOUNCE_SECONDS = 0.5
+DEBOUNCE_SECONDS_ON_BATTERY = 15.0
 
 
 class _SnifferHandler(FileSystemEventHandler):
@@ -23,12 +24,16 @@ class _SnifferHandler(FileSystemEventHandler):
         extensions: set[str],
         ignore_dirs: set[str],
         on_batch: Optional[Callable[[set[Path], set[Path]], None]] = None,
+        project_path: Optional[Path] = None,
+        gitignore_spec: Optional[object] = None,
     ):
         self.on_change = on_change
         self.on_delete = on_delete
         self.on_batch = on_batch
         self.extensions = extensions
         self.ignore_dirs = ignore_dirs
+        self.project_path = project_path
+        self.gitignore_spec = gitignore_spec
         self._changed: set[Path] = set()
         self._deleted: set[Path] = set()
         self._timer: Optional[threading.Timer] = None
@@ -36,11 +41,13 @@ class _SnifferHandler(FileSystemEventHandler):
 
     def _is_watched(self, path: str) -> bool:
         p = Path(path)
-        if p.suffix not in self.extensions:
-            return False
-        if any(part in self.ignore_dirs for part in p.parts):
-            return False
-        return True
+        return is_watched_file(
+            p,
+            extensions=self.extensions,
+            ignore_dirs=self.ignore_dirs,
+            gitignore_spec=self.gitignore_spec,
+            project_path=self.project_path,
+        )
 
     def _schedule_batch(self):
         delay = DEBOUNCE_SECONDS_ON_BATTERY if on_battery_power() else DEBOUNCE_SECONDS
@@ -128,12 +135,15 @@ class Sniffer:
         on_batch: Optional[Callable[[set[Path], set[Path]], None]] = None,
     ):
         self.project_path = project_path
+        gitignore_spec = load_gitignore_spec(self.project_path)
         self.handler = _SnifferHandler(
             on_change=on_change,
             on_delete=on_delete,
             extensions=set(extensions),
             ignore_dirs=set(ignore_dirs),
             on_batch=on_batch,
+            project_path=self.project_path,
+            gitignore_spec=gitignore_spec,
         )
         self.observer = Observer()
 
@@ -141,6 +151,9 @@ class Sniffer:
         self.observer.schedule(self.handler, str(self.project_path), recursive=True)
         self.observer.start()
         logger.info("Sniffer watching %s", self.project_path)
+
+    def is_alive(self) -> bool:
+        return self.observer is not None and self.observer.is_alive()
 
     def stop(self):
         self.observer.stop()

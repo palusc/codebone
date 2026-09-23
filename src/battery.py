@@ -11,6 +11,7 @@ def on_battery_power() -> bool:
         out = subprocess.run(
             ["pmset", "-g", "batt"], capture_output=True, text=True, timeout=3
         ).stdout
-        return "'Battery Power'" in out or "Battery Power" in out and "AC Power" not in out
+        return "Battery Power" in out and "AC Power" not in out
     except (OSError, subprocess.SubprocessError):
         return False
+

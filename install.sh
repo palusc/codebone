@@ -1,11 +1,11 @@
 #!/bin/bash
-# CodeBone Installer — Minimal, robust, local-first setup for macOS.
+# codebone Installer — Minimal, robust, local-first setup for macOS.
 set -euo pipefail
 
-echo "🦴 Installing CodeBone (The Semantic Local-Server)..."
+echo "🦴 Installing codebone (The Semantic Local-Server)..."
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  echo "Error: CodeBone is designed specifically for macOS (Metal / Menu Bar)." >&2
+  echo "Error: codebone is designed specifically for macOS (Metal / Menu Bar)." >&2
   exit 1
 fi
 
@@ -15,8 +15,8 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CODEBONE_HOME="$HOME/Library/Application Support/CodeBone"
-APP_NAME="CodeBone.app"
+CODEBONE_HOME="$HOME/Library/Application Support/codebone"
+APP_NAME="codebone.app"
 
 TARGET_DIR="/Applications"
 if [[ ! -w "$TARGET_DIR" ]]; then
@@ -24,21 +24,23 @@ if [[ ! -w "$TARGET_DIR" ]]; then
 fi
 mkdir -p "$TARGET_DIR"
 
-# Terminate any previously running instances (both CodeBone and legacy PUG)
+# Terminate any previously running instances (both codebone and legacy CodeBone/PUG)
+pkill -f "/codebone.app/" >/dev/null 2>&1 || true
 pkill -f "/CodeBone.app/" >/dev/null 2>&1 || true
 pkill -f "codebone_main.py" >/dev/null 2>&1 || true
 pkill -f "/PUG.app/" >/dev/null 2>&1 || true
 pkill -f "pug_main.py" >/dev/null 2>&1 || true
 sleep 0.5
 
-# Clean up legacy PUG.app and login items
+# Clean up legacy CodeBone.app / PUG.app and login items
+rm -rf "$TARGET_DIR/CodeBone.app" "/Applications/CodeBone.app" "$HOME/Applications/CodeBone.app"
 rm -rf "$TARGET_DIR/PUG.app" "/Applications/PUG.app" "$HOME/Applications/PUG.app"
 launchctl unload "$HOME/Library/LaunchAgents/com.pug.app.plist" >/dev/null 2>&1 || true
 rm -f "$HOME/Library/LaunchAgents/com.pug.app.plist"
 
 echo "1/5 Preparing Application Support directories at $CODEBONE_HOME..."
 mkdir -p "$CODEBONE_HOME/models"
-mkdir -p "$HOME/Library/Logs/CodeBone"
+mkdir -p "$HOME/Library/Logs/codebone"
 
 # Migrate legacy database if found
 if [[ -f "$CODEBONE_HOME/pug.sqlite3" && ! -f "$CODEBONE_HOME/codebone.sqlite3" ]]; then
@@ -125,9 +127,9 @@ cat > "$CONTENTS/Info.plist" <<EOF
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleName</key>
-    <string>CodeBone</string>
+    <string>codebone</string>
     <key>CFBundleDisplayName</key>
-    <string>CodeBone</string>
+    <string>codebone</string>
     <key>CFBundleIdentifier</key>
     <string>com.codebone.app</string>
     <key>CFBundleVersion</key>
@@ -135,7 +137,7 @@ cat > "$CONTENTS/Info.plist" <<EOF
     <key>CFBundleShortVersionString</key>
     <string>1.0.0</string>
     <key>CFBundleExecutable</key>
-    <string>CodeBone</string>
+    <string>codebone</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIconName</key>
@@ -144,6 +146,14 @@ cat > "$CONTENTS/Info.plist" <<EOF
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>codebone requires access to your Documents folder to index code repositories located there.</string>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>codebone requires access to your Desktop folder to index code repositories located there.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>codebone requires access to your Downloads folder to index code repositories located there.</string>
+    <key>NSRemovableVolumesUsageDescription</key>
+    <string>codebone requires access to external volumes to index code repositories stored on external drives.</string>
 </dict>
 </plist>
 EOF
@@ -154,7 +164,7 @@ PYTHON_CFLAGS=$(python3-config --cflags 2>/dev/null || echo "")
 PYTHON_LDFLAGS=$(python3-config --ldflags --embed 2>/dev/null || python3-config --ldflags 2>/dev/null || echo "")
 
 if command -v clang >/dev/null 2>&1 && [[ -n "$PYTHON_CFLAGS" && -n "$PYTHON_LDFLAGS" ]]; then
-  clang -O2 $PYTHON_CFLAGS -o "$MACOS/CodeBone" -x c - $PYTHON_LDFLAGS << 'EOF'
+  clang -O2 $PYTHON_CFLAGS -o "$MACOS/codebone" -x c - $PYTHON_LDFLAGS << 'EOF'
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <mach-o/dyld.h>
@@ -173,18 +183,18 @@ int main(int argc, char *argv[]) {
     char script[PATH_MAX];
     snprintf(script, sizeof(script), "%s/../Resources/src/codebone_main.py", dir);
 
-    char *py_argv[] = { "CodeBone", script, NULL };
+    char *py_argv[] = { "codebone", script, NULL };
     return Py_BytesMain(2, py_argv);
 }
 EOF
 else
-  cat > "$MACOS/CodeBone" <<EOF
+  cat > "$MACOS/codebone" <<EOF
 #!/bin/bash
 DIR="\$(cd "\$(dirname "\$0")" && pwd)"
 exec "\$DIR/../Resources/venv/bin/python3" "\$DIR/../Resources/src/codebone_main.py"
 EOF
 fi
-chmod +x "$MACOS/CodeBone"
+chmod +x "$MACOS/codebone"
 
 # Refresh LaunchServices database so icon and file size update immediately
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP_BUNDLE" >/dev/null 2>&1 || true
@@ -192,7 +202,7 @@ touch "$APP_BUNDLE"
 
 # Register MCP for Claude CLI if installed
 if command -v claude >/dev/null 2>&1; then
-  echo "Wiring up CodeBone to Claude via MCP..."
+  echo "Wiring up codebone to Claude via MCP..."
   claude mcp remove pug >/dev/null 2>&1 || true
   claude mcp add -s user codebone -- "$APP_VENV/bin/python3" "$RESOURCES/src/codebone_mcp/server.py" 2>/dev/null || true
 fi
@@ -212,18 +222,26 @@ servers = data.setdefault('mcpServers', {})
 servers.pop('pug', None)
 servers['codebone'] = {
     'command': '$APP_VENV/bin/python3',
-    'args': ['$RESOURCES/src/codebone_mcp/server.py']
+    'args': ['$RESOURCES/src/codebone_mcp/server.py'],
+    'env': {'CODEBONE_PORT': '8053'}
 }
 with open(p, 'w') as f:
     json.dump(data, f, indent=2)
 " 2>/dev/null || true
 fi
 
+# Build standalone Uninstaller application alongside codebone.app
+if [[ -f "$REPO_DIR/scripts/build_uninstaller.sh" ]]; then
+  "$REPO_DIR/scripts/build_uninstaller.sh" "$TARGET_DIR" >/dev/null 2>&1 || true
+fi
+
 echo ""
-echo "✨ CodeBone is installed successfully!"
-echo "   App:    $APP_BUNDLE"
-echo "   Server: http://localhost:3000"
-echo "   Logs:   $HOME/Library/Logs/CodeBone/codebone.log"
+echo "✨ codebone is installed successfully!"
+echo "   App:         $APP_BUNDLE"
+echo "   Uninstaller: $TARGET_DIR/Uninstall codebone.app"
+echo "   Server:      http://localhost:8053"
+echo "   Logs:        $HOME/Library/Logs/codebone/codebone.log"
 echo ""
-echo "Starting CodeBone now..."
+echo "Starting codebone now..."
 open "$APP_BUNDLE" || true
+

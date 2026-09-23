@@ -1,4 +1,4 @@
-"""py2app build script — `python setup.py py2app` produces CodeBone.app."""
+"""py2app build script — `python setup.py py2app` produces codebone.app."""
 from setuptools import setup
 
 from src import __version__
@@ -9,12 +9,12 @@ OPTIONS = {
     "argv_emulation": False,
     "plist": {
         "LSUIElement": True,  # menu bar only, no Dock icon
-        "CFBundleName": "CodeBone",
-        "CFBundleDisplayName": "CodeBone",
+        "CFBundleName": "codebone",
+        "CFBundleDisplayName": "codebone",
         "CFBundleIdentifier": "com.codebone.app",
         "CFBundleShortVersionString": __version__,
         "CFBundleVersion": __version__,
-        "NSHumanReadableCopyright": "CodeBone",
+        "NSHumanReadableCopyright": "codebone",
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "11.0",
         "LSApplicationCategoryType": "public.app-category.developer-tools",

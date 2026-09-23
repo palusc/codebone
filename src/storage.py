@@ -1,4 +1,4 @@
-"""Internal SQLite store for CodeBone's semantic knowledge graph."""
+"""Internal SQLite store for codebone's semantic knowledge graph."""
 import json
 import sqlite3
 import time
@@ -308,6 +308,38 @@ class Storage:
             "domains": domains_map,
         }
 
+    def all_domains(self) -> List[str]:
+        """Returns sorted list of all unique domain names across the codebase."""
+        idx = self.entity_index()
+        return sorted(list(idx.get("domains", {}).keys()))
+
+    def filtered_entity_index(self, allowed_paths: set[str]) -> dict:
+        """Returns inverted indexes filtered to a specific set of file paths."""
+        tables_map: Dict[str, List[str]] = {}
+        routes_map: Dict[str, List[str]] = {}
+        events_map: Dict[str, List[str]] = {}
+        domains_map: Dict[str, List[str]] = {}
+
+        for entry in self.all_files():
+            p = entry["path"]
+            if p not in allowed_paths:
+                continue
+            for t in entry.get("tables", []):
+                tables_map.setdefault(t, []).append(p)
+            for r in entry.get("routes", []):
+                routes_map.setdefault(r, []).append(p)
+            for e in entry.get("events", []):
+                events_map.setdefault(e, []).append(p)
+            for d in entry.get("domains", []):
+                domains_map.setdefault(d, []).append(p)
+
+        return {
+            "tables": tables_map,
+            "routes": routes_map,
+            "events": events_map,
+            "domains": domains_map,
+        }
+
     def graph_edges(self) -> List[dict]:
         """Files are logically connected if they share an overarching domain, DB table, API route, or event."""
         edges = []
@@ -315,14 +347,17 @@ class Storage:
 
         for category, cat_map in [
             ("domain", index.get("domains", {})),
-            ("table", index["tables"]),
-            ("route", index["routes"]),
-            ("event", index["events"]),
+            ("table", index.get("tables", {})),
+            ("route", index.get("routes", {})),
+            ("event", index.get("events", {})),
         ]:
             for entity_name, paths in cat_map.items():
                 unique = sorted(set(paths))
+                # Fan-out safeguard: cap neighbor pairs per entity to avoid O(N^2) browser freezing
+                max_peers = 15 if category == "domain" else 25
                 for i in range(len(unique)):
-                    for j in range(i + 1, len(unique)):
+                    limit = min(len(unique), i + 1 + max_peers)
+                    for j in range(i + 1, limit):
                         edges.append({
                             "from": unique[i],
                             "to": unique[j],

@@ -1,10 +1,10 @@
-"""File-based logging for CodeBone background service and macOS app."""
+"""File-based logging for codebone background service and macOS app."""
 import logging
 import logging.handlers
 import sys
 from pathlib import Path
 
-LOG_DIR = Path.home() / "Library" / "Logs" / "CodeBone"
+LOG_DIR = Path.home() / "Library" / "Logs" / "codebone"
 LOG_FILE = LOG_DIR / "codebone.log"
 
 

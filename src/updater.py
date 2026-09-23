@@ -20,7 +20,7 @@ logger = logging.getLogger("codebone.updater")
 
 GITHUB_REPO = "palusc/codebone"
 RELEASES_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-CURRENT_VERSION = "1.2.1"
+CURRENT_VERSION = "1.2.2"
 
 
 def parse_version(v_str: str) -> Tuple[int, ...]:

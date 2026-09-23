@@ -10,7 +10,7 @@
 [![macOS](https://img.shields.io/badge/platform-macOS-black?logo=apple&style=flat-square)](#)
 [![Metal GPU](https://img.shields.io/badge/inference-Apple%20Silicon%20Metal-purple?style=flat-square)](#)
 [![MCP](https://img.shields.io/badge/protocol-MCP%20Native-blue?style=flat-square)](#)
-[![Version 1.2.1](https://img.shields.io/badge/version-1.2.1-informational?style=flat-square)](CHANGELOG.md)
+[![Version 1.2.2](https://img.shields.io/badge/version-1.2.2-informational?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Local Only](https://img.shields.io/badge/privacy-100%25%20local-success?style=flat-square)](#-privacy--security)
 
@@ -32,7 +32,7 @@ codebone runs in your macOS menu bar, watches every file save, and delivers a li
 
 ## 🚀 Download & Install
 
-### [⬇️ Download](https://github.com/palusc/codebone/releases/download/v1.2.1/codebone-macos-arm64.dmg)
+### [⬇️ Download](https://github.com/palusc/codebone/releases/download/v1.2.2/codebone-macos-arm64.dmg)
 
 Drag `codebone.app` to `/Applications` — done. A 🦴 appears in your menu bar.
 

@@ -2,6 +2,16 @@
 # codebone Installer — Minimal, robust, local-first setup for macOS.
 set -euo pipefail
 
+# Safety: ensure this exact install.sh is the latest from git origin/main
+_CURRENT_COMMIT=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --short HEAD 2>/dev/null || echo "")
+_ORIGIN_COMMIT=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --short origin/main 2>/dev/null || echo "")
+if [[ -n "$_CURRENT_COMMIT" && -n "$_ORIGIN_COMMIT" && "$_CURRENT_COMMIT" != "$_ORIGIN_COMMIT" ]]; then
+  echo "⚠️  Warning: Your local install.sh ($CURRENT_COMMIT) is behind origin/main ($_ORIGIN_COMMIT)."
+  echo "   Please run: git fetch origin && git reset --hard origin/main"
+  echo "   Then re-run: ./install.sh"
+  echo ""
+fi
+
 COMMIT=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --short HEAD 2>/dev/null || echo "latest")
 echo "🦴 Installing codebone ($COMMIT) — The Semantic Local-Server..."
 
@@ -198,16 +208,41 @@ echo "3/5 Configuring Python virtual environment inside App Bundle..."
 APP_VENV="$RESOURCES/venv"
 
 # If an existing venv exists, ensure it actually runs Python >= 3.10
+# This deletes any stale Python 3.9 venv left from a previous failed install.
 if [[ -d "$APP_VENV" ]]; then
-  if [[ ! -x "$APP_VENV/bin/python3" ]] || ! "$APP_VENV/bin/python3" -c 'import sys; exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
-    echo "    Re-creating existing virtualenv with Python $PY_VER (older Python version detected)..."
+  EXISTING_PY_VER=""
+  if [[ -x "$APP_VENV/bin/python3" ]]; then
+    EXISTING_PY_VER=$("$APP_VENV/bin/python3" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "unknown")
+  fi
+  if [[ -z "$EXISTING_PY_VER" ]] || ! "$APP_VENV/bin/python3" -c 'import sys; exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+    echo "    ⚠️ Existing venv uses Python $EXISTING_PY_VER (< 3.10). Wiping and re-creating..."
     rm -rf "$APP_VENV"
+  else
+    echo "    Existing venv OK (Python $EXISTING_PY_VER)."
   fi
 fi
 
 if [[ ! -d "$APP_VENV" ]]; then
+  echo "    Creating venv with $PYTHON_BIN (Python $PY_VER)..."
   "$PYTHON_BIN" -m venv "$APP_VENV"
 fi
+
+# ===== HARD ASSERTION: venv must be Python >= 3.10 =====
+VENV_PY_VER=$("$APP_VENV/bin/python3" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>/dev/null || echo "ERROR")
+if ! "$APP_VENV/bin/python3" -c 'import sys; exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+  echo "" >&2
+  echo "❌ FATAL: The virtual environment was created with Python $VENV_PY_VER." >&2
+  echo "   pip with Python < 3.10 cannot install 'mcp', 'fastapi', or other required packages." >&2
+  echo "   The interpreter used was: $PYTHON_BIN" >&2
+  echo "   Detected venv Python:     $APP_VENV/bin/python3 = $VENV_PY_VER" >&2
+  echo "" >&2
+  echo "   Fix: Run 'brew install python' then re-run './install.sh'" >&2
+  rm -rf "$APP_VENV"
+  exit 1
+fi
+echo "   ✅ venv Python: $VENV_PY_VER — ready for pip install."
+# ===========================================================
+
 if [[ -e "$CODEBONE_HOME/venv" && ! -L "$CODEBONE_HOME/venv" ]]; then
   rm -rf "$CODEBONE_HOME/venv"
 fi
@@ -220,13 +255,35 @@ echo "4/5 Installing dependencies with Apple Silicon Metal acceleration..."
 export CMAKE_ARGS="-DGGML_METAL=on"
 
 # Try installing all requirements; if full requirements fail, fallback to core dependencies
-if ! "$APP_VENV/bin/pip" install --quiet -r "$RESOURCES/src/requirements.txt"; then
-  echo "    ⚠️ Full requirements install encountered an issue. Retrying core dependencies..."
-  "$APP_VENV/bin/pip" install --quiet fastapi uvicorn rumps watchdog pydantic requests mcp httpx pathspec pytest || true
+if ! "$APP_VENV/bin/pip" install --quiet -r "$RESOURCES/src/requirements.txt" 2>&1; then
+  echo "    ⚠️ Full requirements install encountered an issue. Retrying core dependencies individually..."
+  for dep in "fastapi>=0.110.0" "uvicorn>=0.29.0" "rumps>=0.4.0" "watchdog>=4.0.0" "pydantic>=2.6.0" "requests>=2.31.0" "mcp>=1.0.0,<2.0.0" "httpx>=0.27.0" "pathspec>=0.12.0" "pytest>=8.0.0"; do
+    "$APP_VENV/bin/pip" install --quiet "$dep" 2>/dev/null || echo "    ⚠️ Could not install: $dep"
+  done
   "$APP_VENV/bin/pip" install --quiet llama-cpp-python 2>/dev/null || {
     echo "    Note: llama-cpp-python native Metal compilation skipped. FastFallbackProvider will be active."
   }
 fi
+
+# ===== HARD ASSERTION: verify mcp is importable =====
+if ! "$APP_VENV/bin/python3" -c 'import mcp' 2>/dev/null; then
+  echo "    ⚠️ mcp not importable — forcing install of mcp>=1.0.0,<2.0.0..."
+  "$APP_VENV/bin/pip" install 'mcp>=1.0.0,<2.0.0'
+fi
+# Verify all critical packages
+MISSING_PKGS=()
+for pkg in fastapi uvicorn rumps watchdog pydantic mcp httpx pathspec; do
+  if ! "$APP_VENV/bin/python3" -c "import $pkg" 2>/dev/null; then
+    MISSING_PKGS+=("$pkg")
+    "$APP_VENV/bin/pip" install --quiet "$pkg" || true
+  fi
+done
+if [[ ${#MISSING_PKGS[@]} -gt 0 ]]; then
+  echo "   ⚠️ Force-installed missing packages: ${MISSING_PKGS[*]}"
+else
+  echo "   ✅ All dependencies verified and importable."
+fi
+# ====================================================
 
 # Link source dir into site-packages so codebone_mcp and src imports work globally
 "$APP_VENV/bin/python3" -c "import site; from pathlib import Path; sp = Path(site.getsitepackages()[0]); (sp / 'pug.pth').unlink(missing_ok=True); (sp / 'codebone.pth').write_text('$RESOURCES/src\n')"

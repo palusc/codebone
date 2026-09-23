@@ -57,6 +57,7 @@ from .logging_setup import configure_logging
 from .permissions import check_folder_access, open_full_disk_access_settings
 from .server import ServerThread
 from .service import CodeBoneService, PugService
+from .updater import CURRENT_VERSION, check_for_updates, download_and_install_update, restart_app
 
 configure_logging()
 logger = logging.getLogger("codebone.app")
@@ -90,7 +91,7 @@ def _get_icon(path_str: str) -> str:
     return path_str
 
 
-def _set_symbol_icon(menu_item: Optional[rumps.MenuItem], symbol_name: str, size: float = 14.0):
+def _set_symbol_icon(menu_item: Optional[rumps.MenuItem], symbol_name: str, size: float = 15.0):
     """Sets a native Apple SF Symbol vector icon on an NSMenuItem with standard point size."""
     if menu_item is None:
         return
@@ -98,13 +99,15 @@ def _set_symbol_icon(menu_item: Optional[rumps.MenuItem], symbol_name: str, size
     try:
         img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(symbol_name, None)
         if img:
+            img = img.copy()
             try:
                 cfg = NSImageSymbolConfiguration.configurationWithPointSize_weight_(size, 4)
                 configured = img.imageWithSymbolConfiguration_(cfg)
                 if configured:
-                    img = configured
+                    img = configured.copy()
             except Exception:
                 pass
+            img.setSize_(NSSize(size, size))
             img.setTemplate_(True)
             raw_item.setImage_(img)
     except Exception as exc:
@@ -523,6 +526,9 @@ class CodeBoneApp(rumps.App):
         self.feedback_item = rumps.MenuItem("Feedback & Bug Report...", callback=self.open_feedback_dialog)
         _set_symbol_icon(self.feedback_item, "exclamationmark.bubble")
 
+        self.check_updates_item = rumps.MenuItem("Check for Updates...", callback=self.check_updates)
+        _set_symbol_icon(self.check_updates_item, "arrow.triangle.2.circlepath")
+
         self.uninstall_item = rumps.MenuItem("Uninstall codebone...", callback=self.confirm_uninstall)
         _set_symbol_icon(self.uninstall_item, "trash")
         self.settings_menu.update([
@@ -534,6 +540,7 @@ class CodeBoneApp(rumps.App):
             self.view_logs_item,
             self.full_disk_access_item,
             None,
+            self.check_updates_item,
             self.export_scan_item,
             self.import_scan_item,
             self.reset_map_item,
@@ -677,7 +684,7 @@ class CodeBoneApp(rumps.App):
         rumps.alert(
             title="About codebone",
             message=(
-                "codebone (v1.0.0)\n"
+                f"codebone (v{CURRENT_VERSION})\n"
                 "Real-time Local Codebase Intelligence & Knowledge Graph\n\n"
                 "Runs zero-cloud semantic indexing and provides live architecture "
                 "context (models, routes, events, and business domains) to AI coding agents.\n\n"
@@ -689,6 +696,114 @@ class CodeBoneApp(rumps.App):
             ),
             ok="OK",
         )
+
+    def check_updates(self, _):
+        """Checks GitHub Releases for new codebone versions with interactive update and install flow."""
+        try:
+            NSMenu.cancelTracking()
+        except Exception:
+            pass
+
+        try:
+            run_loop = NSRunLoop.currentRunLoop()
+            run_loop.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.1))
+        except Exception:
+            pass
+
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+
+        try:
+            update_info = check_for_updates(current_version=CURRENT_VERSION)
+        except Exception as exc:
+            logger.error("Failed to check for updates: %s", exc)
+            rumps.alert(
+                title="Update Check Failed",
+                message=f"Could not connect to GitHub to check for updates:\n{exc}",
+                ok="OK",
+            )
+            return
+
+        if not update_info.get("update_available"):
+            if update_info.get("error"):
+                err_msg = update_info["error"]
+                rumps.alert(
+                    title="Update Check Failed",
+                    message=f"Could not check for updates:\n{err_msg}",
+                    ok="OK",
+                )
+            else:
+                latest = update_info.get("latest_version", CURRENT_VERSION)
+                rumps.alert(
+                    title="codebone is Up to Date",
+                    message=f"codebone v{latest} is currently the newest version.",
+                    ok="OK",
+                )
+            return
+
+        # An update is available
+        latest_ver = update_info.get("latest_version")
+        rel_notes = (update_info.get("release_notes") or "").strip()
+        if len(rel_notes) > 350:
+            rel_notes = rel_notes[:347] + "..."
+        if not rel_notes:
+            rel_notes = "Performance improvements, UI refinements, and bug fixes."
+
+        size_mb = update_info.get("asset_size", 0) / (1024 * 1024)
+        size_str = f" ({size_mb:.1f} MB)" if size_mb > 0 else ""
+
+        confirm = rumps.alert(
+            title=f"codebone v{latest_ver} Available",
+            message=(
+                f"A new version of codebone is available!\n\n"
+                f"Current Version: v{CURRENT_VERSION}\n"
+                f"Latest Version:  v{latest_ver}{size_str}\n\n"
+                f"Release Notes:\n{rel_notes}\n\n"
+                f"Would you like to download and install this update now?"
+            ),
+            ok="Install & Restart",
+            cancel="Later",
+        )
+
+        if confirm != 1:
+            return
+
+        download_url = update_info.get("download_url")
+        if not download_url:
+            rumps.alert(
+                title="Update Package Missing",
+                message=(
+                    f"No automated update bundle was found for v{latest_ver}.\n"
+                    f"Please visit: {update_info.get('html_url')}"
+                ),
+                ok="OK",
+            )
+            return
+
+        rumps.notification(
+            title="codebone Update",
+            subtitle=f"Downloading v{latest_ver}...",
+            message="Installing update in the background.",
+        )
+
+        def _do_install():
+            try:
+                download_and_install_update(download_url)
+                rumps.notification(
+                    title="codebone Update",
+                    subtitle="Update Installed",
+                    message="Restarting codebone now...",
+                )
+                restart_app()
+            except Exception as err:
+                logger.error("Failed to install update: %s", err)
+                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+                rumps.alert(
+                    title="Update Installation Failed",
+                    message=f"An error occurred while installing the update:\n{err}",
+                    ok="OK",
+                )
+
+        threading.Thread(target=_do_install, daemon=True, name="codebone-updater").start()
 
     def open_repo(self, _):
         if self.config.project_path and self.config.project_path.exists():
@@ -776,11 +891,35 @@ class CodeBoneApp(rumps.App):
                 stats_text = "0 Nodes  ·  0 Connections"
             self.card_stats_label.setStringValue_(stats_text)
 
+    def _apply_all_icons(self):
+        """Applies native Apple SF Symbol vector icons across the entire menu hierarchy."""
+        # Top-level menu items
+        _set_symbol_icon(self.rescan_item, "arrow.clockwise")
+        _set_symbol_icon(self.select_project_item, "folder")
+        _set_symbol_icon(self.settings_menu, "gearshape")
+        _set_symbol_icon(self.feedback_item, "exclamationmark.bubble")
+        _set_symbol_icon(self.about_item, "info.circle")
+        _set_symbol_icon(self.quit_item, "power")
+
+        # Settings submenu items
+        _set_symbol_icon(self.brain_menu, "brain")
+        _set_symbol_icon(self.adopt_scan_item, "link")
+        _set_symbol_icon(self.copy_curl_item, "doc.on.clipboard")
+        _set_symbol_icon(self.open_repo_item, "folder")
+        _set_symbol_icon(self.view_logs_item, "doc.text")
+        _set_symbol_icon(self.full_disk_access_item, "lock.shield")
+        _set_symbol_icon(self.check_updates_item, "arrow.triangle.2.circlepath")
+        _set_symbol_icon(self.export_scan_item, "square.and.arrow.up")
+        _set_symbol_icon(self.import_scan_item, "square.and.arrow.down")
+        _set_symbol_icon(self.reset_map_item, "trash")
+        _set_symbol_icon(self.uninstall_item, "trash")
+
     def _update_ui_state(self):
         """Updates the menu bar icon and refreshes menu status."""
         self.icon = _get_icon(ICON_ACTIVE if self.config.is_configured else ICON_INACTIVE)
         if not self.icon:
             self.title = "codebone"
+        self._apply_all_icons()
         self._update_brain_checks()
         self._push_stats()
 

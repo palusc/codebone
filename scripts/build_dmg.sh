@@ -48,6 +48,11 @@ EOF
   chmod +x "$STAGE_APP/Contents/MacOS/codebone"
 fi
 
+# Clean up build artifacts that invalidate bundle structure or inflate size
+rm -rf "$STAGE_APP/Contents/MacOS"/*.dSYM
+find "$STAGE_APP" -name ".DS_Store" -delete 2>/dev/null || true
+find "$STAGE_APP" -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+
 # Ensure clean permissions
 chmod -R 755 "$STAGE_APP"
 
@@ -103,6 +108,12 @@ hdiutil create -volname "$APP_NAME" \
 
 rm -rf "$DMG_TMP"
 
+# Provide consistent unversioned artifact aliases
+GENERIC_DMG="$DIST_DIR/$APP_NAME-macos-arm64.dmg"
+GENERIC_ZIP="$DIST_DIR/$APP_NAME-macos-arm64.zip"
+cp "$DMG_PATH" "$GENERIC_DMG"
+cp "$ZIP_PATH" "$GENERIC_ZIP"
+
 echo ""
 echo "✅ Build Complete!"
 echo "   DMG: $DMG_PATH ($(du -sh "$DMG_PATH" | cut -f1))"
@@ -114,8 +125,8 @@ if [[ "${1:-}" == "--release" ]]; then
   TAG="${2:-$VERSION}"
   echo "🚀 Uploading to GitHub Release $TAG via gh CLI..."
   if command -v gh >/dev/null 2>&1; then
-    gh release upload "$TAG" "$DMG_PATH" "$ZIP_PATH" --clobber || \
-    gh release create "$TAG" "$DMG_PATH" "$ZIP_PATH" --title "codebone $TAG" --notes "Native Apple Silicon release of codebone."
+    gh release upload "$TAG" "$DMG_PATH" "$ZIP_PATH" "$GENERIC_DMG" "$GENERIC_ZIP" --clobber || \
+    gh release create "$TAG" "$DMG_PATH" "$ZIP_PATH" "$GENERIC_DMG" "$GENERIC_ZIP" --title "codebone $TAG" --notes "Native Apple Silicon release of codebone."
     echo "🎉 Successfully published release $TAG to GitHub!"
   else
     echo "⚠️ gh CLI not found. Upload $DMG_PATH manually to GitHub Releases."

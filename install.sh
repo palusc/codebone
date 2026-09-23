@@ -187,6 +187,7 @@ int main(int argc, char *argv[]) {
     return Py_BytesMain(2, py_argv);
 }
 EOF
+  rm -rf "$MACOS/codebone.dSYM"
 else
   cat > "$MACOS/codebone" <<EOF
 #!/bin/bash
@@ -195,6 +196,11 @@ exec "\$DIR/../Resources/venv/bin/python3" "\$DIR/../Resources/src/codebone_main
 EOF
 fi
 chmod +x "$MACOS/codebone"
+
+# Clean up unwanted build / cache artifacts
+rm -rf "$MACOS"/*.dSYM
+find "$APP_BUNDLE" -name ".DS_Store" -delete 2>/dev/null || true
+find "$APP_BUNDLE" -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
 # Sanitize bundle symlinks (prevent Gatekeeper rejection if bundle is packaged or inspected)
 find "$APP_BUNDLE" -type l | while IFS= read -r link; do

@@ -32,7 +32,7 @@ codebone runs in your macOS menu bar, watches every file save, and delivers a li
 
 ## 🚀 Download & Install
 
-### ➡️ [Download DMG (Apple Silicon)](https://github.com/palusc/codebone/releases/latest)
+### [⬇️ Download codebone-macos-arm64.dmg](https://github.com/palusc/codebone/releases/download/v1.2.0/codebone-macos-arm64.dmg)
 
 Drag `codebone.app` to `/Applications` — done. A 🦴 appears in your menu bar.
 

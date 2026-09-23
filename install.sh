@@ -423,60 +423,26 @@ cat > "$CONTENTS/Info.plist" <<EOF
 </plist>
 EOF
 
-# Compile native Mach-O executable launcher embedding Python directly.
-# This prevents PID/audit token mismatches that cause MenuBarAgent to reject status items on macOS.
-PYTHON_CONFIG="${PYTHON_BIN}-config"
-if ! command -v "$PYTHON_CONFIG" >/dev/null 2>&1; then
-  PYTHON_CONFIG="python3-config"
-fi
-
-PYTHON_CFLAGS=$("$PYTHON_CONFIG" --cflags 2>/dev/null || echo "")
-PYTHON_LDFLAGS=$("$PYTHON_CONFIG" --ldflags --embed 2>/dev/null || "$PYTHON_CONFIG" --ldflags 2>/dev/null || echo "")
-
-if command -v clang >/dev/null 2>&1 && [[ -n "$PYTHON_CFLAGS" && -n "$PYTHON_LDFLAGS" ]]; then
-  if clang -O2 $PYTHON_CFLAGS -o "$MACOS/codebone" -x c - $PYTHON_LDFLAGS 2>/dev/null << 'EOF'
-#define PY_SSIZE_T_CLEAN
-#include <Python.h>
-#include <mach-o/dyld.h>
-#include <libgen.h>
-#include <limits.h>
-#include <stdio.h>
-#include <stdlib.h>
-
-int main(int argc, char *argv[]) {
-    char exe_path[PATH_MAX];
-    uint32_t size = sizeof(exe_path);
-    if (_NSGetExecutablePath(exe_path, &size) != 0) {
-        return 1;
-    }
-    char *dir = dirname(exe_path);
-    char script[PATH_MAX];
-    snprintf(script, sizeof(script), "%s/../Resources/src/codebone_main.py", dir);
-
-    char *py_argv[] = { "codebone", script, NULL };
-    return Py_BytesMain(2, py_argv);
-}
-EOF
-  then
-    rm -rf "$MACOS/codebone.dSYM"
-  else
-    cat > "$MACOS/codebone" <<EOF
+# ── Launcher script (portable bash — no Python dylib dependency) ──────────
+# NOTE: A native Mach-O compiled launcher links against the local
+# Python.framework path (e.g. /opt/homebrew/opt/python@3.14/...) which
+# breaks on any other Mac. The bash script launcher is fully portable.
+cat > "$MACOS/codebone" << 'LAUNCHEREOF'
 #!/bin/bash
-DIR="\$(cd "\$(dirname "\$0")" && pwd)"
-exec "\$DIR/../Resources/venv/bin/python3" "\$DIR/../Resources/src/codebone_main.py"
-EOF
-  fi
-else
-  cat > "$MACOS/codebone" <<EOF
-#!/bin/bash
-DIR="\$(cd "\$(dirname "\$0")" && pwd)"
-exec "\$DIR/../Resources/venv/bin/python3" "\$DIR/../Resources/src/codebone_main.py"
-EOF
+DIR="$(cd "$(dirname "$0")" && pwd)"
+PYTHON="$DIR/../Resources/venv/bin/python3"
+SCRIPT="$DIR/../Resources/src/codebone_main.py"
+if [[ ! -x "$PYTHON" ]]; then
+  osascript -e 'display alert "codebone" message "Python venv not found. Please re-run install.sh." as critical' 2>/dev/null || true
+  exit 1
 fi
+exec "$PYTHON" "$SCRIPT"
+LAUNCHEREOF
 chmod +x "$MACOS/codebone"
 
 # Clean up unwanted build / cache artifacts
 rm -rf "$MACOS"/*.dSYM
+
 find "$APP_BUNDLE" -name ".DS_Store" -delete 2>/dev/null || true
 find "$APP_BUNDLE" -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 

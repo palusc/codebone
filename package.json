@@ -10,7 +10,7 @@
   },
   "license": "MIT",
   "bin": {
-    "codebone-mcp": "./bin/codebone-mcp.js"
+    "codebone-mcp": "bin/codebone-mcp.js"
   },
   "files": [
     "bin/"

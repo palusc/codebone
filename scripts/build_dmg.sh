@@ -51,6 +51,34 @@ fi
 # Ensure clean permissions
 chmod -R 755 "$STAGE_APP"
 
+# Sanitize bundle symlinks: macOS Gatekeeper strictly rejects bundles containing symlinks that resolve outside the bundle.
+echo "🧹 Resolving external bundle symlinks..."
+find "$STAGE_APP" -type l | while IFS= read -r link; do
+  if [[ -L "$link" ]]; then
+    resolved=$(python3 -c "import os, sys; print(os.path.realpath(sys.argv[1]))" "$link" 2>/dev/null || true)
+    if [[ -n "$resolved" ]]; then
+      case "$resolved" in
+        "$STAGE_APP"/*)
+          # Internal relative symlink within bundle is permitted
+          ;;
+        *)
+          # External symlink pointing outside bundle -> replace with actual file
+          rm -f "$link"
+          cp -L "$resolved" "$link"
+          ;;
+      esac
+    fi
+  fi
+done
+
+# Strip all quarantine attributes and macOS provenance metadata
+xattr -cr "$STAGE_APP" 2>/dev/null || true
+
+# Ad-hoc sign the entire bundle structure so macOS Gatekeeper / installcoordinationd passes verification
+echo "🔏 Code-signing application bundle..."
+codesign --force --deep -s - "$STAGE_APP"
+codesign --verify --deep --strict "$STAGE_APP"
+
 # 1. Create ZIP Package
 echo "📦 Compressing $APP_NAME.app to $ZIP_PATH..."
 (cd "$DIST_DIR" && zip -q -r "$ZIP_PATH" "$APP_NAME.app")

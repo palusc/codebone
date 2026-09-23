@@ -64,10 +64,64 @@ cd codebone
 
 ## 🐾 How It Works
 
-1. **Sniff** — Watches your repo on every `Cmd + S` with battery-aware debouncing.
-2. **Think** — Apple Silicon Metal GPU extracts domains, models, routes, and events in `< 1s`.
-3. **Map** — Builds a Semantic System Graph linking files by shared business logic — not just imports.
-4. **Serve** — Streams precise architectural context to your AI via **MCP** or **curl**.
+1. **Sniff** — Watches your repository on every `Cmd + S` with battery-aware debouncing (0.5s AC, 15s Battery).
+2. **Think** — Built-in Apple Silicon Metal GPU extracts models, routes, events, and business domains in `< 1s`.
+3. **Map** — Links files into a Semantic System Graph based on shared business logic — bridging files that don't import each other.
+4. **Serve** — Streams surgical architectural context to Claude, Cursor, or Gemini via **MCP** or **curl** in ~2k tokens.
+
+<details>
+<summary><b>🔍 Deep Dive: Architecture, Semantic Extraction & Live Graph</b></summary>
+
+<br>
+
+### 1. Concrete Semantic Extraction (The 5 Primitives)
+For every file in your codebase, codebone's local Metal model extracts five structured architectural dimensions in `< 1s` per file:
+
+- **Database Models & Tables** — Entities persisted by the module (e.g. `User`, `Subscription`, `Invoice`).
+- **API Routes & Endpoints** — HTTP methods and paths exposed (e.g. `POST /api/v1/checkout`, `GET /webhook/stripe`).
+- **Events & Webhooks** — Domain events emitted, handled, or dispatched (e.g. `InvoicePaid`, `PaymentFailed`).
+- **Business Domains** — High-level systemic domains (e.g. `Billing & Subscriptions`, `Authentication & Identity`).
+- **Logical Flow Summary** — A strict 1–2 sentence explanation of the module's actual role in the system.
+
+```python
+# Instead of feeding your AI 400 lines of raw boilerplate...
+# codebone distills the file into pure architecture:
+TABLES:  [Invoice, Subscription, PaymentRecord]
+ROUTES:  [POST /api/v1/webhooks/stripe]
+EVENTS:  [invoice.payment_succeeded, customer.subscription_deleted]
+DOMAINS: [Billing & Subscriptions, Payment Processing]
+FLOW:    Verifies Stripe webhook signatures and reconciles subscription status in PostgreSQL.
+```
+
+### 2. Solving the "Import Gap"
+In traditional AST or grep-based tools, files are only connected if file A explicitly writes `import B`. But in real-world software:
+- `billing/webhook.py` writes an `Invoice` record to the database.
+- `cron/dunning.py` queries `Invoice` to retry failed cards.
+- `emails/receipt.py` listens to the `invoice.payment_succeeded` event.
+
+None of these files import each other. A file-dump or basic search misses the connection completely. **codebone links them automatically** through shared models, events, and domains into a unified Semantic System Graph. When you prompt your AI:
+> *"How does subscription renewal work?"*
+
+codebone delivers all 3 interconnected files and their schemas in **~2,000 tokens** instead of 25,000.
+
+### 3. Interactive Live Graph UI
+Inspect your codebase's real-time architecture visually:
+
+```bash
+open http://localhost:8053/codebone/graph/ui
+```
+
+- **Interactive Canvas** — Dark glassmorphic node-link visualization mapping every file and domain cluster.
+- **Click-to-Inspect Drawer** — Click any node to view its exact tables, endpoints, events, and summary.
+- **Instant Search** — Press `/` to filter nodes across the entire project in real time.
+- **Auto-Sync** — Automatically updates live whenever you save a file.
+
+### 4. Edit Resilience & Sandboxing
+- **Syntax Tolerance**: If a file has broken syntax during typing (unclosed quotes or brackets), codebone quietly preserves the last known good state in SQLite without failing or dropping nodes.
+- **Zero Battery Drain**: Automatically throttles debouncing from 0.5s to 15s when running on MacBook battery power.
+- **Prompt Injection Defense**: Untrusted repository code is isolated with escaped XML wrappers and strict anti-jailbreak directives.
+
+</details>
 
 ---
 
@@ -159,36 +213,29 @@ curl 'http://localhost:8053/codebone/context?query=InvoiceCreated'
 
 ---
 
-## 🗺️ Live Graph UI
+## 🧠 Brains & Smart Engine
 
-```bash
-open http://localhost:8053/codebone/graph/ui
-```
+codebone pairs local-first Apple Silicon Metal acceleration with zero-cost smart indexing:
 
-Interactive node-link diagram of your codebase. Dark glassmorphism theme, real-time search (`/`), click-to-inspect drawer, and live sync on every file save.
+### 🧩 Flexible Brain Providers
 
----
+| Provider | Description | Latency |
+|---|---|---|
+| **Built-in (Qwen 0.5B)** *(default)* | Apple Silicon Metal GPU acceleration. 100% offline, zero cloud, zero cost. | `< 1s / file` |
+| **Deep Scan Mode (7B)** | One-click full re-analysis with 7B parameters, automatically reverting to 0.5B. | Thorough |
+| **Local URL** | Ollama, LM Studio, vLLM, or any OpenAI-compatible local endpoint. | Custom |
+| **Cloud BYOK** | Your own API key — Anthropic (`Claude Sonnet 5`) or OpenAI (`GPT-6`). | Zero RAM |
+| **Custom .gguf** | Load any GGUF model directly via macOS file dialog (Qwen 7B, Llama 3, etc.). | Native Metal |
 
-## 🧠 Brain Options
+> ⚙️ Switch anytime via 🦴 ➔ **Settings** ➔ **Model**.
 
-| Provider | Description |
-|---|---|
-| **Built-in (Qwen 0.5B)** *(default)* | Metal GPU-accelerated. Zero cost, zero cloud. |
-| **Local URL** | Ollama, LM Studio, or any OpenAI-compatible endpoint. |
-| **Cloud BYOK** | Your own API key — OpenAI (`GPT-6`) or Anthropic (`Claude Sonnet 5`). |
-| **Custom .gguf** | Any local GGUF model via file dialog (e.g. Qwen 7B, Llama 3). |
+### ⚡ Smart Scan & Instant Adoption
 
-🦴 ➔ **Settings** ➔ **Model** to switch at any time.
+Never re-scan from scratch when switching branches or reorganizing code:
 
----
-
-## 🔄 Smart Scan Adoption
-
-Renamed, moved, or branched your project? **Never re-scan from scratch.**
-
-SHA-256 fingerprinting reuses unchanged files instantly. Only modified files are re-sniffed.
-
-🦴 ➔ **Adopt / Link Existing Scan...**
+- **SHA-256 Fingerprinting (0 LLM Cost)**: Renamed, moved, or refactored files match their cryptographic hash and are re-linked in SQLite immediately without invoking the model.
+- **Branch Switch Batching**: Coalesces rapid burst events (e.g. `git checkout`) into bulk reconciliation.
+- **Portable Scan Snapshots**: Save, export, or adopt pre-computed `.sqlite3` architecture snapshots across folders or team machines via 🦴 ➔ **Adopt / Link Existing Scan...** or REST API (`/codebone/scans`).
 
 ---
 

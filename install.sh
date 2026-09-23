@@ -196,6 +196,27 @@ EOF
 fi
 chmod +x "$MACOS/codebone"
 
+# Sanitize bundle symlinks (prevent Gatekeeper rejection if bundle is packaged or inspected)
+find "$APP_BUNDLE" -type l | while IFS= read -r link; do
+  if [[ -L "$link" ]]; then
+    resolved=$(python3 -c "import os, sys; print(os.path.realpath(sys.argv[1]))" "$link" 2>/dev/null || true)
+    if [[ -n "$resolved" ]]; then
+      case "$resolved" in
+        "$APP_BUNDLE"/*)
+          ;;
+        *)
+          rm -f "$link"
+          cp -L "$resolved" "$link"
+          ;;
+      esac
+    fi
+  fi
+done
+
+# Strip quarantine attributes and codesign bundle
+xattr -cr "$APP_BUNDLE" 2>/dev/null || true
+codesign --force --deep -s - "$APP_BUNDLE" 2>/dev/null || true
+
 # Refresh LaunchServices database so icon and file size update immediately
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP_BUNDLE" >/dev/null 2>&1 || true
 touch "$APP_BUNDLE"

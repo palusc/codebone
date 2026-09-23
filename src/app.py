@@ -697,7 +697,7 @@ class CodeBoneApp(rumps.App):
                 "• Incremental Real-time File System Watcher\n"
                 "• Interactive Visual Knowledge Graph HUD\n"
                 "• Model Context Protocol (MCP) Server\n\n"
-                "Developed by Paul Schirra"
+                "Developed by palusc"
             ),
             ok="OK",
         )

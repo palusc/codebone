@@ -249,6 +249,48 @@ Never re-scan from scratch when switching branches or reorganizing code:
 
 ---
 
+## ❓ Frequently Asked Questions
+
+<details>
+<summary><h3><b>💬 Questions you might have (FAQ) — Click to expand</b></h3></summary>
+
+<br>
+
+> **The important part isn't making your AI work harder. It's doing the repetitive context work before your AI session starts.**
+
+---
+
+#### Why does codebone run locally 24/7?
+codebone keeps your codebase graph continuously updated in the background. The local model can process changes independently of your AI session, so architectural context does not have to be rebuilt every time you start a new cloud session.
+
+#### Does codebone replace Claude, Cursor, Gemini, or Codex?
+No. codebone provides architectural context to the AI tools you already use through MCP. Your existing AI model still generates the code.
+
+#### Why not just let my AI read the repository itself?
+It can. The difference is that codebone continuously prepares and maintains a compact semantic representation of the codebase locally, instead of repeatedly discovering the same structure during individual AI sessions.
+
+#### Does codebone actually make AI coding better?
+The primary goal is to provide more relevant architectural context with less repeated file-level context. The effect depends on the codebase, task, and AI agent. The most meaningful comparison is a real feature task on the same repository with and without codebone.
+
+#### Does it send my code to the cloud?
+By default, no. codebone runs locally and binds strictly to `localhost` (`127.0.0.1:8053`). Cloud models can optionally be used with your own API key (BYOK).
+
+#### Why is the local model small?
+The local model is not intended to replace your main coding model. Its job is to continuously analyze and structure your codebase in the background. The main AI agent can then use that prepared context.
+
+#### Does it use tokens while I'm not actively using Claude/Cursor/etc.?
+No. All continuous processing happens locally on your machine via Apple Silicon Metal GPU. It does not consume API tokens simply because codebone is running.
+
+#### What happens if my AI session ends?
+The codebase graph remains available in SQLite. codebone continues running independently in the menu bar and keeps the graph up to date as you write code.
+
+#### Is this just another RAG system?
+codebone focuses on a continuously maintained semantic system graph of domains, models, routes, events, and relationships rather than only retrieving similar text chunks. The actual usefulness depends on the project and query.
+
+</details>
+
+---
+
 ## 🗑️ Uninstall
 
 <details>

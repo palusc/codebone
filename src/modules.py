@@ -23,6 +23,8 @@ OWNED_KEYS = ENV_KEYS + ("apiKeyHelper",)
 PRESETS = [
     {"name": "MiMo V2.6 Pro (Xiaomi)", "model": "mimo-v2.6-pro",
      "anthropic_url": "https://api.xiaomimimo.com/anthropic", "openai_url": "https://api.xiaomimimo.com/v1"},
+    {"name": "OpenRouter", "model": "openai/gpt-4o-mini",
+     "openai_url": "https://openrouter.ai/api/v1"},
 ]
 
 # app id -> (menu name, API format the app needs)

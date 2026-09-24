@@ -365,7 +365,7 @@ class LocalUrlProvider(Provider):
 
 
 class CloudProvider(Provider):
-    """Cloud BYOK provider (OpenAI or Anthropic)."""
+    """Cloud BYOK provider (OpenAI, Anthropic, or OpenRouter)."""
 
     def __init__(self, vendor: str, api_key: str, model: str):
         self.vendor = vendor.lower()
@@ -398,6 +398,22 @@ class CloudProvider(Provider):
                 )
                 if r.status_code == 200:
                     return r.json()["content"][0]["text"].strip()
+            elif self.vendor == "openrouter":
+                r = requests.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": self.model or "openai/gpt-4o-mini",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.1,
+                    },
+                    timeout=REQUEST_TIMEOUT,
+                )
+                if r.status_code == 200:
+                    return r.json()["choices"][0]["message"]["content"].strip()
             else:
                 # OpenAI
                 r = requests.post(

@@ -5,6 +5,23 @@ All notable changes to codebone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-09-24
+
+### Fixed
+- **Modules getting stuck routing Claude Code or opencode through a dead API.** The off-switch used to skip restoring the app's normal settings whenever codebone's own bookkeeping believed the app was already off; it now always attempts the restore. Added a **"Fix Stuck Connection (Reset to Normal)"** action in the Modules menu that unconditionally puts both apps back on their normal setup, independent of that local state. Switching an app onto a module now also verifies the endpoint actually answers and automatically reverts it if it doesn't.
+
+### Added
+- A master **Modules on/off switch**: off puts every app back on its normal setup and remembers which were active so turning it back on restores them.
+- A **Quick Links** submenu under Modules (OpenRouter dashboard, API keys, docs).
+
+### Changed
+- Restructured the main menu: Scan Project Now / Select Project Folder / Recent Project, then Model / Modules, then Settings (with "Connect AI Assistants (MCP)..." moved in).
+
+## [1.3.1] - 2026-09-24
+
+### Fixed
+- Relaunching codebone while it was already running used to exit silently with nothing on screen; it now notifies you and brings the running instance's menu forward instead.
+
 ## [1.3.0] - 2026-09-24
 
 ### Added

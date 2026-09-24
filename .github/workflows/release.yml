@@ -60,9 +60,18 @@ jobs:
           sed -i '' "s#^  url \".*\"#  url \"https://github.com/palusc/codebone/releases/download/v${version}/codebone-macos-arm64.zip\"#" Formula/codebone.rb
           sed -i '' "s#^  sha256 \".*\"#  sha256 \"${zip_sha}\"#" Formula/codebone.rb
 
+      - name: Sync package.json + README version badge
+        run: |
+          set -euo pipefail
+          version="${{ steps.bump.outputs.version }}"
+          sed -i '' "s#\"version\": \".*\"#\"version\": \"${version}\"#" package.json
+          sed -i '' "s#version-[0-9][0-9.]*-informational#version-${version}-informational#" README.md
+          sed -i '' "s#Version%20[0-9][0-9.]*-#Version%20${version}-#" README.md
+          sed -i '' "s#!\[Version [0-9][0-9.]*\]#![Version ${version}]#" README.md
+
       - name: Commit version bump + formula
         run: |
-          git add src/__init__.py Formula/codebone.rb
+          git add src/__init__.py Formula/codebone.rb package.json README.md
           git commit -m "chore(release): bump version to ${{ steps.bump.outputs.version }}"
           git push origin HEAD:main
 

@@ -577,19 +577,37 @@ class CodeBoneApp(rumps.App):
 
         self.uninstall_item = rumps.MenuItem("Uninstall codebone...", callback=self.confirm_uninstall)
         _set_symbol_icon(self.uninstall_item, "trash")
-        self.settings_menu.update([
-            self.mcp_setup_item,
+
+        # Settings is grouped into sub-sections so it's clear at a glance where a given
+        # setting lives, instead of one long flat list.
+        self.project_settings_menu = rumps.MenuItem("Project")
+        _set_symbol_icon(self.project_settings_menu, "folder.badge.gearshape")
+        self.project_settings_menu.update([
             self.adopt_scan_item,
             self.copy_curl_item,
             None,
             self.open_repo_item,
             self.view_logs_item,
             self.full_disk_access_item,
-            None,
-            self.check_updates_item,
+        ])
+
+        self.scan_data_menu = rumps.MenuItem("Scan Data")
+        _set_symbol_icon(self.scan_data_menu, "externaldrive")
+        self.scan_data_menu.update([
             self.export_scan_item,
             self.import_scan_item,
+            None,
             self.reset_map_item,
+        ])
+
+        self.settings_menu.update([
+            self.mcp_setup_item,
+            self.brain_menu,
+            None,
+            self.project_settings_menu,
+            self.scan_data_menu,
+            None,
+            self.check_updates_item,
             None,
             self.uninstall_item,
         ])
@@ -606,7 +624,6 @@ class CodeBoneApp(rumps.App):
             self.select_project_item,
             self.recent_projects_menu,
             None,
-            self.brain_menu,
             self.modules_switch_item,
             self.modules_menu,
             None,
@@ -991,6 +1008,8 @@ class CodeBoneApp(rumps.App):
 
         # Settings submenu items
         _set_symbol_icon(self.brain_menu, "brain")
+        _set_symbol_icon(self.project_settings_menu, "folder.badge.gearshape")
+        _set_symbol_icon(self.scan_data_menu, "externaldrive")
         _set_symbol_icon(self.adopt_scan_item, "link")
         _set_symbol_icon(self.copy_curl_item, "doc.on.clipboard")
         _set_symbol_icon(self.open_repo_item, "folder")

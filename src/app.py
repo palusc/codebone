@@ -547,7 +547,7 @@ class CodeBoneApp(rumps.App):
         self.uninstall_item = rumps.MenuItem("Uninstall codebone...", callback=self.confirm_uninstall)
         _set_symbol_icon(self.uninstall_item, "trash")
         self.settings_menu.update([
-            self.brain_menu,
+            self.mcp_setup_item,
             self.adopt_scan_item,
             self.copy_curl_item,
             None,
@@ -571,11 +571,12 @@ class CodeBoneApp(rumps.App):
 
         self.menu = [
             self.header_item,
-            self.mcp_setup_item,
             None,
             self.rescan_item,
             self.select_project_item,
             self.recent_projects_menu,
+            None,
+            self.brain_menu,
             self.modules_menu,
             None,
             self.settings_menu,
@@ -1101,17 +1102,26 @@ class CodeBoneApp(rumps.App):
             self.modules_menu.clear()
         library = modules.list_modules(self.config)
         selected = modules.get_module(self.config, self.config.get("module_selected"))
+        master_on = bool(self.config.get("modules_enabled"))
         active = set(modules.enabled_apps(self.config))
 
+        master_item = rumps.MenuItem("Modules Enabled", callback=self.toggle_modules_master)
+        master_item.state = master_on
+        self.modules_menu.add(master_item)
+        self.modules_menu.add(None)
+
         for m in library:  # which model
-            item = rumps.MenuItem(m["name"], callback=lambda _, mid=m["id"]: self.pick_module(mid))
+            item = rumps.MenuItem(m["name"], callback=(lambda _, mid=m["id"]: self.pick_module(mid)) if master_on else None)
             item.state = bool(selected and selected["id"] == m["id"])
             self.modules_menu.add(item)
         if library:
             self.modules_menu.add(None)
             for app_id, (label, fmt) in modules.APPS.items():  # which apps use it
                 needs = "" if (selected is None or modules.supports(selected, app_id)) else f"  (needs {modules.FORMAT_NAMES[fmt]} URL)"
-                item = rumps.MenuItem(f"Use for {label}{needs}", callback=lambda _, a=app_id: self.toggle_module_app(a))
+                item = rumps.MenuItem(
+                    f"Use for {label}{needs}",
+                    callback=(lambda _, a=app_id: self.toggle_module_app(a)) if master_on else None,
+                )
                 item.state = app_id in active
                 self.modules_menu.add(item)
             copy_menu = rumps.MenuItem("Copy for Other Apps")
@@ -1130,6 +1140,58 @@ class CodeBoneApp(rumps.App):
                 remove_menu.add(rumps.MenuItem(m["name"], callback=lambda _, mid=m["id"], n=m["name"]: self.remove_module_dialog(mid, n)))
             self.modules_menu.add(remove_menu)
 
+        self.modules_menu.add(None)
+        links_menu = rumps.MenuItem("Quick Links")
+        _set_symbol_icon(links_menu, "link")
+        links_menu.add(rumps.MenuItem("OpenRouter Dashboard...", callback=lambda _: self.open_url("https://openrouter.ai/dashboard")))
+        links_menu.add(rumps.MenuItem("OpenRouter API Keys...", callback=lambda _: self.open_url("https://openrouter.ai/keys")))
+        links_menu.add(rumps.MenuItem("Modules Help...", callback=lambda _: self.open_url("https://openrouter.ai/docs")))
+        self.modules_menu.add(links_menu)
+
+        self.modules_menu.add(rumps.MenuItem("Fix Stuck Connection (Reset to Normal)", callback=self.reset_modules_to_normal))
+
+    def open_url(self, url: str):
+        try:
+            subprocess.Popen(["open", url])
+        except Exception as exc:
+            logger.error("Failed to open URL %s: %s", url, exc)
+
+    def toggle_modules_master(self, _):
+        from . import modules
+
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        turning_on = not bool(self.config.get("modules_enabled"))
+        try:
+            modules.set_modules_master(self.config, turning_on)
+        except modules.SettingsUnreadable as exc:
+            rumps.alert("Modules", f"Settings file could not be read, so nothing was changed:\n{exc}")
+            return
+        if turning_on:
+            rumps.notification("codebone", "Modules enabled", "Previously active apps are routed through their module again.")
+            selected = modules.get_module(self.config, self.config.get("module_selected"))
+            if selected:
+                for app_id in modules.enabled_apps(self.config):
+                    self._verify_module_or_revert(app_id, selected)
+        else:
+            rumps.notification("codebone", "Modules disabled", "Every app is back on its normal setup.")
+        self._update_modules_menu()
+
+    def reset_modules_to_normal(self, _):
+        from . import modules
+
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        if rumps.alert(
+            "Fix Stuck Connection",
+            "This puts Claude Code and opencode back on their normal setup, whatever codebone currently "
+            "thinks their state is. Use this if a module's API key stopped working and switching it off "
+            "didn't fix it.",
+            ok="Reset to Normal", cancel="Cancel",
+        ) != 1:
+            return
+        modules.force_restore_all(self.config)
+        rumps.notification("codebone", "Modules reset", "Claude Code and opencode are back on their normal setup.")
+        self._update_modules_menu()
+
     def toggle_module_app(self, app_id: str):
         from . import modules
 
@@ -1146,9 +1208,42 @@ class CodeBoneApp(rumps.App):
             return
         if module:
             rumps.notification("codebone", f"{label} now uses {module['name']}", "New sessions pick this up; running ones keep their model.")
+            self._verify_module_or_revert(app_id, module)
         else:
             rumps.notification("codebone", f"{label} is back on its normal model", "New sessions use your usual setup again.")
         self._update_modules_menu()
+
+    def _verify_module_or_revert(self, app_id: str, module: dict):
+        """After switching an app onto a module, confirms the endpoint actually answers. If it doesn't, the app
+        is switched straight back to normal instead of being left pointed at a dead API."""
+        from . import modules
+
+        label = modules.APPS[app_id][0]
+        fmt = modules.APPS[app_id][1]
+        url = modules._url(module, fmt)
+        key = modules.Keychain().get(module["id"])
+        if not url or not key:
+            return
+
+        def _run():
+            ok, msg = modules.test_connection(url, module["model"], key, fmt=fmt)
+            if ok:
+                return
+
+            def _revert():
+                try:
+                    modules.set_app_enabled(self.config, app_id, False)
+                except (modules.SettingsUnreadable, ValueError):
+                    pass
+                rumps.notification(
+                    "codebone", f"{label} switched back to normal",
+                    f"{module['name']} did not respond ({msg}); reverted so {label} keeps working.",
+                )
+                self._update_modules_menu()
+
+            self._on_main(_revert)
+
+        threading.Thread(target=_run, daemon=True, name="codebone-module-verify").start()
 
     def copy_module_value(self, what: str, getter):
         value = getter()

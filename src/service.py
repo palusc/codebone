@@ -302,7 +302,11 @@ class CodeBoneService:
             "baseline": self.last_baseline,
             "last_synced": self.last_synced,
             "file_count": self.storage.file_count(),
-            "connection_count": len(self.storage.graph_edges(index)),
+            # include_domains=True: table/route/event edges alone are sparse for most projects (a desktop
+            # app with no DB or REST routes has almost none), while the live graph already draws domain
+            # clusters from the same per-file domain data — excluding them here made the menu bar/
+            # notifications report "0 connections" even when the graph itself showed clear clustering.
+            "connection_count": len(self.storage.graph_edges(index, include_domains=True)),
             "domain_count": len(index["domains"]),
             "table_count": len(index["tables"]),
             "route_count": len(index["routes"]),

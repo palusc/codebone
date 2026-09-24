@@ -80,12 +80,36 @@ jobs:
           git tag "v${{ steps.bump.outputs.version }}"
           git push origin "v${{ steps.bump.outputs.version }}"
 
+      - name: Build release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          version="${{ steps.bump.outputs.version }}"
+          # Prefer the version's own CHANGELOG.md section (curated, human-written); fall back to the
+          # merge commit's PR title so a release never ships with no notes at all.
+          section="$(awk -v ver="## [$version]" '
+            $0 ~ "^" ver { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md)"
+          section="$(printf '%s\n' "$section" | sed -e '/./,$!d')"  # drop leading blank lines
+          if [ -z "$(echo "$section" | tr -d '[:space:]')" ]; then
+            section="$(git log -1 --pretty=%B | tail -n +3 | sed -e '/./,$!d')"
+          fi
+          {
+            echo "$section"
+            echo ""
+            echo "---"
+            echo "Full history: [CHANGELOG.md](https://github.com/palusc/codebone/blob/main/CHANGELOG.md)"
+          } > release_notes.md
+          cat release_notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "v${{ steps.bump.outputs.version }}"
           name: "codebone v${{ steps.bump.outputs.version }}"
-          generate_release_notes: true
+          body_path: release_notes.md
           files: |
             dist/codebone-macos-arm64.dmg
             dist/codebone-macos-arm64.zip

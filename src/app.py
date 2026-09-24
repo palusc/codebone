@@ -1742,6 +1742,9 @@ class CodeBoneApp(rumps.App):
 _instance_lock = None
 
 
+_REOPEN_DISTRIBUTED_NOTIFICATION = "com.codebone.app.reopen"
+
+
 def _acquire_single_instance() -> bool:
     """Two instances would index into the same database and fight over the port; the second one just exits."""
     global _instance_lock
@@ -1758,6 +1761,19 @@ def _acquire_single_instance() -> bool:
 
 def main():
     if not _acquire_single_instance():
+        # A relaunch (e.g. double-clicking the app again) would otherwise just exit silently, leaving
+        # the user thinking nothing happened. Nudge the already-running instance to open its menu instead.
+        try:
+            from Foundation import NSDistributedNotificationCenter
+            NSDistributedNotificationCenter.defaultCenter().postNotificationName_object_userInfo_(
+                _REOPEN_DISTRIBUTED_NOTIFICATION, None, None
+            )
+        except Exception:
+            pass
+        try:
+            rumps.notification("codebone", "Already running", "codebone is already active — check your menu bar.")
+        except Exception:
+            pass
         print("codebone is already running.", file=sys.stderr)
         return
     try:
@@ -1767,15 +1783,27 @@ def main():
         pass
     app = CodeBoneApp()
 
-    # Menu-bar-only app: clicking the .app while it runs would otherwise do nothing visible.
-    def _reopen(self, sender, has_windows):
+    def _open_menu():
         try:
             app._nsapp.nsstatusitem.button().performClick_(None)
         except Exception:
             pass
+
+    # Menu-bar-only app: clicking the .app while it runs would otherwise do nothing visible.
+    def _reopen(self, sender, has_windows):
+        _open_menu()
         return False
 
     rumps.rumps.NSApp.applicationShouldHandleReopen_hasVisibleWindows_ = _reopen
+
+    try:
+        from Foundation import NSDistributedNotificationCenter
+        NSDistributedNotificationCenter.defaultCenter().addObserverForName_object_queue_usingBlock_(
+            _REOPEN_DISTRIBUTED_NOTIFICATION, None, None, lambda note: _open_menu()
+        )
+    except Exception:
+        pass
+
     app.run()
 
 

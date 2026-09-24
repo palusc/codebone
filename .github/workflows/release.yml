@@ -38,6 +38,16 @@ jobs:
           path: ~/Library/Caches/codebone-build
           key: codebone-model-${{ hashFiles('scripts/download_model.py') }}
 
+      - name: Sync to latest main
+        # Two pushes to main queued back-to-back both trigger a run, but the concurrency group only
+        # lets one run at a time; the second run's checkout is still pinned to the older commit that
+        # triggered it, so bumping from that stale version and pushing would be rejected as
+        # non-fast-forward once the first run's release commit has landed. Reset to the real tip first.
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git reset --hard origin/main
+
       - name: Bump patch version
         id: bump
         run: |
@@ -94,7 +104,9 @@ jobs:
           ' CHANGELOG.md)"
           section="$(printf '%s\n' "$section" | sed -e '/./,$!d')"  # drop leading blank lines
           if [ -z "$(echo "$section" | tr -d '[:space:]')" ]; then
-            section="$(git log -1 --pretty=%B | tail -n +3 | sed -e '/./,$!d')"
+            # By this point HEAD is our own just-created "chore(release): ..." commit, which has no
+            # useful body — the commit that actually triggered this run is ${{ github.sha }}.
+            section="$(git log -1 --pretty=%B ${{ github.sha }} | tail -n +3 | sed -e '/./,$!d')"
           fi
           {
             echo "$section"

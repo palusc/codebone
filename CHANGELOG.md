@@ -5,6 +5,15 @@ All notable changes to codebone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-09-24
+
+### Added
+- **Modules** now has its own switch row in the main menu (native macOS switch, Tailscale-style) instead of a checkbox inside a submenu — it's the on/off control itself, no need to open a submenu to flip it. The rest of Modules' configuration (module list, per-app routing, Copy for Other Apps, Add Module, Test Connection, Remove Module, Quick Links, Fix Stuck Connection) moved to a "Modules Settings" submenu right underneath it.
+
+### Changed
+- `package.json` and the README version badge are now kept in sync with every release automatically (they had drifted since 1.3.0).
+- Release notes shown in the in-app updater are now sourced from this changelog instead of GitHub's raw auto-generated notes, and rendered as clean plain text.
+
 ## [1.3.2] - 2026-09-24
 
 ### Fixed

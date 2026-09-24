@@ -1,6 +1,6 @@
 {
   "name": "codebone-mcp",
-  "version": "1.3.0",
+  "version": "1.3.2",
   "description": "MCP server bridge for codebone — real-time codebase knowledge graph for macOS",
   "keywords": ["mcp", "codebone", "codebase", "ai", "claude", "cursor", "context"],
   "homepage": "https://github.com/palusc/codebone",

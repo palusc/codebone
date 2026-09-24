@@ -1310,13 +1310,16 @@ class CodeBoneApp(rumps.App):
 
         label = modules.APPS[app_id][0]
         fmt = modules.APPS[app_id][1]
-        url = modules._url(module, fmt)
+        url = modules._url(module, fmt, self.server.port if getattr(self, "server", None) else None)
         key = modules.Keychain().get(module["id"])
         if not url or not key:
             return
 
         def _run():
-            ok, msg = modules.test_connection(url, module["model"], key, fmt=fmt)
+            try:
+                ok, msg = modules.test_connection(url, module["model"], key, fmt=fmt)
+            except Exception as exc:
+                ok, msg = False, str(exc)
             if ok:
                 return
 
@@ -1405,12 +1408,28 @@ class CodeBoneApp(rumps.App):
         from . import modules
 
         def _run():
-            for fmt in ("anthropic", "openai"):
-                url = modules._url(module, fmt)
-                if not url:
-                    continue
-                ok, msg = modules.test_connection(url, module["model"], key, fmt=fmt)
-                rumps.notification("codebone", f"{module['name']} ({fmt} format): " + ("works" if ok else "failed"), msg)
+            results = []
+            try:
+                for fmt in ("anthropic", "openai"):
+                    url = modules._url(module, fmt, self.server.port if getattr(self, "server", None) else None)
+                    if not url:
+                        continue
+                    ok, msg = modules.test_connection(url, module["model"], key, fmt=fmt)
+                    results.append((fmt, ok, msg))
+            except Exception as exc:  # a dead notification center must never make this look like nothing happened
+                results.append(("error", False, str(exc)))
+
+            def _show():
+                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+                if not results:
+                    rumps.alert("Test Connection", f"{module['name']} has no Anthropic- or OpenAI-format URL to test.")
+                    return
+                lines = [f"{modules.FORMAT_NAMES.get(fmt, fmt)}: {'OK' if ok else 'failed'} — {msg}" for fmt, ok, msg in results]
+                rumps.alert("Test Connection", f"{module['name']}\n\n" + "\n".join(lines))
+                for fmt, ok, msg in results:
+                    rumps.notification("codebone", f"{module['name']} ({fmt} format): " + ("works" if ok else "failed"), msg)
+
+            self._on_main(_show)
 
         threading.Thread(target=_run, daemon=True, name="codebone-module-test").start()
 

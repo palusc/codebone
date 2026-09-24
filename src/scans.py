@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from .config import MAX_FILE_BYTES, Config, list_watched_files, load_gitignore_spec
+from .config import Config, list_watched_files, load_gitignore_spec
 from .prompts import parse_analysis
 from .providers import FastFallbackProvider, Provider
 from .storage import Storage
@@ -264,8 +264,6 @@ class ScanReconciler:
             except ValueError:
                 rel = str(p)
             try:
-                if p.stat().st_size > MAX_FILE_BYTES:
-                    continue
                 b = p.read_bytes()
                 h = hashlib.sha256(b).hexdigest()
                 mtime = p.stat().st_mtime

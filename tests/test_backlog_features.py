@@ -67,7 +67,7 @@ def test_issue_1_dynamic_port_probe_and_mcp_patch(monkeypatch):
 
 
 def test_issue_2_smart_ignoring():
-    """Issue #2: Verify strict exclusions for node_modules, build artifacts, lockfiles, .env, and gitignore."""
+    """Everything is mapped (secrets/binaries as path-only nodes); only the app's own data folder is excluded."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         proj = Path(tmp_dir)
 
@@ -112,19 +112,20 @@ def test_issue_2_smart_ignoring():
         tmp_py = proj / "scratch.tmp.py"
         tmp_py.write_text("# scratch")
 
-        # Tests: codebone maps every real project file now (lockfiles, images, node_modules, ...);
-        # only secrets (.env, credential-shaped names), .git internals and .gitignore rules stay excluded.
+        # Tests: codebone maps every real project file now (lockfiles, images, node_modules, .git, secrets);
+        # nothing is filtered by extension or .gitignore — secret-shaped files are nodes too, their content
+        # is simply never read at sniff time (service._path_only).
         assert is_watched_file(normal_py, project_path=proj, gitignore_spec=gi_spec) is True
-        assert is_watched_file(env_file, project_path=proj, gitignore_spec=gi_spec) is False
-        assert is_watched_file(env_prod, project_path=proj, gitignore_spec=gi_spec) is False
+        assert is_watched_file(env_file, project_path=proj, gitignore_spec=gi_spec) is True
+        assert is_watched_file(env_prod, project_path=proj, gitignore_spec=gi_spec) is True
         assert is_watched_file(lockfile, project_path=proj, gitignore_spec=gi_spec) is True
         assert is_watched_file(pnpm_lock, project_path=proj, gitignore_spec=gi_spec) is True
         assert is_watched_file(media_png, project_path=proj, gitignore_spec=gi_spec) is True
         assert is_watched_file(node_mod, project_path=proj, gitignore_spec=gi_spec) is True
-        assert is_watched_file(next_cache, project_path=proj, gitignore_spec=gi_spec) is True
-        assert is_watched_file(git_file, project_path=proj, gitignore_spec=gi_spec) is False
-        assert is_watched_file(secret_file, project_path=proj, gitignore_spec=gi_spec) is False
-        assert is_watched_file(tmp_py, project_path=proj, gitignore_spec=gi_spec) is False
+        assert is_watched_file(next_cache, project_path=proj, gitignore_spec=gi_spec) is True  # build output is mapped too
+        assert is_watched_file(git_file, project_path=proj, gitignore_spec=gi_spec) is True
+        assert is_watched_file(secret_file, project_path=proj, gitignore_spec=gi_spec) is True  # .gitignore is not applied
+        assert is_watched_file(tmp_py, project_path=proj, gitignore_spec=gi_spec) is True
 
 
 def test_issue_3_lod_slicing_and_parameterless_overview():

@@ -5,6 +5,25 @@ All notable changes to codebone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **The map now covers literally everything, gitignore included.** `.gitignore`/`.npmignore`/`.dockerignore` rules are no longer applied — build output, caches, `.git` internals and gitignored files are mapped like any other file, and secret-shaped files (`.env`, keys, `credentials*`) are nodes too. Their content is still never read: secrets land as path-only nodes (`_path_only`), files above the 32 MB read cap and binaries are catalogued by category and size instead (`_catalog_asset`).
+- Graph lines are more visible.
+
+### Added
+- **Import edges**: files are connected through their Python and JS/TS imports (`src/imports.py`), not only through shared tables, routes and events.
+
+## [1.3.8] - 2026-09-24
+
+### Added
+- **Local Anthropic↔OpenAI translation bridge for Modules.** Claude Code speaks the Anthropic Messages API, so pointing it straight at an OpenAI-only endpoint (e.g. an OpenRouter module) never worked. Requests now run through a local bridge that translates messages, tools and streaming responses between the two shapes; the module's API key is only forwarded, never stored.
+
+## [1.3.7] - 2026-09-24
+
+### Added
+- **OpenRouter support** for Cloud BYOK (new `openrouter` vendor) and Modules (OpenAI-format preset); the Add Module dialog now cycles through all presets.
+
 ## [1.3.6] - 2026-09-24
 
 ### Changed

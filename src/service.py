@@ -11,7 +11,9 @@ from typing import Callable, Optional
 
 from .config import (
     BASE_MODEL_PATH,
-    MAX_FILE_BYTES,
+    GLOBAL_IGNORED_DIRS,
+    MAX_READ_BYTES,
+    _is_secret_or_junk,
     Config,
     is_watched_file,
     list_watched_files,
@@ -374,6 +376,8 @@ class CodeBoneService:
                 load_gitignore_spec(project_path),
                 unreadable_dirs=unreadable_dirs,
             )
+            # Big files are analysed last so they never delay the map of everything else
+            matching_files.sort(key=lambda p: p.stat().st_size if p.exists() else 0)
         except OSError as exc:
             # An unreadable folder (permissions, unmounted volume) is not an empty project: keep the index
             self.last_error = f"Cannot read project folder: {exc}"
@@ -570,8 +574,10 @@ class CodeBoneService:
 
     def _sniff_file(self, path: Path, mtime: Optional[float] = None, force: bool = False, live: bool = False) -> str:
         """Analyse one file. Returns "sniffed", "unchanged" (same content) or "skipped" (outside the project or
-        not worth overwriting good data). A file too big to read fully or binary (an image, a compiled binary,
-        an archive, ...) still gets a node in the map via _catalog_asset — it just isn't semantically analysed.
+        not worth overwriting good data). Secret-shaped files (.env, keys, anything below a credential store)
+        get a path-only node via _path_only — their content is never read, whatever the extension. A file too
+        big to read fully or binary (an image, a compiled binary, an archive, ...) still gets a node in the map
+        via _catalog_asset — it just isn't semantically analysed.
         live=True marks a watcher event: a file that stops parsing right after an edit keeps its previous
         analysis for a grace period (it is probably mid-edit)."""
         rel_path = self._rel(path)
@@ -585,7 +591,13 @@ class CodeBoneService:
         if mtime is None:
             mtime = st.st_mtime
 
-        if st.st_size > MAX_FILE_BYTES:
+        # Never read credential-shaped content: secret-looking file names (also behind an innocent
+        # symlink) and anything below a credential store (.ssh, secrets, ...) stay path-only.
+        real = path.resolve() if path.is_symlink() else path
+        if _is_secret_or_junk(real.name) or any(d in GLOBAL_IGNORED_DIRS for d in real.parts):
+            return self._path_only(rel_path, mtime)
+
+        if st.st_size > MAX_READ_BYTES:
             return self._catalog_asset(rel_path, path, st.st_size, mtime, force, "oversized")
 
         try:
@@ -664,6 +676,15 @@ class CodeBoneService:
         self.last_synced = rel_path
         return "sniffed"
 
+    def _path_only(self, rel_path: str, mtime: float) -> str:
+        """A file whose content must never be read (.env, keys, files under credential stores) still gets a
+        node in the map: path only, no entities, no content hash."""
+        with self._lock:
+            row = self.storage.get_file(rel_path)
+            if not row or abs((row["mtime"] or 0) - mtime) > 1e-3:
+                self.storage.update_file(rel_path, "", mtime=mtime, content_hash="", source="regex")
+        return "sniffed"
+
     def _handle_batch(self, changed: set[Path], deleted: set[Path]):
         """Handles burst changes (e.g. git checkout, branch switch, mass file moves/refactors)."""
         project_path = self.config.project_path
@@ -682,9 +703,8 @@ class CodeBoneService:
                 if rel is None or not p.is_file():
                     continue
                 try:
-                    if p.stat().st_size > MAX_FILE_BYTES:
-                        continue
-                    content_hash = hashlib.sha256(p.read_bytes()).hexdigest()
+                    with open(p, "rb") as fh:
+                        content_hash = hashlib.sha256(fh.read(MAX_READ_BYTES)).hexdigest()
                 except OSError:
                     continue
                 if hashes.get(rel) == content_hash:

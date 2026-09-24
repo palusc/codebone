@@ -1176,12 +1176,12 @@ function draw() {
     ctx.lineTo(b.x, b.y);
     if (e.type === 'domain') {
       ctx.setLineDash([4, 4]);
-      ctx.strokeStyle = hot ? 'rgba(139, 92, 246, 0.85)' : 'rgba(139, 92, 246, 0.18)';
-      ctx.lineWidth = hot ? 2 : 1;
+      ctx.strokeStyle = hot ? 'rgba(167, 139, 250, 0.95)' : 'rgba(167, 139, 250, 0.55)';
+      ctx.lineWidth = hot ? 2.2 : 1.4;
     } else {
       ctx.setLineDash([]);
-      ctx.strokeStyle = hot ? 'rgba(56, 189, 248, 0.8)' : 'rgba(100, 116, 139, 0.22)';
-      ctx.lineWidth = hot ? 2 : 1.2;
+      ctx.strokeStyle = hot ? 'rgba(56, 189, 248, 0.8)' : 'rgba(148, 163, 184, 0.5)';
+      ctx.lineWidth = hot ? 2 : 1.4;
     }
     ctx.stroke();
   }

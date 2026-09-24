@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .imports import import_edges
 from .prompts import _clean_entity_list, parse_analysis, sanitize_text
 
 logger = logging.getLogger("codebone.storage")
@@ -327,8 +328,12 @@ class Storage:
         Pairwise domain edges are opt-in: the live graph already draws domain hub nodes, so they are noise (and
         quadratic). Links per entity are windowed and the total is capped, see MAX_EDGES."""
         if index is None:
-            return self._cached(("edges", include_domains), lambda: self._compute_edges(self.entity_index(), include_domains))
+            return self._cached(("edges", include_domains), lambda: self._compute_edges(self.entity_index(), include_domains) + self._import_edges())
         return self._compute_edges(index, include_domains)
+
+    def _import_edges(self) -> List[dict]:
+        root = self.get_meta("project_path")
+        return import_edges(root, [f["path"] for f in self.all_files()]) if root else []
 
     @staticmethod
     def _compute_edges(index: dict, include_domains: bool) -> List[dict]:

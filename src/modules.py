@@ -279,8 +279,11 @@ def set_app_enabled(config, app_id: str, on: bool, home: Optional[Path] = None,
     apps = dict(config.get("module_apps") or {})
     backups = dict(config.get("module_backups") or {})
     if not on:
-        if apps.get(app_id):
-            (restore_settings if app_id == "claude-code" else restore_opencode)(backups.get(app_id), home)
+        # Always attempt the restore, even if our own bookkeeping says this app is already off:
+        # a crash, a config desync, or a manual edit can leave settings.json pointing at a module
+        # while codebone believes it already put things back. Restoring is a no-op when the
+        # settings file is not ours (restore_settings/restore_opencode check that themselves).
+        (restore_settings if app_id == "claude-code" else restore_opencode)(backups.get(app_id), home)
         apps[app_id] = False
         backups.pop(app_id, None)
         config.set("module_backups", backups)
@@ -314,6 +317,82 @@ def remove_module(config, module_id: str, home: Optional[Path] = None, keychain:
         config.set("module_selected", None)
     (keychain or Keychain()).delete(module_id)
     config.set("modules", [m for m in list_modules(config) if m["id"] != module_id])
+
+
+# ── master switch & recovery ───────────────────────────────────────────────────
+def force_restore_all(config, home: Optional[Path] = None) -> None:
+    """Unconditional recovery: strip every setting codebone's modules could have written, for every app,
+    whether or not our own bookkeeping (module_apps / module_backups) still agrees that anything is on.
+    This is the fix for a coding app stuck on a module's API (e.g. showing API errors) after codebone's
+    normal off-switch failed to catch it — it never trusts local state, only what's actually on disk."""
+    path = settings_path(home)
+    if path.exists():
+        try:
+            data = _read(path)
+            if _is_ours(data):
+                env = dict(data.get("env")) if isinstance(data.get("env"), dict) else {}
+                for k in ENV_KEYS:
+                    env.pop(k, None)
+                if env:
+                    data["env"] = env
+                else:
+                    data.pop("env", None)
+                data.pop("apiKeyHelper", None)
+                if data:
+                    _write(path, data)
+                else:
+                    path.unlink()
+        except SettingsUnreadable:
+            pass
+
+    op_path = opencode_path(home)
+    if op_path.exists():
+        try:
+            data = _read(op_path)
+            if _opencode_ours(data):
+                prov = dict(data.get("provider") or {})
+                entry = prov.pop(OPENCODE_PROVIDER, None)
+                if isinstance(entry, dict):
+                    kf = entry.get("options", {}).get("apiKey", "")
+                    target = kf[len("{file:"):-1] if kf.startswith("{file:") and kf.endswith("}") else ""
+                    if target and "codebone/keys" in target:
+                        Path(target).unlink(missing_ok=True)
+                if prov:
+                    data["provider"] = prov
+                else:
+                    data.pop("provider", None)
+                if str(data.get("model", "")).startswith(f"{OPENCODE_PROVIDER}/"):
+                    data.pop("model", None)
+                if data:
+                    _write(op_path, data)
+                else:
+                    op_path.unlink()
+        except SettingsUnreadable:
+            pass
+
+    config.set("module_apps", {})
+    config.set("module_backups", {})
+    config.set("modules_enabled", False)
+    config.set("modules_paused_apps", [])
+
+
+def set_modules_master(config, on: bool, home: Optional[Path] = None, keychain: Optional[Keychain] = None) -> None:
+    """The single on/off switch for Modules. Off = every app goes back to its normal setup and stays there;
+    codebone remembers which apps were routed so turning it back on restores exactly that."""
+    if not on:
+        active = enabled_apps(config)
+        for app_id in active:
+            set_app_enabled(config, app_id, False, home=home, keychain=keychain)
+        config.set("modules_paused_apps", active)
+        config.set("modules_enabled", False)
+        return
+    config.set("modules_enabled", True)
+    for app_id in config.get("modules_paused_apps") or []:
+        try:
+            set_app_enabled(config, app_id, True, home=home, keychain=keychain)
+        except (ValueError, SettingsUnreadable):
+            pass
+    config.set("modules_paused_apps", [])
 
 
 # ── connection test ──────────────────────────────────────────────────────────

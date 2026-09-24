@@ -347,6 +347,12 @@ DEFAULTS = {
     "deep_scan_model_path": None,
     "recent_projects": [],
     "first_run_at": None,
+    "modules": [],
+    "module_selected": None,
+    "module_apps": {},
+    "module_backups": {},
+    "modules_enabled": False,
+    "modules_paused_apps": [],
 }
 
 

@@ -720,7 +720,7 @@ class CodeBoneApp(rumps.App):
 
         # 5b. Card stats line (vertically centered, no extra subtitle below)
         init_files = self.service.storage.file_count() if self.config.is_configured else 0
-        init_edges = len(self.service.storage.graph_edges()) if self.config.is_configured else 0
+        init_edges = len(self.service.storage.graph_edges(include_domains=True)) if self.config.is_configured else 0
         stats_lbl = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(34, 7), NSSize(204, 18)))
         stats_lbl.setStringValue_(f"{init_files} Nodes  ·  {init_edges} Connections" if self.config.is_configured else "0 Nodes  ·  0 Connections")
         stats_lbl.setFont_(NSFont.systemFontOfSize_(12.0))
@@ -922,12 +922,18 @@ class CodeBoneApp(rumps.App):
                     self._on_main(self._push_stats)
 
                 total, sniffed, skipped = self.service.rescan_all(on_progress=_on_prog, wait=True)
-                conn_count = len(self.service.storage.graph_edges())
-                rumps.notification(
-                    "codebone",
-                    "Scan Complete",
-                    f"Mapped {total} files & {conn_count} connections ({sniffed} updated, {skipped} cached).",
-                )
+                conn_count = len(self.service.storage.graph_edges(include_domains=True))
+                if self.service.last_error:
+                    # A scan can "succeed" (return normally) while having silently skipped part of the
+                    # project (an unreadable subfolder, permissions) — surface that instead of reporting
+                    # a clean count that doesn't match what's actually on disk.
+                    rumps.notification("codebone", "Scan Finished with Issues", self.service.last_error)
+                else:
+                    rumps.notification(
+                        "codebone",
+                        "Scan Complete",
+                        f"Mapped {total} files & {conn_count} connections ({sniffed} updated, {skipped} cached).",
+                    )
             except Exception as exc:
                 logger.exception("Rescan failed")
                 rumps.notification("codebone", "Rescan Failed", str(exc))
@@ -1505,7 +1511,7 @@ class CodeBoneApp(rumps.App):
                     renamed = rep.get("renamed_count", 0)
                     modified = rep.get("modified_count", 0)
                     added = rep.get("added_count", 0)
-                    conn_count = len(self.service.storage.graph_edges())
+                    conn_count = len(self.service.storage.graph_edges(include_domains=True))
                     rumps.notification(
                         "codebone — Baseline Reused",
                         f"{matching.get('project_name')}",
@@ -1535,7 +1541,7 @@ class CodeBoneApp(rumps.App):
 
                     total_scanned, sniffed, skipped = self.service.rescan_all(on_progress=_on_prog, wait=True)
                     dur = max(1, round(time.time() - t0))
-                    conn_count = len(self.service.storage.graph_edges())
+                    conn_count = len(self.service.storage.graph_edges(include_domains=True))
                     rumps.notification(
                         f"codebone — Indexing Complete",
                         f"{p.name} ready ({total_scanned} files)",
@@ -1700,7 +1706,7 @@ class CodeBoneApp(rumps.App):
                 "project": str(self.config.project_path) if self.config.project_path else "none",
                 "brain_provider": self.config.get("brain_provider"),
                 "file_count": self.service.storage.file_count() if self.config.is_configured else 0,
-                "connection_count": len(self.service.storage.graph_edges()) if self.config.is_configured else 0,
+                "connection_count": len(self.service.storage.graph_edges(include_domains=True)) if self.config.is_configured else 0,
             }
             first_line = user_text.splitlines()[0][:60]
             f_type = "bug" if any(w in user_text.lower() for w in ("bug", "crash", "error", "fail", "broken", "issue")) else "feedback"

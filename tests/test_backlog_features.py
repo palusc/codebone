@@ -112,15 +112,16 @@ def test_issue_2_smart_ignoring():
         tmp_py = proj / "scratch.tmp.py"
         tmp_py.write_text("# scratch")
 
-        # Tests
+        # Tests: codebone maps every real project file now (lockfiles, images, node_modules, ...);
+        # only secrets (.env, credential-shaped names), .git internals and .gitignore rules stay excluded.
         assert is_watched_file(normal_py, project_path=proj, gitignore_spec=gi_spec) is True
         assert is_watched_file(env_file, project_path=proj, gitignore_spec=gi_spec) is False
         assert is_watched_file(env_prod, project_path=proj, gitignore_spec=gi_spec) is False
-        assert is_watched_file(lockfile, project_path=proj, gitignore_spec=gi_spec) is False
-        assert is_watched_file(pnpm_lock, project_path=proj, gitignore_spec=gi_spec) is False
-        assert is_watched_file(media_png, project_path=proj, gitignore_spec=gi_spec) is False
-        assert is_watched_file(node_mod, project_path=proj, gitignore_spec=gi_spec) is False
-        assert is_watched_file(next_cache, project_path=proj, gitignore_spec=gi_spec) is False
+        assert is_watched_file(lockfile, project_path=proj, gitignore_spec=gi_spec) is True
+        assert is_watched_file(pnpm_lock, project_path=proj, gitignore_spec=gi_spec) is True
+        assert is_watched_file(media_png, project_path=proj, gitignore_spec=gi_spec) is True
+        assert is_watched_file(node_mod, project_path=proj, gitignore_spec=gi_spec) is True
+        assert is_watched_file(next_cache, project_path=proj, gitignore_spec=gi_spec) is True
         assert is_watched_file(git_file, project_path=proj, gitignore_spec=gi_spec) is False
         assert is_watched_file(secret_file, project_path=proj, gitignore_spec=gi_spec) is False
         assert is_watched_file(tmp_py, project_path=proj, gitignore_spec=gi_spec) is False

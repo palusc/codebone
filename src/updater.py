@@ -114,21 +114,35 @@ def check_for_updates(current_version: str = CURRENT_VERSION, timeout: int = 8) 
 
     update_available = latest_tuple > curr_tuple
 
-    # Find the ARM64 ZIP asset
+    # Find the update ZIP asset. "-update.zip" is a lightweight variant with the bundled base model
+    # stripped out (an already-installed copy already has a valid, checksummed copy of it on disk —
+    # see src/model_fetch.py — so re-downloading ~490 MB of unchanged model for a one-line code fix
+    # is pure waste); it's preferred whenever a release has one, with the full "arm64.zip" as a
+    # fallback for older releases published before this existed.
     download_url = None
     asset_size = 0
     checksum_url = None
-    for asset in data.get("assets", []):
+    assets = data.get("assets", [])
+    for asset in assets:
         name = asset.get("name", "").lower()
-        if "arm64" in name and name.endswith(".zip"):
+        if "arm64" in name and name.endswith("-update.zip"):
             download_url = asset.get("browser_download_url")
             asset_size = asset.get("size", 0)
-            sums = [a.get("browser_download_url") for a in data.get("assets", []) if a.get("name", "").lower() == name + ".sha256"]
+            sums = [a.get("browser_download_url") for a in assets if a.get("name", "").lower() == name + ".sha256"]
             checksum_url = sums[0] if sums else None
             break
-        elif name.endswith(".zip") and not download_url:
-            download_url = asset.get("browser_download_url")
-            asset_size = asset.get("size", 0)
+    if not download_url:
+        for asset in assets:
+            name = asset.get("name", "").lower()
+            if "arm64" in name and name.endswith(".zip"):
+                download_url = asset.get("browser_download_url")
+                asset_size = asset.get("size", 0)
+                sums = [a.get("browser_download_url") for a in assets if a.get("name", "").lower() == name + ".sha256"]
+                checksum_url = sums[0] if sums else None
+                break
+            elif name.endswith(".zip") and not download_url:
+                download_url = asset.get("browser_download_url")
+                asset_size = asset.get("size", 0)
 
     # Fallback to DMG if zip is not present
     if not download_url:

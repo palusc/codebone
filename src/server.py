@@ -351,7 +351,7 @@ def create_app(service: CodeBoneService, allowed_hosts: Optional[set] = None) ->
             "project": str(service.config.project_path) if service.config.project_path else "none",
             "brain_provider": service.config.get("brain_provider"),
             "file_count": service.storage.file_count() if service.config.is_configured else 0,
-            "connection_count": len(service.storage.graph_edges()) if service.config.is_configured else 0,
+            "connection_count": len(service.storage.graph_edges(include_domains=True)) if service.config.is_configured else 0,
         }
         return record_feedback(
             feedback_type=f_type,

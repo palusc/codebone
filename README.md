@@ -10,7 +10,7 @@
 [![macOS](https://img.shields.io/badge/platform-macOS-black?logo=apple&style=flat-square)](#)
 [![Metal GPU](https://img.shields.io/badge/inference-Apple%20Silicon%20Metal-purple?style=flat-square)](#)
 [![MCP](https://img.shields.io/badge/protocol-MCP%20Native-blue?style=flat-square)](#)
-[![Version 1.3.4](https://img.shields.io/badge/version-1.3.4-informational?style=flat-square)](CHANGELOG.md)
+[![Version 1.3.5](https://img.shields.io/badge/version-1.3.5-informational?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Local Only](https://img.shields.io/badge/privacy-100%25%20local-success?style=flat-square)](#-privacy--security)
 

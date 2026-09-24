@@ -452,6 +452,24 @@ class HeaderActionDelegate(NSObject):
             self.app.view_live_graph(None)
 
 
+class ModulesSwitchDelegate(NSObject):
+    """Action delegate for the native switch on the Modules row (Tailscale-style: the switch itself
+    is the on/off control, no need to open a submenu to flip it)."""
+
+    def initWithApp_(self, app):
+        self = objc.super(ModulesSwitchDelegate, self).init()
+        if self is None:
+            return None
+        self.app = app
+        return self
+
+    @objc.IBAction
+    def switchToggled_(self, sender):
+        if not self.app:
+            return
+        self.app.set_modules_master(sender.state() == NSControlStateValueOn)
+
+
 class CodeBoneApp(rumps.App):
     def __init__(self):
         try:
@@ -499,8 +517,21 @@ class CodeBoneApp(rumps.App):
         self.recent_projects_menu = rumps.MenuItem("Recent Projects")
         _set_symbol_icon(self.recent_projects_menu, "clock.arrow.circlepath")
 
-        # Model modules: API endpoints Claude Code can be routed through (for coding, not for indexing)
-        self.modules_menu = rumps.MenuItem("Modules")
+        # Model modules: API endpoints Claude Code can be routed through (for coding, not for indexing).
+        # The on/off switch lives on its own row (self.modules_switch_item); this submenu holds the
+        # rest of the configuration (module list, per-app routing, quick links, recovery).
+        (
+            self.modules_switch_row,
+            self.modules_switch_delegate,
+            self.modules_switch,
+        ) = self._build_modules_switch_row()
+        self.modules_switch_item = rumps.MenuItem("Modules", callback=None)
+        try:
+            self.modules_switch_item._menuitem.setView_(self.modules_switch_row)
+        except Exception as exc:
+            logger.warning("Could not set custom Modules switch view: %s", exc)
+
+        self.modules_menu = rumps.MenuItem("Modules Settings")
         _set_symbol_icon(self.modules_menu, "square.stack.3d.up")
 
         # Model Selection Submenu (Dynamic active model list)
@@ -571,12 +602,12 @@ class CodeBoneApp(rumps.App):
 
         self.menu = [
             self.header_item,
-            None,
             self.rescan_item,
             self.select_project_item,
             self.recent_projects_menu,
             None,
             self.brain_menu,
+            self.modules_switch_item,
             self.modules_menu,
             None,
             self.settings_menu,
@@ -697,6 +728,31 @@ class CodeBoneApp(rumps.App):
 
         container.addSubview_(card)
         return container, delegate, folder_btn, status_dot, stats_lbl
+
+    def _build_modules_switch_row(self):
+        """A menu row that IS the on/off control for Modules, native-switch style (à la Tailscale's
+        toggle rows) instead of a checkmark buried inside a submenu."""
+        w, h = 276.0, 30.0
+        container = NSView.alloc().initWithFrame_(NSRect(NSPoint(0, 0), NSSize(w, h)))
+        delegate = ModulesSwitchDelegate.alloc().initWithApp_(self)
+
+        label = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(18, 6), NSSize(180, 18)))
+        label.setStringValue_("Modules")
+        label.setFont_(NSFont.systemFontOfSize_(13.5))
+        label.setTextColor_(NSColor.labelColor())
+        label.setBezeled_(False)
+        label.setDrawsBackground_(False)
+        label.setEditable_(False)
+        label.setSelectable_(False)
+        container.addSubview_(label)
+
+        switch = NSSwitch.alloc().initWithFrame_(NSRect(NSPoint(w - 52, 4), NSSize(38, 22)))
+        switch.setState_(NSControlStateValueOn if bool(self.config.get("modules_enabled")) else NSControlStateValueOff)
+        switch.setTarget_(delegate)
+        switch.setAction_(objc.selector(delegate.switchToggled_, signature=b"v@:@"))
+        container.addSubview_(switch)
+
+        return container, delegate, switch
 
     def show_about(self, _):
         """Displays comprehensive project and architecture overview."""
@@ -960,6 +1016,7 @@ class CodeBoneApp(rumps.App):
         self._update_recent_projects_menu()
         self._update_brain_checks()
         self._update_modules_menu()
+        self._sync_modules_switch()
         self._push_stats()
 
     @staticmethod
@@ -1105,11 +1162,6 @@ class CodeBoneApp(rumps.App):
         master_on = bool(self.config.get("modules_enabled"))
         active = set(modules.enabled_apps(self.config))
 
-        master_item = rumps.MenuItem("Modules Enabled", callback=self.toggle_modules_master)
-        master_item.state = master_on
-        self.modules_menu.add(master_item)
-        self.modules_menu.add(None)
-
         for m in library:  # which model
             item = rumps.MenuItem(m["name"], callback=(lambda _, mid=m["id"]: self.pick_module(mid)) if master_on else None)
             item.state = bool(selected and selected["id"] == m["id"])
@@ -1156,15 +1208,17 @@ class CodeBoneApp(rumps.App):
         except Exception as exc:
             logger.error("Failed to open URL %s: %s", url, exc)
 
-    def toggle_modules_master(self, _):
+    def set_modules_master(self, turning_on: bool):
+        """The switch row's on/off action: on = previously active apps route through their module
+        again, off = every app goes straight back to normal and nothing is routed."""
         from . import modules
 
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-        turning_on = not bool(self.config.get("modules_enabled"))
         try:
             modules.set_modules_master(self.config, turning_on)
         except modules.SettingsUnreadable as exc:
             rumps.alert("Modules", f"Settings file could not be read, so nothing was changed:\n{exc}")
+            self._sync_modules_switch()
             return
         if turning_on:
             rumps.notification("codebone", "Modules enabled", "Previously active apps are routed through their module again.")
@@ -1175,6 +1229,16 @@ class CodeBoneApp(rumps.App):
         else:
             rumps.notification("codebone", "Modules disabled", "Every app is back on its normal setup.")
         self._update_modules_menu()
+        self._sync_modules_switch()
+
+    def _sync_modules_switch(self):
+        """Keeps the switch row's visible state matching config, including when something other than
+        a direct click on the switch changed it (a per-app connection getting auto-reverted, Fix
+        Stuck Connection, etc.)."""
+        if getattr(self, "modules_switch", None) is not None:
+            self.modules_switch.setState_(
+                NSControlStateValueOn if bool(self.config.get("modules_enabled")) else NSControlStateValueOff
+            )
 
     def reset_modules_to_normal(self, _):
         from . import modules
@@ -1191,6 +1255,7 @@ class CodeBoneApp(rumps.App):
         modules.force_restore_all(self.config)
         rumps.notification("codebone", "Modules reset", "Claude Code and opencode are back on their normal setup.")
         self._update_modules_menu()
+        self._sync_modules_switch()
 
     def toggle_module_app(self, app_id: str):
         from . import modules

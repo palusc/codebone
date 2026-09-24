@@ -1,10 +1,16 @@
 """Persistent codebone configuration (project path, brain provider, server port)."""
 from __future__ import annotations
 import json
+import copy
+import logging
 import os
+import stat
+import threading
 import time
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger("codebone.config")
 
 CONFIG_DIR = Path.home() / "Library" / "Application Support" / "codebone"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -13,7 +19,14 @@ SCANS_DIR = CONFIG_DIR / "scans"
 MODELS_DIR = CONFIG_DIR / "models"
 
 BASE_MODEL_NAME = "Built-in (Qwen 0.5B)"
-BASE_MODEL_PATH = str(MODELS_DIR / "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf")
+BASE_MODEL_FILE = "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf"
+BASE_MODEL_PATH = str(MODELS_DIR / BASE_MODEL_FILE)
+# Pinned to an exact HF revision + checksum so every install path (DMG, install.sh, brew, in-app fetch) gets the same bytes.
+BASE_MODEL_URL = (
+    "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/"
+    "ebb2015119c907b064c512bf053e945850b5875f/" + BASE_MODEL_FILE
+)
+BASE_MODEL_SHA256 = "1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32"
 
 DEFAULT_WATCHED_EXTENSIONS = [
     # Python & Shell
@@ -109,6 +122,12 @@ GLOBAL_IGNORED_DIRS = {
     ".parcel-cache",
     ".nuxt",
     ".output",
+    # Credential stores: nothing below these is ever read
+    ".ssh",
+    ".aws",
+    ".gnupg",
+    ".secrets",
+    "secrets",
 }
 
 # Strict lockfiles and OS metadata to always ignore
@@ -151,6 +170,35 @@ try:
 except ImportError:
     _HAS_PATHSPEC = False
 
+# Files above this size are generated/minified/data dumps, not architecture; reading them costs RAM and time.
+MAX_FILE_BYTES = 1_000_000
+
+# Credentials never leave the disk: a cloud brain would otherwise receive them as "source code".
+_SECRET_NAMES = {".npmrc", ".netrc", ".pypirc", ".htpasswd", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"}
+_SECRET_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".kdbx"}
+_SECRET_STEMS = ("credential", "secret")  # secrets.py, credentials.json, secret_key.txt ...
+_SECRET_WORDS = ("secret", "credential", "token", "password", "passwd", "apikey", "api_key", "api-key",
+                 "private_key", "private-key", "privatekey", "service-account", "service_account", "serviceaccount",
+                 "firebase-adminsdk", "client_secret", "deploy_key", "deploy-key")
+_DATA_SUFFIXES = {".json", ".yaml", ".yml", ".toml", ".ini", ".txt", ".xml", ".cfg", ".conf", ".properties", ".plist"}
+
+
+def _is_secret_or_junk(name: str) -> bool:
+    low = name.lower()
+    if low == ".env" or low.startswith(".env.") or low.endswith(".env"):
+        return True
+    if name in _SECRET_NAMES or name.startswith("id_rsa") or name.startswith("id_ed25519"):
+        return True
+    if low.startswith("._") or low.endswith((".min.js", ".min.css", ".map")):
+        return True
+    dot = low.rfind(".")
+    stem, suffix = (low[:dot], low[dot:]) if dot > 0 else (low, "")
+    if suffix in _SECRET_SUFFIXES:
+        return True
+    if suffix in _DATA_SUFFIXES:  # data files: any secret-looking word anywhere in the name (auth.json, token.json ...)
+        return any(w in stem for w in _SECRET_WORDS) or stem == "auth"
+    return stem.startswith(_SECRET_STEMS)  # code files: secrets.py, credentials.js
+
 
 def load_gitignore_spec(project_path: Optional[Path]) -> Optional[object]:
     """Compiles a pathspec GitIgnoreSpec from project's .gitignore if available."""
@@ -166,71 +214,114 @@ def load_gitignore_spec(project_path: Optional[Path]) -> Optional[object]:
         return None
 
 
+def _relative_parts(path: Path, project_path: Optional[Path]) -> Optional[tuple]:
+    """Path parts relative to the project root (None if outside it). Ignore rules must only look at these:
+    matching absolute parts made a project living under e.g. ~/build/ index nothing."""
+    if not project_path:
+        return path.parts
+    try:
+        return path.relative_to(project_path).parts
+    except ValueError:
+        return None
+
+
 def is_watched_file(
     path: Path,
     extensions: Optional[set[str]] = None,
     ignore_dirs: Optional[set[str]] = None,
     gitignore_spec: Optional[object] = None,
     project_path: Optional[Path] = None,
+    check_exists: bool = True,
 ) -> bool:
-    """Returns True if the path is a valid code, script, config, or doc file to scan."""
-    if not path.is_file():
-        return False
+    """True if the path is a source, config or doc file worth indexing.
 
+    Cheap name/extension/ignore checks run first; the filesystem is only touched at the end. With
+    check_exists=False (used for deletion events) the file does not have to exist any more."""
     name = path.name
-    # 0. Symlink Jail / Sandboxing: prevent symlinks pointing outside the project folder
-    if project_path:
-        try:
-            resolved_file = path.resolve()
-            resolved_proj = project_path.resolve()
-            if not resolved_file.is_relative_to(resolved_proj):
-                return False
-        except (ValueError, OSError):
-            return False
-
-    # 1. Environment secret files
-    if name == ".env" or name.startswith(".env.") or name.endswith(".env"):
+    if name in IGNORED_FILENAMES or _is_secret_or_junk(name):
         return False
-
-    # 2. Strict lockfiles & OS files
-    if name in IGNORED_FILENAMES:
-        return False
-
-    # 3. Binary, media, models & compiled files
     suffix = path.suffix.lower()
     if suffix in IGNORED_EXTENSIONS:
         return False
 
-    # 4. Global hardcoded exclusion directories
-    parts = set(path.parts)
-    if any(d in GLOBAL_IGNORED_DIRS for d in parts):
+    rel = _relative_parts(path, project_path)
+    if rel is None:
         return False
-
-    # 5. User / dynamic ignore directories
-    if ignore_dirs and any(part in ignore_dirs for part in parts):
+    dirs = rel[:-1]
+    if any(d in GLOBAL_IGNORED_DIRS for d in dirs):
         return False
-
-    # 6. Gitignore pathspec matching
+    if ignore_dirs and any(d in ignore_dirs for d in dirs):
+        return False
     if gitignore_spec and project_path:
         try:
-            rel = str(path.relative_to(project_path))
-            if gitignore_spec.match_file(rel):
+            if gitignore_spec.match_file("/".join(rel)):
                 return False
-        except (ValueError, Exception):
+        except Exception:
             pass
 
-    # 7. Exact watched filenames (Dockerfile, Makefile, etc.)
-    if name in EXACT_WATCHED_FILENAMES:
-        return True
-
     exts = extensions if extensions is not None else set(DEFAULT_WATCHED_EXTENSIONS)
-    return suffix in exts
+    if name not in EXACT_WATCHED_FILENAMES and suffix not in exts:
+        return False
+
+    if not check_exists:
+        return True
+    try:
+        st = path.lstat()
+        if stat.S_ISLNK(st.st_mode):
+            # Symlink jail: a link may not lead outside the project folder
+            target = path.resolve()
+            if project_path and not target.is_relative_to(project_path.resolve()):
+                return False
+            if _is_secret_or_junk(target.name) or target.suffix.lower() in IGNORED_EXTENSIONS:
+                return False  # a harmless-looking link must not smuggle in a secret file
+            return target.is_file()
+        return stat.S_ISREG(st.st_mode)
+    except (OSError, ValueError):
+        return False
+
+
+def list_watched_files(
+    project_path: Path,
+    extensions: Optional[set[str]] = None,
+    ignore_dirs: Optional[set[str]] = None,
+    gitignore_spec: Optional[object] = None,
+) -> list[Path]:
+    """All indexable files below project_path. Ignored directories are pruned instead of walked (a node_modules
+    tree used to be traversed and stat'ed file by file). Raises OSError if the root itself cannot be listed, so
+    callers can tell "empty project" from "folder unreadable" and never wipe an index because of the latter."""
+    root = Path(project_path)
+    os.listdir(root)
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        rel_dir = os.path.relpath(dirpath, root)
+        prefix = "" if rel_dir == "." else rel_dir + "/"
+        keep = []
+        for d in dirnames:
+            if d in GLOBAL_IGNORED_DIRS or (ignore_dirs and d in ignore_dirs):
+                continue
+            if gitignore_spec:
+                try:
+                    if gitignore_spec.match_file(prefix + d + "/"):
+                        continue
+                except Exception:
+                    pass
+            keep.append(d)
+        dirnames[:] = keep
+        for f in filenames:
+            p = Path(dirpath, f)
+            if is_watched_file(p, extensions, ignore_dirs, gitignore_spec, root):
+                found.append(p)
+    return found
 
 
 def find_free_port(start_port: int = 8053, max_attempts: int = 50) -> int:
-    """Finds the first available TCP port starting at start_port by testing socket binding."""
+    """First TCP port from start_port that nothing listens on and we can bind on 127.0.0.1."""
     import socket
     for port in range(start_port, start_port + max_attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.settimeout(0.2)
+            if probe.connect_ex(("127.0.0.1", port)) == 0:
+                continue  # somebody (possibly bound to a wildcard address) already listens
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
@@ -263,45 +354,65 @@ class Config:
     def __init__(self, config_file: Optional[Path] = None):
         self.config_file = Path(config_file) if config_file else CONFIG_FILE
         self.config_dir = self.config_file.parent
-        self.data = dict(DEFAULTS)
+        self.data = copy.deepcopy(DEFAULTS)
+        self._lock = threading.RLock()
         if self.config_file.exists():
             self.load()
         else:
             self.save()
 
     def load(self):
-        if self.config_file.exists():
+        with self._lock:
+            if not self.config_file.exists():
+                return
             try:
                 stored = json.loads(self.config_file.read_text(encoding="utf-8"))
-                self.data.update(stored)
-                # Ensure all modern default extensions are included
-                cur_exts = set(self.data.get("watched_extensions", []))
-                for ext in DEFAULT_WATCHED_EXTENSIONS:
-                    cur_exts.add(ext)
-                self.data["watched_extensions"] = sorted(list(cur_exts))
-                # Migrate legacy default ports 3000/3077 to modern 8053
-                if self.data.get("server_port") in (3000, 3077):
-                    self.data["server_port"] = 8053
-                    self.save()
-                if self.data.get("brain_cloud_model") in ("gpt-6-luna", "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"):
-                    self.data["brain_cloud_model"] = "gpt-6"
-                    self.save()
-            except (json.JSONDecodeError, OSError):
-                pass
+                if not isinstance(stored, dict):
+                    raise ValueError("config root is not an object")
+            except (ValueError, OSError) as exc:
+                # Keep the unreadable file (it may hold an API key or the project path) instead of overwriting it
+                backup = self.config_file.with_name(f"{self.config_file.name}.corrupt-{int(time.time())}")
+                try:
+                    os.replace(self.config_file, backup)
+                    logger.warning("Unreadable config moved to %s (%s); starting from defaults", backup, exc)
+                except OSError:
+                    pass
+                return
+            self.data.update(stored)
+            # Ensure all modern default extensions are included
+            cur_exts = set(self.data.get("watched_extensions", []))
+            cur_exts.update(DEFAULT_WATCHED_EXTENSIONS)
+            self.data["watched_extensions"] = sorted(cur_exts)
+            migrated = False
+            # Migrate legacy default ports 3000/3077 to modern 8053
+            if self.data.get("server_port") in (3000, 3077):
+                self.data["server_port"] = 8053
+                migrated = True
+            if self.data.get("brain_cloud_model") in ("gpt-6-luna", "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"):
+                self.data["brain_cloud_model"] = "gpt-6"
+                migrated = True
+            if migrated:
+                self.save()
 
     def save(self):
-        """Atomic write so a crash mid-save cannot corrupt config.json."""
-        self.config_dir.mkdir(parents=True, exist_ok=True)
-        tmp_path = self.config_file.with_suffix(".json.tmp")
-        tmp_path.write_text(json.dumps(self.data, indent=2), encoding="utf-8")
-        os.replace(tmp_path, self.config_file)
+        """Atomic, durable write (fsync + rename) readable only by the owner: the file can hold a cloud API key."""
+        with self._lock:
+            self.config_dir.mkdir(parents=True, exist_ok=True)
+            tmp_path = self.config_file.with_suffix(".json.tmp")
+            fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self.config_file)
 
     def get(self, key: str, default=None):
         return self.data.get(key, default)
 
     def set(self, key: str, value):
-        self.data[key] = value
-        self.save()
+        with self._lock:
+            self.data[key] = value
+            self.save()
 
     def is_first_days(self, days: int = 7) -> bool:
         """Returns True if the app was first run within the specified number of days."""
@@ -320,7 +431,14 @@ class Config:
     @property
     def project_path(self) -> Optional[Path]:
         p = self.data.get("project_path")
-        return Path(p) if p else None
+        if not p:
+            return None
+        try:
+            # Resolved once: FSEvents reports real paths, so a project opened through a symlink or alias must be
+            # compared in its real location or it would get no live updates.
+            return Path(p).expanduser().resolve()
+        except OSError:
+            return Path(p)
 
     @property
     def is_configured(self) -> bool:
@@ -416,7 +534,7 @@ class Config:
         self.save()
 
     def get_ignore_dirs(self, project_path: Optional[Path] = None) -> set[str]:
-        """Returns comprehensive set of ignored directories, including project .gitignore entries."""
+        """Directory names that are never indexed. .gitignore rules are applied separately through load_gitignore_spec."""
         base_ignores = set(self.data.get("ignore_dirs", []))
         # Ensure standard dependencies, caches, and build targets are always protected
         base_ignores.update({
@@ -424,17 +542,4 @@ class Config:
             "dist", ".codebone", ".pug", ".next", ".turbo", "target", ".cache", ".idea",
             ".vscode", "coverage", ".pytest_cache", ".mypy_cache"
         })
-        proj = project_path or self.project_path
-        if proj and proj.exists():
-            gitignore = proj / ".gitignore"
-            if gitignore.is_file():
-                try:
-                    for line in gitignore.read_text(encoding="utf-8", errors="ignore").splitlines():
-                        line = line.strip()
-                        if line and not line.startswith("#"):
-                            clean = line.strip("/").rstrip("/*")
-                            if clean and not clean.startswith("*"):
-                                base_ignores.add(clean)
-                except Exception:
-                    pass
         return base_ignores

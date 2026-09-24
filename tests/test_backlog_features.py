@@ -1,5 +1,6 @@
 """Unit test suite for codebone Product Backlog Issues #1 - #5."""
 import json
+import os
 import socket
 import tempfile
 from pathlib import Path
@@ -24,7 +25,7 @@ from src.storage import Storage
 from src.watcher import DEBOUNCE_SECONDS, DEBOUNCE_SECONDS_ON_BATTERY
 
 
-def test_issue_1_dynamic_port_probe_and_mcp_patch():
+def test_issue_1_dynamic_port_probe_and_mcp_patch(monkeypatch):
     """Issue #1: Verify port finding increments on busy port and auto-patches MCP configs."""
     # Find free port starting at 8053
     free_p = find_free_port(8053)
@@ -41,30 +42,28 @@ def test_issue_1_dynamic_port_probe_and_mcp_patch():
     finally:
         sock.close()
 
-    # Test auto-patching MCP configs in temp directory
+    # Global client configs are patched in place; nothing is ever written into project folders
+    from src import server
+    monkeypatch.delenv("CODEBONE_NO_MCP_PATCH")
+    monkeypatch.setattr(server, "register_claude_cli", lambda python_cmd: None)
+    home = Path(os.environ["HOME"])
+    (home / ".cursor").mkdir()
+    (home / ".cursor" / "mcp.json").write_text(json.dumps({"mcpServers": {
+        "other": {"command": "x"},
+        "codebone": {"command": "old", "env": {"CODEBONE_PORT": "9999", "KEEP": "1"}},
+    }}))
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
-        proj_cursor_mcp = tmp_path / ".cursor" / "mcp.json"
-        proj_agents_mcp = tmp_path / ".agents" / "mcp_config.json"
-        proj_gemini_mcp = tmp_path / ".gemini" / "mcp_config.json"
-
-        # Patch configs
         patch_mcp_configs(port=next_port, project_path=tmp_path)
 
-        assert proj_cursor_mcp.exists(), ".cursor/mcp.json should be created/updated"
-        data = json.loads(proj_cursor_mcp.read_text(encoding="utf-8"))
-        assert "codebone" in data["mcpServers"]
-        assert data["mcpServers"]["codebone"]["env"]["CODEBONE_PORT"] == str(next_port)
-
-        assert proj_agents_mcp.exists(), ".agents/mcp_config.json should be created/updated"
-        data_agents = json.loads(proj_agents_mcp.read_text(encoding="utf-8"))
-        assert "codebone" in data_agents["mcpServers"]
-        assert data_agents["mcpServers"]["codebone"]["env"]["CODEBONE_PORT"] == str(next_port)
-
-        assert proj_gemini_mcp.exists(), ".gemini/mcp_config.json should be created/updated"
-        data_gemini = json.loads(proj_gemini_mcp.read_text(encoding="utf-8"))
-        assert "codebone" in data_gemini["mcpServers"]
-        assert data_gemini["mcpServers"]["codebone"]["env"]["CODEBONE_PORT"] == str(next_port)
+        data = json.loads((home / ".cursor" / "mcp.json").read_text(encoding="utf-8"))
+        assert data["mcpServers"]["other"] == {"command": "x"}
+        entry = data["mcpServers"]["codebone"]
+        assert entry["args"] == ["-m", "codebone_mcp.server"]
+        assert entry["env"] == {"KEEP": "1"}, "stale pinned port must go, unrelated env must stay"
+        assert not (home / ".gemini").exists(), "clients that are not installed are not touched"
+        for d in (".cursor", ".gemini", ".agents"):
+            assert not (tmp_path / d).exists(), "no config files inside project folders"
 
 
 def test_issue_2_smart_ignoring():
@@ -151,26 +150,26 @@ def test_issue_3_lod_slicing_and_parameterless_overview():
         )
 
         app = create_app(service)
-        client = TestClient(app)
+        client = TestClient(app, base_url="http://127.0.0.1")
 
         # 1. Parameterless call: High-level overview only
         resp_overview = client.get("/codebone/context")
         assert resp_overview.status_code == 200
         text = resp_overview.text
-        assert "# codebone — High-Level Codebase Architecture" in text
-        assert "## 1. System Metrics & Architecture Summary" in text
-        assert "## 2. Business Domains & Systems" in text
+        assert text.startswith("# codebone:")
+        assert "2 files" in text
         assert "Billing & Payments" in text
         assert "Authentication" in text
-        assert "## 💡 Level-of-Detail (LOD)" in text
-        # Parameterless overview does not dump file-level summaries
-        assert "Handles Stripe payments." not in text
+        assert "Invoice" in text and "POST /checkout" in text
+        # The overview is a map: every file with its one-line summary
+        assert "billing/stripe.py: Handles Stripe payments." in text
+        assert "Drill down:" in text
 
         # 2. Targeted drill-down by domain="billing"
         resp_drill = client.get("/codebone/context?domain=billing")
         assert resp_drill.status_code == 200
         drill_text = resp_drill.text
-        assert "# codebone — Filtered Context (`billing`)" in drill_text
+        assert drill_text.startswith("# codebone:") and 'domain="billing"' in drill_text
         assert "Billing & Payments" in drill_text
         assert "Invoice" in drill_text
         assert "POST /checkout" in drill_text
@@ -207,7 +206,7 @@ def test_issue_5_syntax_error_resilience():
         py_file = tmp_path / "worker.py"
         py_file.write_text("class JobWorker:\n    def process(self):\n        pass\n")
 
-        service._sniff_file(py_file, force=True)
+        service._sniff_file(py_file, force=True, live=True)
         hashes_before = service.storage.get_file_hashes()
         assert "worker.py" in hashes_before
 
@@ -215,7 +214,7 @@ def test_issue_5_syntax_error_resilience():
         py_file.write_text("class JobWorker:\n    def process(self: unclosed_bracket(")
 
         # Step 3: Sniff broken file — must NOT throw, must quietly preserve previous state
-        service._sniff_file(py_file, force=True)
+        service._sniff_file(py_file, force=True, live=True)
 
         files = service.storage.all_files()
         assert len(files) == 1
@@ -250,7 +249,7 @@ def test_issue_6_initial_days_and_status_mcp_metadata():
         service = CodeBoneService(cfg)
         service.storage = Storage(db_file)
         app = create_app(service)
-        client = TestClient(app)
+        client = TestClient(app, base_url="http://127.0.0.1")
 
         resp = client.get("/codebone/status")
         assert resp.status_code == 200

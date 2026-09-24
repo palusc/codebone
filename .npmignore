@@ -9,7 +9,6 @@ dist/
 *.pyc
 *.sh
 requirements.txt
-setup.py
 main.py
 codebone_main.py
 install.sh

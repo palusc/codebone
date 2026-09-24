@@ -73,7 +73,28 @@ class TestUpdater(unittest.TestCase):
         mock_urlopen.return_value = mock_resp
 
         with self.assertRaises(RuntimeError):
-            download_and_install_update("https://dummy/url.zip", target_app_path="/tmp/dummy_test.app")
+            download_and_install_update("https://github.com/palusc/codebone/releases/download/v9/x.zip",
+                                        target_app_path="/tmp/dummy_test.app")
+
+
+    def test_downloads_only_from_github_over_https(self):
+        from src.updater import download_and_install_update
+
+        for url in ("http://github.com/x.zip", "https://evil.example/x.zip", "https://github.com.evil.example/x.zip"):
+            with self.assertRaises(ValueError):
+                download_and_install_update(url, target_app_path="/tmp/dummy_test.app")
+
+    def test_archive_paths_that_escape_are_refused(self):
+        import io
+        import zipfile
+        from src.updater import _check_zip_names
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("codebone.app/../../evil", "x")
+        with zipfile.ZipFile(io.BytesIO(buf.getvalue())) as zf:
+            with self.assertRaises(RuntimeError):
+                _check_zip_names(zf)
 
 
 if __name__ == "__main__":

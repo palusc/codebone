@@ -4,37 +4,33 @@ Provides structured semantic codebase context over localhost HTTP.
 """
 import json
 import logging
+import os
 import threading
 import time
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 
+from . import context_format
 from .config import find_free_port
 from .feedback import list_recent_feedback, record_feedback
+from .graph_ui import build_live_graph_html
 from .service import CodeBoneService, PugService
 
 logger = logging.getLogger("codebone.server")
 
 
-def patch_mcp_configs(port: int, project_path: Optional[Path] = None):
-    """Automatically patches Claude Desktop, Cursor, and Gemini/Antigravity MCP configs with the active port."""
-    claude_cfg = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
-    cursor_global_cfg = Path.home() / ".cursor" / "mcp.json"
-    gemini_global_cfg = Path.home() / ".gemini" / "config" / "mcp_config.json"
-    gemini_ide_cfg = Path.home() / ".gemini" / "antigravity-ide" / "mcp_config.json"
-
-    targets = [claude_cfg, cursor_global_cfg, gemini_global_cfg, gemini_ide_cfg]
-    if project_path:
-        targets.append(Path(project_path) / ".cursor" / "mcp.json")
-        targets.append(Path(project_path) / ".gemini" / "mcp_config.json")
-        targets.append(Path(project_path) / ".agents" / "mcp_config.json")
-
-    # Ensure venv symlink if installed from DMG or App bundle
+def _resolve_python_cmd() -> str:
+    """Interpreter MCP clients should launch. Also links Application Support/venv to the bundle so DMG installs
+    look the same as install.sh installs (the npm bridge and old configs look there)."""
     app_support_venv = Path.home() / "Library" / "Application Support" / "codebone" / "venv"
-    app_bundle_venv = Path("/Applications/codebone.app/Contents/Resources/venv")
+    app_bundle_venv = Path(__file__).resolve().parents[2] / "venv"  # <app>/Contents/Resources/venv (any install dir)
+    if not app_bundle_venv.is_dir():
+        app_bundle_venv = Path("/Applications/codebone.app/Contents/Resources/venv")
     if not app_support_venv.exists() and app_bundle_venv.exists():
         try:
             app_support_venv.parent.mkdir(parents=True, exist_ok=True)
@@ -57,112 +53,140 @@ def patch_mcp_configs(port: int, project_path: Optional[Path] = None):
                 pass
             python_cmd = str(cand)
             break
+    return python_cmd
+
+
+def register_claude_cli(python_cmd: str):
+    """Register codebone with Claude Code (user scope) so `cb` works in the terminal / VS Code no matter how
+    codebone was installed. Idempotent; runs in the background because the claude CLI can be slow."""
+    import shutil
+    import subprocess
+
+    def _run():
+        claude = shutil.which("claude") or next(
+            (str(p) for p in (Path.home() / ".local" / "bin" / "claude", Path("/opt/homebrew/bin/claude"),
+                              Path("/usr/local/bin/claude"), Path.home() / ".claude" / "local" / "claude") if p.exists()),
+            None,
+        )
+        if not claude:
+            return
+        try:
+            cfg = json.loads((Path.home() / ".claude.json").read_text(encoding="utf-8"))
+            entry = (cfg.get("mcpServers") or {}).get("codebone") or {}
+            if entry.get("command") == python_cmd and entry.get("args") == ["-m", "codebone_mcp.server"]:
+                return
+        except Exception:
+            pass
+        try:
+            subprocess.run([claude, "mcp", "remove", "-s", "user", "codebone"], capture_output=True, timeout=30)
+            subprocess.run([claude, "mcp", "add", "-s", "user", "codebone", "--", python_cmd, "-m", "codebone_mcp.server"],
+                           capture_output=True, timeout=30)
+            logger.info("Registered codebone with Claude Code")
+        except Exception as exc:
+            logger.warning("Could not register with Claude Code: %s", exc)
+
+    threading.Thread(target=_run, daemon=True, name="codebone-claude-register").start()
+
+
+def patch_mcp_configs(port: int, project_path: Optional[Path] = None):
+    """Keep the global MCP client configs (Claude Desktop, Cursor, Gemini/Antigravity) pointing at this install's
+    interpreter. Only clients that are installed are touched, nothing is written into project folders, and the
+    port is deliberately not pinned: the MCP server reads the live port from codebone's config on every launch.
+    (port and project_path are accepted for compatibility.)"""
+    if os.environ.get("CODEBONE_NO_MCP_PATCH"):
+        return
+    home = Path.home()
+    targets = [
+        home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
+        home / ".cursor" / "mcp.json",
+        home / ".gemini" / "config" / "mcp_config.json",
+        home / ".gemini" / "antigravity-ide" / "mcp_config.json",
+    ]
+
+    python_cmd = _resolve_python_cmd()
+    register_claude_cli(python_cmd)
 
     for target in targets:
         try:
-            target_dir = target.parent
-            if not target_dir.exists():
-                if any(part in (".cursor", ".gemini", ".agents", "antigravity-ide") for part in target.parts):
-                    target_dir.mkdir(parents=True, exist_ok=True)
-                else:
-                    continue
-
+            if not target.parent.exists():
+                continue  # that client is not installed
             data = {}
             if target.exists():
                 try:
                     data = json.loads(target.read_text(encoding="utf-8"))
                 except Exception:
-                    data = {}
+                    # Never overwrite a config we cannot parse (user edits, comments): it may hold other servers.
+                    logger.warning("Skipping unreadable MCP config %s", target)
+                    continue
+                if not isinstance(data, dict):
+                    continue
 
-            if "mcpServers" not in data or not isinstance(data["mcpServers"], dict):
-                data["mcpServers"] = {}
+            servers = data.get("mcpServers")
+            if not isinstance(servers, dict):
+                servers = data["mcpServers"] = {}
 
-            # Update or create 'codebone' entry
-            codebone_entry = data["mcpServers"].get("codebone", {})
-            if not codebone_entry or not isinstance(codebone_entry, dict):
-                codebone_entry = {}
+            entry = servers.get("codebone")
+            if not isinstance(entry, dict):
+                entry = {}
+            entry["command"] = python_cmd
+            entry["args"] = ["-m", "codebone_mcp.server"]
+            env = entry.get("env")
+            if isinstance(env, dict):
+                env.pop("CODEBONE_PORT", None)  # older versions pinned the port, which goes stale
+                if not env:
+                    entry.pop("env")
+            servers["codebone"] = entry
 
-            codebone_entry["command"] = python_cmd
-            codebone_entry["args"] = ["-m", "codebone_mcp.server"]
-            env = codebone_entry.setdefault("env", {})
-            env["CODEBONE_PORT"] = str(port)
-            data["mcpServers"]["codebone"] = codebone_entry
-
-            # If legacy 'pug' entry exists, update its port too
-            if "pug" in data["mcpServers"]:
-                pug_env = data["mcpServers"]["pug"].setdefault("env", {})
-                pug_env["CODEBONE_PORT"] = str(port)
-                pug_env["PUG_PORT"] = str(port)
-
-            target.write_text(json.dumps(data, indent=2), encoding="utf-8")
-            logger.info("Auto-patched MCP config at %s with port %d", target, port)
+            new_text = json.dumps(data, indent=2)
+            if target.exists() and target.read_text(encoding="utf-8") == new_text:
+                continue
+            target.write_text(new_text, encoding="utf-8")
+            logger.info("Updated MCP config %s", target)
         except Exception as exc:
-            logger.warning("Could not auto-patch MCP config at %s: %s", target, exc)
+            logger.warning("Could not update MCP config at %s: %s", target, exc)
 
 
-
-def _format_context_markdown(service: CodeBoneService) -> str:
-    storage = service.storage
-    index = storage.entity_index()
-    all_domains = service.storage.all_domains() or sorted(index.get("domains", {}).keys())
-    file_count = service.storage.file_count()
-    tables_count = len(index.get("tables", {}))
-    routes_count = len(index.get("routes", {}))
-    events_count = len(index.get("events", {}))
-    edges_count = len(service.storage.graph_edges())
-
-    lines = [
-        "# codebone — High-Level Codebase Architecture",
-        f"*Project: `{service.config.project_path}` | Files indexed: {file_count} | Updated: {time.strftime('%Y-%m-%d %H:%M:%S')}*",
-        "",
-        "## 1. System Metrics & Architecture Summary",
-        f"- **Indexed Files:** {file_count} source files",
-        f"- **Business Domains:** {len(all_domains)} overarching domain categories",
-        f"- **Database Models / Tables:** {tables_count} total detected across modules",
-        f"- **API Routes / Endpoints:** {routes_count} total endpoints",
-        f"- **Events & Logic Hooks:** {events_count} event triggers/handlers",
-        f"- **Cross-Module Semantic Relationships:** {edges_count} conceptual links",
-        "",
-        "## 2. Business Domains & Systems",
-        "Overarching functional domains discovered across the project:",
-    ]
-
-    if index.get("domains"):
-        for domain, paths in sorted(index["domains"].items(), key=lambda kv: (-len(kv[1]), kv[0])):
-            files_str = ", ".join(f"`{p}`" for p in paths[:5])
-            more = f" *(+{len(paths) - 5} more)*" if len(paths) > 5 else ""
-            lines.append(f"- **`{domain}`** ({len(paths)} files: {files_str}{more})")
-        lines.append("")
-    elif all_domains:
-        for d in all_domains:
-            lines.append(f"- **`{d}`**")
-        lines.append("")
-    else:
-        lines.append("*(No distinct business domains detected yet.)*")
-        lines.append("")
-
-    lines.extend([
-        "---",
-        "## 💡 Level-of-Detail (LOD) — Token-Saving Deep Dive",
-        "To inspect lower-level entities, models, endpoints, and file summaries without wasting tokens on the full repository graph, call `codebone_context` with focused parameters:",
-        "- **By Domain:** `codebone_context(domain=\"<domain_name>\")` *(e.g. `domain=\"Billing\"`)*",
-        "- **By File/Module:** `codebone_context(file=\"<filename_or_path>\")` *(e.g. `file=\"service.py\"`)*",
-        "- **By Entity/Keyword:** `codebone_context(query=\"<keyword>\")` *(e.g. `query=\"stripe\"` or `query=\"User\"`)*",
-    ])
-
-    return "\n".join(lines)
+_SAFE_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_MAX_TEXT = 5000
 
 
-from .graph_ui import build_live_graph_html
+def _text(payload: dict, key: str, limit: int = _MAX_TEXT) -> str:
+    val = payload.get(key, "")
+    return val[:limit] if isinstance(val, str) else ""
 
 
-def _build_live_graph_html(port: int) -> str:
-    """Returns a self-contained interactive modern HTML5 canvas graph."""
-    return build_live_graph_html(port)
+def _reject_unsafe_id(value) -> None:
+    if value and (".." in str(value) or "/" in str(value) or "\\" in str(value)):
+        raise HTTPException(status_code=400, detail="Invalid scan_id format (path traversal rejected)")
 
 
-def create_app(service: CodeBoneService) -> FastAPI:
-    app = FastAPI(title="codebone", description="Local semantic knowledge graph server")
+def create_app(service: CodeBoneService, allowed_hosts: Optional[set] = None) -> FastAPI:
+    # No interactive docs: they load Swagger UI from a CDN and add nothing for a local tool.
+    app = FastAPI(title="codebone", description="Local semantic knowledge graph server",
+                  docs_url=None, redoc_url=None, openapi_url=None)
+    hosts = _SAFE_HOSTS | set(allowed_hosts or ())
+
+    @app.middleware("http")
+    async def guard(request: Request, call_next):
+        """Any web page can send requests to 127.0.0.1. Refuse DNS-rebinding (foreign Host header) and
+        cross-origin browser requests (foreign Origin/Referer); local tools (curl, MCP) send neither."""
+        host_header = (request.headers.get("host") or "").lower()
+        hostname = urlsplit("//" + host_header).hostname or ""
+        if hostname not in hosts:
+            return JSONResponse({"detail": "Forbidden host"}, status_code=403)
+        for header in ("origin", "referer"):
+            value = request.headers.get(header)
+            if value and urlsplit(value).netloc.lower() != host_header:
+                return JSONResponse({"detail": "Cross-origin request refused"}, status_code=403)
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
+    def project_name() -> str:
+        p = service.config.project_path
+        return p.name if p else "project"
 
     @app.get("/codebone/status")
     @app.get("/pug/status")
@@ -171,13 +195,16 @@ def create_app(service: CodeBoneService) -> FastAPI:
             "configured": service.config.is_configured,
             "project": str(service.config.project_path) if service.config.project_path else None,
             "sniffing": service.sniffing,
-            "scan_progress": getattr(service, "scan_progress", None),
+            "scanning": service.scanning,
+            "scan_progress": service.scan_progress,
             "last_synced": service.last_synced,
-            "last_error": getattr(service, "last_error", None),
+            "last_error": service.last_error,
             "last_reconciliation": service.last_reconciliation,
             "file_count": service.storage.file_count(),
+            "revision": service.storage.revision,
             "brain_provider": service.config.get("brain_provider"),
-            "brain_available": service.provider.available,
+            "brain_available": service.provider.ready,  # never loads the model
+            "model_status": service.model_status,
             "is_first_days": service.config.is_first_days(),
             "mcp_guide_url": "https://github.com/palusc/codebone#mcp-setup",
         }
@@ -194,138 +221,74 @@ def create_app(service: CodeBoneService) -> FastAPI:
             msg = "codebone is not configured yet. Please select a project folder in the menu bar."
             return Response(content=msg, media_type="text/plain")
 
-        # Level-of-Detail (LOD) filtering
-        lod_filter = (domain or file or query).strip()
-        if lod_filter:
-            index = service.storage.entity_index()
-            filtered_files: set[str] | None = None
-            # Filter by domain
-            if domain:
-                domain_lower = domain.lower()
-                matching_domains = [d for d in index.get("domains", {}) if domain_lower in d.lower()]
-                filtered_files = set()
-                for d in matching_domains:
-                    filtered_files.update(index["domains"][d])
-            # Filter by file substring
-            if file:
-                candidates = set(f["path"] for f in service.storage.all_files() if file.lower() in f["path"].lower())
-                filtered_files = (filtered_files & candidates) if filtered_files is not None else candidates
-            # Filter by query: match tables/routes/events/domains as well as file summary & path
-            if query:
-                query_lower = query.lower()
-                q_files: set[str] = set()
-                for cat in ("tables", "routes", "events", "domains"):
-                    for entity, paths in index.get(cat, {}).items():
-                        if query_lower in entity.lower():
-                            q_files.update(paths)
-                for f in service.storage.all_files():
-                    if query_lower in f.get("summary", "").lower() or query_lower in f.get("path", "").lower():
-                        q_files.add(f["path"])
-                filtered_files = (filtered_files & q_files) if filtered_files is not None else q_files
-
-            if format == "json":
-                all_f = service.storage.all_files()
-                filtered = [f for f in all_f if f["path"] in (filtered_files or set())]
-                return {
-                    "file_count": len(filtered),
-                    "filter": {"domain": domain, "file": file, "query": query},
-                    "files": filtered,
-                    "generated_at": time.time(),
-                }
-
-            # Markdown LOD response
-            filtered_index = service.storage.filtered_entity_index(filtered_files or set())
-            active_domain_names = sorted(filtered_index.get("domains", {}).keys())
-            models = sorted(filtered_index.get("tables", {}).keys())
-            routes = sorted(filtered_index.get("routes", {}).keys())
-            events = sorted(filtered_index.get("events", {}).keys())
-
-            out_lines = [
-                f"# codebone — Filtered Context (`{lod_filter}`)",
-                f"Project: `{service.config.project_path}`",
-                f"Matching files: {len(filtered_files or set())}",
-                "",
-                "## Matching Business Domains",
-            ]
-            out_lines.extend([f"- **{d}**" for d in active_domain_names] if active_domain_names else ["*(none)*"])
-            out_lines.extend(["", "## Matching Database Models / Tables"])
-            out_lines.extend([f"- `{m}`" for m in models] if models else ["*(none)*"])
-            out_lines.extend(["", "## Matching API Routes / Endpoints"])
-            out_lines.extend([f"- `{r}`" for r in routes] if routes else ["*(none)*"])
-            out_lines.extend(["", "## Matching Events & Logic Hooks"])
-            out_lines.extend([f"- `{e}`" for e in events] if events else ["*(none)*"])
-            out_lines.extend(["", "## Filtered Source Files"])
-            all_files_map = {f["path"]: f for f in service.storage.all_files()}
-            for fp in sorted(filtered_files or set()):
-                f_data = all_files_map.get(fp, {})
-                f_domains = f_data.get("domains", [])
-                out_lines.append(f"### `{fp}`" + (f" *({', '.join(f_domains)})*" if f_domains else ""))
-                summary = f_data.get("summary", "")
-                if summary:
-                    out_lines.append(summary)
-                f_routes = f_data.get("routes", [])
-                if f_routes:
-                    out_lines.append("**Routes:** " + ", ".join(f"`{r}`" for r in f_routes))
-                f_tables = f_data.get("tables", [])
-                if f_tables:
-                    out_lines.append("**Tables:** " + ", ".join(f"`{t}`" for t in f_tables))
-                out_lines.append("")
-
-            return Response(content="\n".join(out_lines), media_type="text/markdown; charset=utf-8")
+        storage = service.storage
+        files, index, name = storage.all_files(), storage.entity_index(), project_name()
+        domain, file, query = domain.strip(), file.strip(), query.strip()
+        filtered = bool(domain or file or query)
 
         if format == "json":
-            entity_index = service.storage.entity_index()
-            return {
-                "file_count": service.storage.file_count(),
-                "domains": service.storage.all_domains(),
-                "entities": entity_index,
-                "files": service.storage.all_files(),
-                "graph_edges": service.storage.graph_edges(),
-                "generated_at": time.time(),
-            }
+            if filtered:
+                return context_format.search_json(name, files, index, storage.revision, domain, file, query)
+            return context_format.overview_json(name, files, index, storage.revision)
+        text = (context_format.search(name, files, index, domain, file, query) if filtered
+                else context_format.overview(name, files, index))
+        return Response(content=text, media_type="text/markdown; charset=utf-8")
 
-        return Response(content=_format_context_markdown(service), media_type="text/markdown; charset=utf-8")
+    @app.get("/codebone/links")
+    def links(file: str = ""):
+        if not service.config.is_configured:
+            return Response(content="codebone is not configured yet.", media_type="text/plain")
+        storage = service.storage
+        text = context_format.links(project_name(), storage.all_files(), storage.entity_index(), file.strip())
+        return Response(content=text, media_type="text/markdown; charset=utf-8")
 
     @app.get("/codebone/graph")
     @app.get("/pug/graph")
     def graph():
-        all_files = service.storage.all_files()
+        storage = service.storage
+        all_files = storage.all_files()
         return {
+            "revision": storage.revision,
             "nodes": [f["path"] for f in all_files],
             "files": {f["path"]: f for f in all_files},
-            "edges": service.storage.graph_edges(),
+            "edges": storage.graph_edges(),
         }
 
     @app.get("/codebone/graph/ui", response_class=Response)
     @app.get("/pug/graph/ui", response_class=Response)
     def graph_ui():
         port = service.config.get("active_port") or service.config.get("server_port", 8053)
-        html = _build_live_graph_html(port)
-        return Response(content=html, media_type="text/html; charset=utf-8")
+        return Response(
+            content=build_live_graph_html(port),
+            media_type="text/html; charset=utf-8",
+            headers={
+                "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+                                           "img-src data:; connect-src 'self'; base-uri 'none'; form-action 'none'",
+            },
+        )
 
     @app.get("/codebone/scans")
     @app.get("/pug/scans")
     def list_scans():
         scans = service.scans.list_scans()
-        return {
-            "scans": scans,
-            "count": len(scans),
-        }
+        return {"scans": scans, "count": len(scans)}
 
     @app.post("/codebone/scans/adopt")
     @app.post("/pug/scans/adopt")
     def adopt_scan(payload: dict):
         scan_id = payload.get("scan_id")
-        if scan_id and (".." in str(scan_id) or "/" in str(scan_id) or "\\" in str(scan_id)):
-            raise HTTPException(status_code=400, detail="Invalid scan_id format (path traversal rejected)")
-
+        _reject_unsafe_id(scan_id)
         scan_id_or_path = scan_id or payload.get("scan_path")
-        if not scan_id_or_path:
+        if not scan_id_or_path or not isinstance(scan_id_or_path, str):
             raise HTTPException(status_code=400, detail="Missing 'scan_id' or 'scan_path'")
+        if service.scanning:
+            raise HTTPException(status_code=409, detail="A scan is already running")
 
         project_path = payload.get("project_path")
         if project_path:
-            p = Path(project_path).resolve()
+            if not isinstance(project_path, str):
+                raise HTTPException(status_code=400, detail="'project_path' must be a string")
+            p = Path(project_path).expanduser().resolve()
             if not p.exists() or not p.is_dir():
                 raise HTTPException(status_code=404, detail=f"Project path does not exist or is not a directory: {project_path}")
             service.config.set("project_path", str(p))
@@ -340,11 +303,7 @@ def create_app(service: CodeBoneService) -> FastAPI:
 
         try:
             report = service.adopt_scan(scan_id_or_path)
-            return {
-                "status": "success",
-                "message": "Scan adopted and reconciled successfully",
-                "report": report,
-            }
+            return {"status": "success", "message": "Scan adopted and reconciled successfully", "report": report}
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
         except Exception as exc:
@@ -355,20 +314,22 @@ def create_app(service: CodeBoneService) -> FastAPI:
     def export_scan(payload: dict):
         scan_id = payload.get("scan_id")
         dest_path = payload.get("dest_path")
-        if not scan_id or not dest_path:
+        if not scan_id or not dest_path or not isinstance(dest_path, str):
             raise HTTPException(status_code=400, detail="Missing 'scan_id' or 'dest_path'")
-        
-        # Sanitize scan_id against directory traversal
-        if ".." in str(scan_id) or "/" in str(scan_id) or "\\" in str(scan_id):
-            raise HTTPException(status_code=400, detail="Invalid scan_id format (path traversal rejected)")
+        _reject_unsafe_id(scan_id)
 
-        dest = Path(dest_path).resolve()
+        dest = Path(dest_path).expanduser().resolve()
         if not dest.parent.exists():
             raise HTTPException(status_code=400, detail="Destination directory does not exist")
-
         try:
             out = service.scans.export_scan(scan_id, dest)
             return {"status": "success", "exported_to": str(out)}
+        except FileExistsError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
 
@@ -377,52 +338,46 @@ def create_app(service: CodeBoneService) -> FastAPI:
     def trigger_rescan():
         if not service.config.is_configured:
             raise HTTPException(status_code=400, detail="codebone is not configured with a project path.")
+        if service.scanning:
+            return {"status": "running", "message": "A scan is already running."}
         threading.Thread(target=service.rescan_all, daemon=True, name="codebone-api-rescan").start()
         return {"status": "started", "message": "Full codebase rescan triggered in background."}
 
     @app.post("/codebone/feedback")
     @app.post("/pug/feedback")
     def submit_feedback(payload: dict):
-        f_type = payload.get("type", "bug")
-        title = payload.get("title", "")
-        desc = payload.get("description", "")
-        include_logs = bool(payload.get("include_logs", True))
-        email = payload.get("email")
-
+        f_type = _text(payload, "type", 20) or "bug"
         extra_diag = {
             "project": str(service.config.project_path) if service.config.project_path else "none",
             "brain_provider": service.config.get("brain_provider"),
             "file_count": service.storage.file_count() if service.config.is_configured else 0,
             "connection_count": len(service.storage.graph_edges()) if service.config.is_configured else 0,
         }
-
-        res = record_feedback(
+        return record_feedback(
             feedback_type=f_type,
-            title=title,
-            description=desc,
-            include_logs=include_logs,
-            email=email,
+            title=_text(payload, "title", 200),
+            description=_text(payload, "description"),
+            include_logs=bool(payload.get("include_logs", True)),
+            email=_text(payload, "email", 200) or None,
             extra_diagnostics=extra_diag,
         )
-        return res
 
     @app.get("/codebone/feedback")
     @app.get("/pug/feedback")
     def get_feedback():
-        return {
-            "feedback": list_recent_feedback(20)
-        }
+        return {"feedback": list_recent_feedback(20)}
 
     @app.post("/codebone/reset")
     @app.post("/pug/reset")
     def trigger_reset():
+        if service.scanning:
+            return {"status": "running", "message": "A scan is running; reset after it finishes."}
         service.reset_map()
         if service.config.is_configured:
             threading.Thread(target=service.rescan_all, daemon=True, name="codebone-api-reset-rescan").start()
         return {"status": "reset", "message": "Knowledge graph reset and re-indexing initiated."}
 
     return app
-
 
 
 class ServerThread:
@@ -454,16 +409,24 @@ class ServerThread:
             try:
                 self._server.run()
             except (Exception, SystemExit) as exc:
-                logger.debug("codebone server stopped: %s", exc)
+                logger.error("codebone server stopped: %s", exc)
 
         self._thread = threading.Thread(target=_run, daemon=True, name="codebone-uvicorn")
         self._thread.start()
+        for _ in range(100):  # wait until the socket is really open (or the thread died)
+            if self._server.started or not self._thread.is_alive():
+                break
+            time.sleep(0.05)
+        if not self._server.started:
+            self.service.last_error = f"Local server could not start on port {self.port}"
+            logger.error("%s", self.service.last_error)
+            return
         logger.info("codebone server listening on http://%s:%d", self.host, self.port)
 
         try:
-            patch_mcp_configs(self.port, self.service.config.project_path)
+            patch_mcp_configs(self.port)
         except Exception as exc:
-            logger.warning("Could not auto-patch MCP configs: %s", exc)
+            logger.warning("Could not update MCP configs: %s", exc)
 
     def stop(self):
         if self._server:

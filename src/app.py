@@ -1,14 +1,17 @@
 """The 'Bone' UI — codebone macOS menu bar app."""
+import fcntl
 import json
 import logging
 import os
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Optional
 
 import objc
 import rumps
+from PyObjCTools import AppHelper
 from Foundation import NSRunLoop, NSDate
 from AppKit import (
     NSOpenPanel,
@@ -590,6 +593,7 @@ class CodeBoneApp(rumps.App):
         # Start watcher if configured
         if self.config.is_configured:
             self.service.start(auto_scan=True)
+        self.service.ensure_builtin_model()
 
     def _build_header_view(self):
         """Constructs the native macOS popover header view with live status indicator and knowledge graph card."""
@@ -797,7 +801,8 @@ class CodeBoneApp(rumps.App):
 
         def _do_install():
             try:
-                download_and_install_update(download_url)
+                download_and_install_update(download_url, expected_version=latest_ver,
+                                            checksum_url=update_info.get("checksum_url"))
                 rumps.notification(
                     title="codebone Update",
                     subtitle="Update Installed",
@@ -806,12 +811,15 @@ class CodeBoneApp(rumps.App):
                 restart_app()
             except Exception as err:
                 logger.error("Failed to install update: %s", err)
-                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-                rumps.alert(
-                    title="Update Installation Failed",
-                    message=f"An error occurred while installing the update:\n{err}",
-                    ok="OK",
-                )
+
+                def _show():
+                    NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+                    rumps.alert(
+                        title="Update Installation Failed",
+                        message=f"An error occurred while installing the update:\n{err}",
+                        ok="OK",
+                    )
+                self._on_main(_show)
 
         threading.Thread(target=_do_install, daemon=True, name="codebone-updater").start()
 
@@ -832,9 +840,9 @@ class CodeBoneApp(rumps.App):
         def _run():
             try:
                 def _on_prog(cur, tot, f):
-                    self._push_stats()
+                    self._on_main(self._push_stats)
 
-                total, sniffed, skipped = self.service.rescan_all(on_progress=_on_prog, force=True)
+                total, sniffed, skipped = self.service.rescan_all(on_progress=_on_prog, wait=True)
                 conn_count = len(self.service.storage.graph_edges())
                 rumps.notification(
                     "codebone",
@@ -845,7 +853,7 @@ class CodeBoneApp(rumps.App):
                 logger.exception("Rescan failed")
                 rumps.notification("codebone", "Rescan Failed", str(exc))
             finally:
-                self._update_ui_state()
+                self._on_main(self._update_ui_state)
 
         threading.Thread(target=_run, daemon=True, name="codebone-rescan").start()
 
@@ -858,6 +866,12 @@ class CodeBoneApp(rumps.App):
         repo_name = data.get("repo_name", "None")
         file_count = data.get("file_count", 0)
         connection_count = data.get("connection_count", 0)
+
+        signature = (configured, running, sniffing, repo_name, file_count, connection_count,
+                     json.dumps(scan_progress, sort_keys=True) if scan_progress else None)
+        if signature == getattr(self, "_last_stats_signature", None):
+            return  # nothing changed: do not make AppKit redraw the menu every 2 s
+        self._last_stats_signature = signature
 
         # 1. Update top row folder button (folder name directly under 'codebone')
         if hasattr(self, "folder_btn") and self.folder_btn is not None:
@@ -941,11 +955,17 @@ class CodeBoneApp(rumps.App):
         self._update_brain_checks()
         self._push_stats()
 
+    @staticmethod
+    def _on_main(fn, *args):
+        """AppKit objects (menus, labels, alerts) may only be touched on the main thread; the watcher, scans and
+        the updater run on background threads and hop over with this."""
+        AppHelper.callAfter(fn, *args)
+
     def _on_sniff_start(self):
-        self._update_ui_state()
+        self._on_main(self._push_stats)
 
     def _on_sniff_end(self):
-        self._update_ui_state()
+        self._on_main(self._push_stats)
 
     def _update_brain_checks(self):
         """Rebuilds the Model & Brain submenu with an active list of known models and providers."""
@@ -1117,7 +1137,7 @@ class CodeBoneApp(rumps.App):
 
         self.config.add_recent_project(str(p))
         self.config.set("project_path", str(p))
-        self.service.stop()
+        self.service.start(auto_scan=False)  # aborts a running scan, drops the old project's rows, watches the new folder
         self._update_ui_state()
 
         # Step 1: Fast initial assessment (Baseline Overview)
@@ -1156,10 +1176,9 @@ class CodeBoneApp(rumps.App):
                     )
                 except Exception as exc:
                     logger.warning("Matching scan adoption failed, falling back to rescan: %s", exc)
-                    self.service.rescan_all()
+                    self.service.rescan_all(wait=True)
                 finally:
-                    self._update_ui_state()
-                    self.service.start(auto_scan=False)
+                    self._on_main(self._update_ui_state)
 
             threading.Thread(target=_run_matched, daemon=True, name="codebone-matched-adopt").start()
         else:
@@ -1175,16 +1194,11 @@ class CodeBoneApp(rumps.App):
                 t0 = time.time()
                 try:
                     def _on_prog(cur, tot, f):
-                        self._push_stats()
+                        self._on_main(self._push_stats)
 
-                    total_scanned, sniffed, skipped = self.service.rescan_all(on_progress=_on_prog)
+                    total_scanned, sniffed, skipped = self.service.rescan_all(on_progress=_on_prog, wait=True)
                     dur = max(1, round(time.time() - t0))
                     conn_count = len(self.service.storage.graph_edges())
-                    self.service.scans.save_snapshot(
-                        project_name=p.name,
-                        project_path=p,
-                        storage=self.service.storage,
-                    )
                     rumps.notification(
                         f"codebone — Indexing Complete",
                         f"{p.name} ready ({total_scanned} files)",
@@ -1194,8 +1208,7 @@ class CodeBoneApp(rumps.App):
                     logger.exception("Initial baseline scan failed")
                     rumps.notification("codebone — Scan Error", str(exc), "")
                 finally:
-                    self._update_ui_state()
-                    self.service.start(auto_scan=False)
+                    self._on_main(self._update_ui_state)
 
             threading.Thread(target=_run_initial, daemon=True, name="codebone-initial-scan").start()
 
@@ -1205,7 +1218,7 @@ class CodeBoneApp(rumps.App):
             if not path:
                 return
             self.config.set("project_path", path)
-            self.service.stop()
+            self.service.start(auto_scan=False)
             self._update_ui_state()
 
         scans = self.service.scans.list_scans()
@@ -1264,8 +1277,7 @@ class CodeBoneApp(rumps.App):
                     "Scan Adoption Complete!",
                     f"{reused} files reused, {renamed} renamed, {modified} modified, {added} added. Semantic Graph synchronized!",
                 )
-                self._update_ui_state()
-                self.service.start(auto_scan=False)
+                self._on_main(self._update_ui_state)
             except Exception as exc:
                 logger.exception("Error during scan adoption: %s", exc)
                 rumps.notification("codebone", "Adoption Failed", str(exc))
@@ -1302,7 +1314,7 @@ class CodeBoneApp(rumps.App):
         try:
             from .server import patch_mcp_configs
             server_port = getattr(getattr(self, "server", None), "port", None) or self.config.get("active_port") or self.config.get("server_port", 8053)
-            patch_mcp_configs(server_port, self.service.config.project_path)
+            patch_mcp_configs(server_port)
         except Exception as exc:
             logger.warning("Could not patch MCP configs during open_mcp_setup: %s", exc)
         from AppKit import NSURL, NSWorkspace
@@ -1378,36 +1390,56 @@ class CodeBoneApp(rumps.App):
                 subprocess.Popen(["open", res["github_url"]])
 
     def confirm_uninstall(self, _):
-        """Launches the dedicated standalone uninstaller to completely wipe data and prepare app deletion."""
-        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-        uninstaller_paths = [
-            Path("/Applications/Uninstall codebone.app"),
-            Path.home() / "Applications" / "Uninstall codebone.app",
-        ]
-        target = next((p for p in uninstaller_paths if p.exists()), None)
+        """Complete removal from inside the app: shows exactly what will go, then removes it (src/uninstall.py)."""
+        from . import uninstall
 
-        res = rumps.alert(
-            title="Uninstall codebone",
-            message=(
-                "Do you want to run the codebone Uninstaller?\n\n"
-                "The uninstaller will:\n"
-                "• Stop all running background processes\n"
-                "• Delete all local data, databases, and AI models\n"
-                "• Remove MCP configurations from Claude & Cursor\n"
-                "• Prepare codebone.app to be dragged into the Trash"
-            ),
-            ok="Open Uninstaller",
-            cancel="Cancel",
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        try:
+            targets = uninstall.collect_targets()
+        except Exception as exc:
+            logger.exception("Could not work out what to uninstall")
+            rumps.alert("Uninstall codebone", f"Could not inspect this installation:\n{exc}")
+            return
+
+        def _size(n):
+            return uninstall._fmt_size(n) if n else ""
+
+        lines = []
+        for t_ in targets:
+            if t_.kind == "process":
+                continue
+            size = _size(t_.size_bytes)
+            lines.append(f"\u2022 {t_.label}" + (f" ({size})" if size else ""))
+        shown = lines[:14] + ([f"\u2022 ... and {len(lines) - 14} more items"] if len(lines) > 14 else [])
+        message = (
+            "This removes codebone completely from your Mac:\n\n" + "\n".join(shown) +
+            "\n\nYour project folders are not touched. codebone quits when it is done."
         )
-        if res == 1:
-            if target:
-                subprocess.Popen(["open", str(target)])
-            else:
-                fallback_sh = Path(__file__).resolve().parent.parent / "uninstall.sh"
-                if fallback_sh.exists():
-                    subprocess.Popen(["open", "-a", "Terminal", str(fallback_sh)])
-                else:
-                    rumps.alert("Uninstaller Not Found", "Please run ./uninstall.sh from the repository.")
+        if rumps.alert(title="Uninstall codebone", message=message, ok="Uninstall", cancel="Cancel") != 1:
+            return
+
+        self._stats_timer.stop()  # nothing of ours may write to the files that are about to disappear
+        threading.Thread(target=self._run_uninstall, daemon=True, name="codebone-uninstall").start()
+
+    def _run_uninstall(self):
+        from . import uninstall
+
+        report_text = ""
+        try:
+            self.server.stop()
+            self.service.close()
+            report = uninstall.run_uninstall()
+            report_text = report.format()
+        except Exception as exc:
+            logger.exception("Uninstall failed")
+            report_text = f"Uninstall did not finish: {exc}\n\nYou can also run:  python3 -m src.uninstall"
+
+        def _done():
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            rumps.alert(title="Uninstall codebone", message=report_text[:1800], ok="OK")
+            rumps.quit_application()
+
+        self._on_main(_done)
 
     def open_disk_access_settings(self, _):
         """Opens Full Disk Access in macOS System Settings and provides a guided dialog with 1-click Finder reveal."""
@@ -1531,7 +1563,7 @@ class CodeBoneApp(rumps.App):
                 logger.exception("Deep scan failed")
                 rumps.notification("codebone", "Deep Scan Failed", str(exc))
             finally:
-                self._update_ui_state()
+                self._on_main(self._update_ui_state)
 
         threading.Thread(target=_run, daemon=True, name="codebone-deep-scan").start()
 
@@ -1544,12 +1576,32 @@ class CodeBoneApp(rumps.App):
 
     def quit_app(self, _):
         self._stats_timer.stop()
-        self.service.stop()
+        self.service.close()  # stops the watcher and unloads the model
         self.server.stop()
         rumps.quit_application()
 
 
+_instance_lock = None
+
+
+def _acquire_single_instance() -> bool:
+    """Two instances would index into the same database and fight over the port; the second one just exits."""
+    global _instance_lock
+    from .config import CONFIG_DIR
+
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        _instance_lock = open(CONFIG_DIR / "app.lock", "w")
+        fcntl.flock(_instance_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
 def main():
+    if not _acquire_single_instance():
+        print("codebone is already running.", file=sys.stderr)
+        return
     try:
         from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
         NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)

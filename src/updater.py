@@ -20,7 +20,9 @@ logger = logging.getLogger("codebone.updater")
 
 GITHUB_REPO = "palusc/codebone"
 RELEASES_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-CURRENT_VERSION = "1.2.2"
+from . import __version__
+
+CURRENT_VERSION = __version__  # single source of truth: src/__init__.py
 
 
 def parse_version(v_str: str) -> Tuple[int, ...]:
@@ -83,11 +85,14 @@ def check_for_updates(current_version: str = CURRENT_VERSION, timeout: int = 8) 
     # Find the ARM64 ZIP asset
     download_url = None
     asset_size = 0
+    checksum_url = None
     for asset in data.get("assets", []):
         name = asset.get("name", "").lower()
         if "arm64" in name and name.endswith(".zip"):
             download_url = asset.get("browser_download_url")
             asset_size = asset.get("size", 0)
+            sums = [a.get("browser_download_url") for a in data.get("assets", []) if a.get("name", "").lower() == name + ".sha256"]
+            checksum_url = sums[0] if sums else None
             break
         elif name.endswith(".zip") and not download_url:
             download_url = asset.get("browser_download_url")
@@ -109,21 +114,61 @@ def check_for_updates(current_version: str = CURRENT_VERSION, timeout: int = 8) 
         "release_name": data.get("name", f"codebone v{latest_ver_str}"),
         "release_notes": data.get("body", ""),
         "download_url": download_url,
+        "checksum_url": checksum_url,
         "asset_size": asset_size,
         "html_url": data.get("html_url", f"https://github.com/{GITHUB_REPO}/releases"),
     }
 
 
+MAX_UPDATE_BYTES = 2 * 1024 * 1024 * 1024
+ALLOWED_DOWNLOAD_HOSTS = ("github.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com")
+
+
+def current_bundle() -> Path:
+    """The codebone.app this code is running from (falls back to /Applications for source checkouts)."""
+    for parent in Path(__file__).resolve().parents:
+        if parent.suffix == ".app":
+            return parent
+    return Path("/Applications/codebone.app")
+
+
+def _check_zip_names(zf: zipfile.ZipFile) -> None:
+    """Refuse archives that would write outside the extraction directory (zip slip)."""
+    for name in zf.namelist():
+        parts = Path(name).parts
+        if name.startswith("/") or ".." in parts:
+            raise RuntimeError(f"Unsafe path in update package: {name!r}")
+
+
+def _bundle_version(app: Path) -> Optional[str]:
+    try:
+        import plistlib
+        with open(app / "Contents" / "Info.plist", "rb") as f:
+            return plistlib.load(f).get("CFBundleShortVersionString")
+    except Exception:
+        return None
+
+
 def download_and_install_update(
     download_url: str,
-    target_app_path: str = "/Applications/codebone.app",
+    target_app_path: Optional[str] = None,
     progress_callback: Optional[Callable[[str], None]] = None,
+    expected_version: Optional[str] = None,
+    checksum_url: Optional[str] = None,
 ) -> bool:
-    """Downloads the release ZIP, extracts it, strips quarantine, signs, and replaces target app bundle."""
-    target_path = Path(target_app_path)
-    if not target_path.parent.exists():
-        target_path = Path.home() / "Applications" / "codebone.app"
-        target_path.parent.mkdir(parents=True, exist_ok=True)
+    """Download the release ZIP, verify it, and swap it in for the running bundle.
+
+    The new bundle is fully extracted, checked (structure, version, signature) and copied next to the target
+    first; only then are the two renamed, so a failure at any point leaves the working app untouched."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(download_url)
+    if parts.scheme != "https" or (parts.hostname or "") not in ALLOWED_DOWNLOAD_HOSTS:
+        raise ValueError("Update downloads must use HTTPS from GitHub")
+    target_path = Path(target_app_path) if target_app_path else current_bundle()
+    if not target_path.parent.exists() or not os.access(target_path.parent, os.W_OK):
+        # Installing somewhere else would leave the running app behind as a second copy: stop and say why
+        raise RuntimeError(f"No permission to replace {target_path}. Move codebone.app to /Applications or ~/Applications and try again.")
 
     with tempfile.TemporaryDirectory(prefix="codebone_update_") as tmp_dir:
         tmp_path = Path(tmp_dir)
@@ -132,68 +177,87 @@ def download_and_install_update(
         if progress_callback:
             progress_callback("Downloading update...")
         logger.info("Downloading codebone update from %s...", download_url)
-
         req = urllib.request.Request(download_url, headers={"User-Agent": "codebone-updater"})
         with urllib.request.urlopen(req, timeout=60) as resp, open(zip_file, "wb") as out_f:
-            shutil.copyfileobj(resp, out_f)
+            length = int(resp.headers.get("Content-Length") or 0)
+            if length > MAX_UPDATE_BYTES:
+                raise RuntimeError("Update package is unexpectedly large")
+            copied = 0
+            while True:
+                chunk = resp.read(1 << 20)
+                if not chunk:
+                    break
+                copied += len(chunk)
+                if copied > MAX_UPDATE_BYTES:
+                    raise RuntimeError("Update package is unexpectedly large")
+                out_f.write(chunk)
 
         if progress_callback:
             progress_callback("Extracting package...")
-        logger.info("Extracting update package to %s...", tmp_dir)
+        if checksum_url:  # published next to the release asset: <zip>.sha256
+            import hashlib
+            expected = urllib.request.urlopen(urllib.request.Request(checksum_url, headers={"User-Agent": "codebone-updater"}),
+                                              timeout=30).read().decode().split()[0].lower()
+            digest = hashlib.sha256()
+            with open(zip_file, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    digest.update(chunk)
+            if digest.hexdigest() != expected:
+                raise RuntimeError("Update package checksum does not match the published SHA-256")
+        else:
+            logger.warning("No published checksum for this release; relying on HTTPS and the code signature only")
         with zipfile.ZipFile(zip_file, "r") as zf:
-            zf.extractall(tmp_dir)
+            _check_zip_names(zf)
+        extract_dir = tmp_path / "extracted"
+        extract_dir.mkdir()
+        # ditto keeps symlinks and permissions; a plain zipfile extraction turns the bundled Python's symlinks into files
+        subprocess.run(["ditto", "-x", "-k", str(zip_file), str(extract_dir)], check=True)
+        zip_file.unlink()
 
-        # Locate extracted .app bundle
-        extracted_app = None
-        for item in tmp_path.iterdir():
-            if item.is_dir() and item.suffix == ".app":
-                extracted_app = item
-                break
-
+        extracted_app = next((i for i in extract_dir.iterdir() if i.is_dir() and i.suffix == ".app"), None)
         if not extracted_app or not (extracted_app / "Contents" / "MacOS" / "codebone").exists():
             raise RuntimeError("Downloaded package does not contain a valid codebone.app bundle.")
+        version = _bundle_version(extracted_app)
+        if expected_version and (not version or parse_version(version) != parse_version(expected_version)):
+            raise RuntimeError(f"Update package is version {version}, expected {expected_version}")
 
         if progress_callback:
-            progress_callback("Securing permissions & signatures...")
-
-        # 1. Clean quarantine and unwanted attributes
+            progress_callback("Verifying signature...")
         subprocess.run(["xattr", "-cr", str(extracted_app)], check=False)
-
-        # 2. Codesign the new bundle
-        subprocess.run(
-            ["codesign", "--force", "--deep", "-s", "-", str(extracted_app)],
-            check=False,
-        )
+        if subprocess.run(["codesign", "--verify", "--deep", str(extracted_app)], capture_output=True).returncode != 0:
+            raise RuntimeError("The downloaded app bundle failed its signature check")
 
         if progress_callback:
             progress_callback("Replacing application bundle...")
-        logger.info("Installing new codebone version into %s...", target_path)
+        staged = target_path.with_name(target_path.name + ".new")
+        backup = target_path.with_name(target_path.name + ".old")
+        for leftover in (staged, backup):
+            if leftover.exists():
+                shutil.rmtree(leftover)
+        subprocess.run(["ditto", str(extracted_app), str(staged)], check=True)  # full copy first: nothing is swapped yet
+        try:
+            if target_path.exists():
+                os.rename(target_path, backup)
+            os.rename(staged, target_path)
+        except OSError:
+            if backup.exists() and not target_path.exists():
+                os.rename(backup, target_path)  # roll back
+            shutil.rmtree(staged, ignore_errors=True)
+            raise
+        shutil.rmtree(backup, ignore_errors=True)
 
-        # 3. Replace target application bundle
-        if target_path.exists():
-            shutil.rmtree(target_path)
-        shutil.copytree(extracted_app, target_path, symlinks=True)
-
-        # 4. Final verification and launch services refresh
         subprocess.run(["xattr", "-cr", str(target_path)], check=False)
-        subprocess.run(
-            ["codesign", "--force", "--deep", "-s", "-", str(target_path)],
-            check=False,
-        )
         lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
         if os.path.exists(lsregister):
             subprocess.run([lsregister, "-f", str(target_path)], check=False)
         subprocess.run(["touch", str(target_path)], check=False)
-
         logger.info("Update installed successfully at %s!", target_path)
         return True
 
 
-def restart_app(app_path: str = "/Applications/codebone.app"):
-    """Spawns an independent background process that cleanly quits the running instance and restarts."""
-    script = f"""
-pkill -f "{app_path}/Contents/MacOS/codebone" >/dev/null 2>&1 || true
-sleep 1
-open "{app_path}"
-"""
-    subprocess.Popen(["bash", "-c", script], start_new_session=True)
+def restart_app(app_path: Optional[str] = None):
+    """Spawns an independent background process that quits the running instance and opens the app again.
+    The path is passed as an argument (never interpolated into the script), so spaces and quotes are safe."""
+    app = str(app_path or current_bundle())
+    script = 'kill "$2" >/dev/null 2>&1 || true; sleep 1; open "$1"'  # by pid: no pattern matching on the path
+    subprocess.Popen(["bash", "-c", script, "codebone-restart", app, str(os.getpid())], start_new_session=True)

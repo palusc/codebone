@@ -79,7 +79,10 @@ def open_full_disk_access_settings() -> bool:
 
 def reveal_codebone_in_finder() -> bool:
     """Reveals the codebone.app bundle in Finder for easy drag-and-drop into System Settings."""
+    from .updater import current_bundle
+
     candidates = [
+        current_bundle(),
         Path("/Applications/codebone.app"),
         Path.home() / "Applications" / "codebone.app",
     ]

@@ -9,9 +9,9 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from .config import Config
+from .config import MAX_FILE_BYTES, Config, list_watched_files, load_gitignore_spec
 from .prompts import parse_analysis
-from .providers import Provider
+from .providers import FastFallbackProvider, Provider
 from .storage import Storage
 
 logger = logging.getLogger("codebone.scans")
@@ -40,7 +40,8 @@ class ScanManager:
         os.replace(tmp, self.registry_file)
 
     def list_scans(self) -> List[dict]:
-        """List all valid saved codebase scans, updated with current file metadata."""
+        """List all valid saved codebase scans. Metadata is stored in the registry when a snapshot is written;
+        a database is only opened (read-only) when that metadata is missing."""
         reg = self._read_registry()
         valid_scans = []
         changed = False
@@ -48,22 +49,21 @@ class ScanManager:
         for scan_id, meta in list(reg.items()):
             db_path = Path(meta.get("db_path", ""))
             if not db_path.exists():
-                # Scan database was deleted
-                reg.pop(scan_id, None)
+                reg.pop(scan_id, None)  # scan database was deleted
                 changed = True
                 continue
-
-            # Ensure file count is accurate
-            try:
-                storage = Storage(db_path)
-                meta["file_count"] = storage.file_count()
-                idx = storage.entity_index()
-                meta["domains"] = list(idx.get("domains", {}).keys())
-                meta["tables_count"] = len(idx.get("tables", {}))
-                meta["routes_count"] = len(idx.get("routes", {}))
-            except Exception:
-                pass
-
+            if "file_count" not in meta or "domains" not in meta:
+                try:
+                    storage = Storage(db_path, readonly=True)
+                    idx = storage.entity_index()
+                    meta["file_count"] = storage.file_count()
+                    meta["domains"] = list(idx.get("domains", {}).keys())
+                    meta["tables_count"] = len(idx.get("tables", {}))
+                    meta["routes_count"] = len(idx.get("routes", {}))
+                    storage.close()
+                    changed = True
+                except Exception:
+                    pass
             valid_scans.append(meta)
 
         if changed:
@@ -81,7 +81,10 @@ class ScanManager:
     ) -> dict:
         """Create or update a snapshot .sqlite3 database in scans directory."""
         slug = re.sub(r"[^a-zA-Z0-9_-]", "_", project_name).lower().strip("_") or "project"
-        scan_id = scan_id or f"{slug}_{int(time.time())}"
+        if not scan_id:
+            # One rolling snapshot per project folder instead of a new full copy for every scan
+            digest = hashlib.sha1(str(project_path or project_name).encode("utf-8")).hexdigest()[:8]
+            scan_id = f"{slug}_{digest}"
         dest_db = self.scans_dir / f"{scan_id}.sqlite3"
 
         storage.snapshot_to(dest_db)
@@ -104,9 +107,26 @@ class ScanManager:
 
         reg = self._read_registry()
         reg[scan_id] = meta
+        self._prune(reg, keep_id=scan_id, project_path=meta["project_path"])
         self._write_registry(reg)
         logger.info("Saved scan snapshot '%s' (%d files)", scan_id, meta["file_count"])
         return meta
+
+    def _prune(self, reg: dict, keep_id: str, project_path: Optional[str], keep_older: int = 1):
+        """Snapshots written by earlier versions piled up one per scan; keep the current one plus the newest older."""
+        if not project_path:
+            return
+        older = sorted(
+            (m for sid, m in reg.items() if sid != keep_id and m.get("project_path") == project_path),
+            key=lambda m: m.get("updated_at", 0),
+            reverse=True,
+        )
+        for meta in older[keep_older:]:
+            reg.pop(meta.get("id"), None)
+            try:
+                Path(meta.get("db_path", "")).unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def get_scan(self, scan_id_or_path: str) -> Optional[dict]:
         """Find scan by ID, filename, or absolute path."""
@@ -122,7 +142,7 @@ class ScanManager:
         # If it is an external .sqlite3 file that exists on disk
         if p.exists() and p.suffix in (".sqlite3", ".db", ".sqlite"):
             try:
-                storage = Storage(p)
+                storage = Storage(p, readonly=True)  # foreign databases are never modified
                 idx = storage.entity_index()
                 return {
                     "id": p.stem,
@@ -163,16 +183,27 @@ class ScanManager:
         if not scan:
             raise FileNotFoundError(f"Scan '{scan_id_or_path}' not found")
         src_path = Path(scan["db_path"])
+        if dest_path.suffix not in (".sqlite3", ".sqlite", ".db"):
+            raise ValueError("Export target must end in .sqlite3, .sqlite or .db")
+        if dest_path.exists() or dest_path.is_symlink():
+            raise FileExistsError(f"{dest_path} already exists; exports never overwrite files")
         dest_path.parent.mkdir(parents=True, exist_ok=True)
-        Storage(src_path).snapshot_to(dest_path)
+        source = Storage(src_path, readonly=True)
+        try:
+            source.snapshot_to(dest_path)
+        finally:
+            source.close()
         return dest_path
 
     def import_scan(self, source_path: Path, project_name: Optional[str] = None) -> dict:
         if not source_path.exists():
             raise FileNotFoundError(f"Source file {source_path} does not exist")
         p_name = project_name or source_path.stem
-        storage = Storage(source_path)
-        return self.save_snapshot(project_name=p_name, project_path=None, storage=storage)
+        storage = Storage(source_path, readonly=True)  # the user's file is never modified
+        try:
+            return self.save_snapshot(project_name=p_name, project_path=None, storage=storage)
+        finally:
+            storage.close()
 
 
 class ScanReconciler:
@@ -197,7 +228,7 @@ class ScanReconciler:
         if not source_db_path.exists():
             raise FileNotFoundError(f"Source scan database does not exist: {source_db_path}")
 
-        source_storage = Storage(source_db_path)
+        source_storage = Storage(source_db_path, readonly=True)
         old_files = source_storage.all_files()
         old_by_path: Dict[str, dict] = {f["path"]: f for f in old_files}
         old_by_hash: Dict[str, List[dict]] = {}
@@ -210,16 +241,13 @@ class ScanReconciler:
             for d in f.get("domains", []):
                 old_domains.add(d)
 
-        # 1. Discover all current target files on disk
-        extensions = set(config.get("watched_extensions", []))
-        ignore_dirs = set(config.get("ignore_dirs", []))
-
-        disk_files: List[Path] = []
-        for path in target_project.rglob("*"):
-            if path.is_file() and path.suffix in extensions and not any(
-                part in ignore_dirs for part in path.parts
-            ):
-                disk_files.append(path)
+        # 1. Discover current target files with exactly the rules of a normal scan (ignores, .gitignore, symlink jail)
+        disk_files: List[Path] = list_watched_files(
+            target_project,
+            set(config.get("watched_extensions", [])),
+            config.get_ignore_dirs(target_project),
+            load_gitignore_spec(target_project),
+        )
 
         total_disk = len(disk_files)
         logger.info(
@@ -236,6 +264,8 @@ class ScanReconciler:
             except ValueError:
                 rel = str(p)
             try:
+                if p.stat().st_size > MAX_FILE_BYTES:
+                    continue
                 b = p.read_bytes()
                 h = hashlib.sha256(b).hexdigest()
                 mtime = p.stat().st_mtime
@@ -267,6 +297,7 @@ class ScanReconciler:
                         "events": old_rec.get("events", []),
                         "domains": old_rec.get("domains", []),
                         "summary": old_rec.get("summary", ""),
+                        "source": old_rec.get("source", "model"),
                         "mtime": item["mtime"],
                         "content_hash": h,
                     })
@@ -297,6 +328,7 @@ class ScanReconciler:
                         "events": candidate.get("events", []),
                         "domains": candidate.get("domains", []),
                         "summary": candidate.get("summary", ""),
+                        "source": candidate.get("source", "model"),
                         "mtime": item["mtime"],
                         "content_hash": h,
                     },
@@ -330,35 +362,39 @@ class ScanReconciler:
             len(deleted_paths),
         )
 
-        # 4. Clear/Prepare target storage and insert reused & renamed records
-        target_storage.reset()
+        # 4. Analyse modified and added files BEFORE touching the live index, so a failure can never leave it half-empty
+        total_to_sniff = len(modified) + len(added)
+        analysed = []
+        fallback = FastFallbackProvider()
+        for n, item in enumerate(modified + added, start=1):
+            if on_progress:
+                on_progress(n, total_to_sniff, item["rel_path"])
+            try:
+                code_str = item["path"].read_bytes().decode("utf-8", errors="ignore")
+                try:
+                    raw_output = provider.sniff(item["rel_path"], code_str)
+                    source = getattr(provider, "last_source", "model")
+                except Exception as exc:
+                    logger.warning("Provider failed on %s during reconciliation, using fallback: %s", item["rel_path"], exc)
+                    raw_output, source = fallback.sniff(item["rel_path"], code_str), "regex"
+                analysed.append((item, raw_output, source))
+            except OSError as exc:
+                logger.warning("Cannot read %s during reconciliation: %s", item["rel_path"], exc)
 
+        # 5. Swap the live index contents
+        target_storage.reset()
         for rec in reused:
             target_storage.insert_record(rec)
-
         for _, _, rec in renamed:
             target_storage.insert_record(rec)
-
-        # 5. Sniff modified and added files via Provider
-        total_to_sniff = len(modified) + len(added)
-        sniffed_count = 0
-
-        for item in modified + added:
-            sniffed_count += 1
-            if on_progress:
-                on_progress(sniffed_count, total_to_sniff, item["rel_path"])
-            try:
-                code_bytes = item["path"].read_bytes()
-                code_str = code_bytes.decode("utf-8", errors="ignore")
-                raw_output = provider.sniff(item["rel_path"], code_str[:6000])
-                target_storage.update_file(
-                    rel_path=item["rel_path"],
-                    raw_output=raw_output,
-                    mtime=item["mtime"],
-                    content_hash=item["hash"],
-                )
-            except Exception as exc:
-                logger.warning("Error sniffing %s during reconciliation: %s", item["rel_path"], exc)
+        for item, raw_output, source in analysed:
+            target_storage.update_file(
+                rel_path=item["rel_path"],
+                raw_output=raw_output,
+                mtime=item["mtime"],
+                content_hash=item["hash"],
+                source=source,
+            )
 
         # 6. AI Architectural Reconciliation pass
         delta = {
@@ -380,6 +416,7 @@ class ScanReconciler:
             arch_summary,
         )
 
+        source_storage.close()
         return {
             "total_target_files": total_disk,
             "reused_count": len(reused),

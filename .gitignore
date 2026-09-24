@@ -41,8 +41,3 @@ Thumbs.db
 .env
 .env.*
 !.env.example
-
-# Local editor and agent configs
-.cursor/
-.gemini/
-.agents/

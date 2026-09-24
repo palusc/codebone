@@ -38,7 +38,7 @@ Drag `codebone.app` to `/Applications` — done. A 🦴 appears in your menu bar
 
 Click it → **Select Project Folder...** to start your first scan.
 
-> 💾 ~650 MB total (~390 MB model + ~260 MB venv). Requires macOS 13+ on Apple Silicon.
+> 💾 ~750 MB total (~490 MB model + ~260 MB Python environment). Requires macOS 13+ on Apple Silicon.
 
 <details>
 <summary><b>Homebrew / Build from Source</b></summary>
@@ -77,7 +77,7 @@ codebone provides native `cb` MCP tools and prompts, recognized across all major
 ## 🐾 How It Works
 
 1. **Sniff** — Watches your repository on every `Cmd + S` with battery-aware debouncing (0.5s AC, 15s Battery).
-2. **Think** — Built-in Apple Silicon Metal GPU extracts models, routes, events, and business domains in `< 1s`.
+2. **Think** — The built-in Apple Silicon Metal model extracts models, routes, events, and business domains (about 1.2 s per file measured on Apple Silicon; unchanged files are skipped by SHA-256).
 3. **Map** — Links files into a Semantic System Graph based on shared business logic — bridging files that don't import each other.
 4. **Serve** — Streams surgical architectural context to Claude, Cursor, or Gemini via **MCP** or **curl** in ~2k tokens.
 
@@ -87,7 +87,7 @@ codebone provides native `cb` MCP tools and prompts, recognized across all major
 <br>
 
 ### 1. Concrete Semantic Extraction (The 5 Primitives)
-For every file in your codebase, codebone's local Metal model extracts five structured architectural dimensions in `< 1s` per file:
+For every file in your codebase, codebone's local Metal model extracts five structured architectural dimensions per file (about 1.2 s each, only for new or changed files):
 
 - **Database Models & Tables** — Entities persisted by the module (e.g. `User`, `Subscription`, `Invoice`).
 - **API Routes & Endpoints** — HTTP methods and paths exposed (e.g. `POST /api/v1/checkout`, `GET /webhook/stripe`).
@@ -114,7 +114,7 @@ In traditional AST or grep-based tools, files are only connected if file A expli
 None of these files import each other. A file-dump or basic search misses the connection completely. **codebone links them automatically** through shared models, events, and domains into a unified Semantic System Graph. When you prompt your AI:
 > *"How does subscription renewal work?"*
 
-codebone delivers all 3 interconnected files and their schemas in **~2,000 tokens** instead of 25,000.
+codebone answers with the matching files, their entities and their links in a few hundred tokens: a drill-down such as `cb(query="subscription renewal")` returned 170 to 370 tokens on a 56-file project, and the overview of that project (about 125,000 tokens of source) is about 1,500 tokens.
 
 ### 3. Interactive Live Graph UI
 Inspect your codebase's real-time architecture visually:
@@ -232,7 +232,7 @@ codebone pairs local-first Apple Silicon Metal acceleration with zero-cost smart
 
 | Provider | Description | Latency |
 |---|---|---|
-| **Built-in (Qwen 0.5B)** *(default)* | Apple Silicon Metal GPU acceleration. 100% offline, zero cloud, zero cost. | `< 1s / file` |
+| **Built-in (Qwen 0.5B)** *(default)* | Apple Silicon Metal GPU acceleration. 100% offline, zero cloud, zero cost. | `~1.2 s / file` |
 | **Deep Scan Mode (7B)** | One-click full re-analysis with 7B parameters, automatically reverting to 0.5B. | Thorough |
 | **Local URL** | Ollama, LM Studio, vLLM, or any OpenAI-compatible local endpoint. | Custom |
 | **Cloud BYOK** | Your own API key — Anthropic (`Claude Sonnet 5`) or OpenAI (`GPT-6`). | Zero RAM |
@@ -252,7 +252,8 @@ Never re-scan from scratch when switching branches or reorganizing code:
 
 ## 🔒 Privacy & Security
 
-- **100% Localhost** — Binds to `127.0.0.1:8053` only. Zero cloud, zero telemetry.
+- **100% Localhost** — Binds to `127.0.0.1:8053` only. Zero cloud, zero telemetry. The API refuses requests with a foreign `Host` or `Origin` header, so a web page in your browser cannot read from or control it.
+- **Secrets stay out** — `.env` files, private keys, `credentials*`/`secrets*` files and files over 1 MB are never read or sent to any model.
 - **Prompt Injection Defense** — Untrusted code is isolated with escaped XML wrappers and strict anti-jailbreak directives.
 - **Symlink Jail** — Symlinks cannot escape the project root into sensitive system paths.
 - **Full Disk Access Helper** — Pre-flight TCC check with 1-click System Settings shortcut.
@@ -309,14 +310,14 @@ codebone focuses on a continuously maintained semantic system graph of domains, 
 
 <br>
 
-**Option A — Uninstaller App (recommended):**
-Double-click `Uninstall codebone.app` → **Clean All Data**. Removes all processes, databases, models, logs, and MCP entries. Then drag `codebone.app` to the Trash.
+**From the app (recommended):** 🦴 ➔ **Settings** ➔ **Uninstall codebone...**. It lists everything it will remove (the app, application data and models, logs, caches, preferences, login items, and codebone's entries in the Claude Code, Claude Desktop, Cursor and Gemini configs), asks once, removes it all and quits. Your project folders are never touched.
 
-**Option B — Terminal:**
+**Terminal:**
 ```bash
-./uninstall.sh           # full wipe
-./uninstall.sh --keep-data  # keep databases & model for fast reinstall
+./uninstall.sh --dry-run   # show what would be removed
+./uninstall.sh --yes       # remove everything without asking
 ```
+Installed with Homebrew? The uninstaller also runs `brew uninstall codebone` for you.
 
 </details>
 

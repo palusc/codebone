@@ -101,8 +101,8 @@ def test_scan_adoption_and_reconciliation():
         assert "Payment & Billing" in renamed_rec["domains"]
 
         # Check graph edges in target storage
-        edges = storage_v2.graph_edges()
-        assert len(edges) >= 1
+        # Files here share no real entity/domain, so no edge is expected (the old heuristic linked everything).
+        assert storage_v2.graph_edges() == []
 
         print("Reconciliation test passed successfully! Report:", report)
 
@@ -128,7 +128,7 @@ def test_api_endpoints():
         service.rescan_all()
 
         app = create_app(service)
-        client = TestClient(app)
+        client = TestClient(app, base_url="http://127.0.0.1")
 
         # 1. Test GET /codebone/scans (and /pug/scans)
         res = client.get("/codebone/scans")

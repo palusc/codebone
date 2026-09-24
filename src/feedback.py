@@ -8,13 +8,16 @@ import urllib.parse
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from . import __version__
 from .config import CONFIG_DIR
 from .logging_setup import LOG_FILE
 
 logger = logging.getLogger("codebone.feedback")
 FEEDBACK_FILE = CONFIG_DIR / "feedback.jsonl"
 GITHUB_REPO_URL = "https://github.com/palusc/codebone/issues/new"
-APP_VERSION = "1.2.2"
+APP_VERSION = __version__
+MAX_FEEDBACK_ENTRIES = 200
+MAX_ISSUE_URL_CHARS = 7000  # GitHub rejects request URLs beyond roughly 8 KB
 
 
 def _sanitize_log_line(line: str) -> str:
@@ -23,7 +26,10 @@ def _sanitize_log_line(line: str) -> str:
     redacted = re.sub(r"(sk-[a-zA-Z0-9_\-]{20,})", "sk-***REDACTED***", line)
     redacted = re.sub(r"(bearer\s+[a-zA-Z0-9_\-\.]{20,})", "bearer ***REDACTED***", redacted, flags=re.IGNORECASE)
     redacted = re.sub(r"(api[_-]?key[\"'\s:=]+)[a-zA-Z0-9_\-]{16,}", r"\1***REDACTED***", redacted, flags=re.IGNORECASE)
-    return redacted
+    redacted = re.sub(r"\b(gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,})\b", "***REDACTED***", redacted)
+    redacted = re.sub(r"((?:token|password|passwd|secret)[\"'\s:=]+)[^\s\"',;]{6,}", r"\1***REDACTED***", redacted, flags=re.IGNORECASE)
+    # The user name in home paths identifies a person; the rest of the path is what triage needs
+    return re.sub(r"/Users/[^/\s\"']+", "/Users/~", redacted)
 
 
 def get_recent_log_snippet(max_lines: int = 40) -> str:
@@ -50,7 +56,7 @@ def build_system_diagnostics(extra_info: Optional[dict] = None) -> Dict[str, str
     if extra_info:
         for k, v in extra_info.items():
             if v is not None:
-                diag[k] = str(v)
+                diag[k] = _sanitize_log_line(str(v))  # project paths contain the user name
     return diag
 
 
@@ -93,11 +99,25 @@ def generate_github_issue_url(
         ])
 
     body = "\n".join(body_lines)
+    while len(urllib.parse.quote(body)) > MAX_ISSUE_URL_CHARS and log_snippet and "\n" in log_snippet:
+        log_snippet = log_snippet.split("\n", 1)[1]  # drop the oldest log line until the link fits
+        return generate_github_issue_url(feedback_type, title, description, diagnostics, log_snippet)
     params = {
         "title": issue_title,
         "body": body,
     }
     return f"{GITHUB_REPO_URL}?{urllib.parse.urlencode(params)}"
+
+
+def _trim_feedback_file():
+    """Keep the local feedback log bounded and private (it can contain log excerpts)."""
+    try:
+        FEEDBACK_FILE.chmod(0o600)
+        lines = FEEDBACK_FILE.read_text(encoding="utf-8").splitlines()
+        if len(lines) > MAX_FEEDBACK_ENTRIES:
+            FEEDBACK_FILE.write_text("\n".join(lines[-MAX_FEEDBACK_ENTRIES:]) + "\n", encoding="utf-8")
+    except OSError:
+        pass
 
 
 def record_feedback(
@@ -132,6 +152,7 @@ def record_feedback(
     try:
         with open(FEEDBACK_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
+        _trim_feedback_file()
         logger.info("Recorded %s feedback locally (ID: %s)", f_type, entry["id"])
     except Exception as exc:
         logger.error("Failed to write to feedback.jsonl: %s", exc)

@@ -499,6 +499,10 @@ class CodeBoneApp(rumps.App):
         self.recent_projects_menu = rumps.MenuItem("Recent Projects")
         _set_symbol_icon(self.recent_projects_menu, "clock.arrow.circlepath")
 
+        # Model modules: API endpoints Claude Code can be routed through (for coding, not for indexing)
+        self.modules_menu = rumps.MenuItem("Modules")
+        _set_symbol_icon(self.modules_menu, "square.stack.3d.up")
+
         # Model Selection Submenu (Dynamic active model list)
         self.brain_menu = rumps.MenuItem("Model")
         _set_symbol_icon(self.brain_menu, "brain")
@@ -572,6 +576,7 @@ class CodeBoneApp(rumps.App):
             self.rescan_item,
             self.select_project_item,
             self.recent_projects_menu,
+            self.modules_menu,
             None,
             self.settings_menu,
             None,
@@ -953,6 +958,7 @@ class CodeBoneApp(rumps.App):
         self._apply_all_icons()
         self._update_recent_projects_menu()
         self._update_brain_checks()
+        self._update_modules_menu()
         self._push_stats()
 
     @staticmethod
@@ -1086,6 +1092,158 @@ class CodeBoneApp(rumps.App):
         clear_item = rumps.MenuItem("Clear Recent Projects", callback=self.clear_recent_projects)
         _set_symbol_icon(clear_item, "trash")
         self.recent_projects_menu.add(clear_item)
+
+    # ── model modules ────────────────────────────────────────────────────
+    def _update_modules_menu(self):
+        from . import modules
+
+        if getattr(self.modules_menu, "_menu", None) is not None:
+            self.modules_menu.clear()
+        library = modules.list_modules(self.config)
+        selected = modules.get_module(self.config, self.config.get("module_selected"))
+        active = set(modules.enabled_apps(self.config))
+
+        for m in library:  # which model
+            item = rumps.MenuItem(m["name"], callback=lambda _, mid=m["id"]: self.pick_module(mid))
+            item.state = bool(selected and selected["id"] == m["id"])
+            self.modules_menu.add(item)
+        if library:
+            self.modules_menu.add(None)
+            for app_id, (label, fmt) in modules.APPS.items():  # which apps use it
+                needs = "" if (selected is None or modules.supports(selected, app_id)) else f"  (needs {modules.FORMAT_NAMES[fmt]} URL)"
+                item = rumps.MenuItem(f"Use for {label}{needs}", callback=lambda _, a=app_id: self.toggle_module_app(a))
+                item.state = app_id in active
+                self.modules_menu.add(item)
+            copy_menu = rumps.MenuItem("Copy for Other Apps")
+            for what, fn in (("Anthropic-format base URL", lambda: (selected or {}).get("anthropic_url")),
+                             ("OpenAI-format base URL", lambda: (selected or {}).get("openai_url")),
+                             ("Model ID", lambda: (selected or {}).get("model")),
+                             ("API key", lambda: modules.Keychain().get(selected["id"]) if selected else None)):
+                copy_menu.add(rumps.MenuItem(what, callback=lambda _, w=what, f=fn: self.copy_module_value(w, f)))
+            self.modules_menu.add(copy_menu)
+            self.modules_menu.add(None)
+        self.modules_menu.add(rumps.MenuItem("Add Module...", callback=self.add_module_dialog))
+        if library:
+            self.modules_menu.add(rumps.MenuItem("Test Connection", callback=self.test_selected_module))
+            remove_menu = rumps.MenuItem("Remove Module")
+            for m in library:
+                remove_menu.add(rumps.MenuItem(m["name"], callback=lambda _, mid=m["id"], n=m["name"]: self.remove_module_dialog(mid, n)))
+            self.modules_menu.add(remove_menu)
+
+    def toggle_module_app(self, app_id: str):
+        from . import modules
+
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        label = modules.APPS[app_id][0]
+        turning_on = app_id not in modules.enabled_apps(self.config)
+        try:
+            module = modules.set_app_enabled(self.config, app_id, turning_on)
+        except modules.SettingsUnreadable as exc:
+            rumps.alert("Modules", f"{label}'s settings file could not be read, so nothing was changed:\n{exc}")
+            return
+        except ValueError as exc:
+            rumps.alert("Modules", str(exc))
+            return
+        if module:
+            rumps.notification("codebone", f"{label} now uses {module['name']}", "New sessions pick this up; running ones keep their model.")
+        else:
+            rumps.notification("codebone", f"{label} is back on its normal model", "New sessions use your usual setup again.")
+        self._update_modules_menu()
+
+    def copy_module_value(self, what: str, getter):
+        value = getter()
+        if not value:
+            rumps.alert("Modules", f"This module has no {what}.")
+            return
+        copy_to_clipboard(value)
+        rumps.notification("codebone", f"{what} copied", "Paste it into the other app's model settings.")
+
+    def pick_module(self, module_id: str):
+        from . import modules
+
+        try:
+            modules.select_module(self.config, module_id)
+        except (ValueError, modules.SettingsUnreadable) as exc:
+            rumps.alert("Modules", str(exc))
+        self._update_modules_menu()
+
+    def add_module_dialog(self, _):
+        from . import modules
+
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        preset = modules.PRESETS[0]
+        choice = rumps.alert(
+            title="Add Module",
+            message=(f"A module is a model API your coding apps can use instead of their default.\n\n"
+                     f"Preset: {preset['name']}\nModel: {preset['model']}\n\n"
+                     "Custom needs a base URL in Anthropic format (for Claude Code) and/or OpenAI format (for opencode)."),
+            ok=preset["name"], cancel="Cancel", other="Custom...",
+        )
+        if choice == 0:
+            return
+        if choice == 1:
+            name, model = preset["name"], preset["model"]
+            anthropic_url, openai_url = preset["anthropic_url"], preset["openai_url"]
+        else:
+            fields = []
+            for label, default in (("Name (shown in the menu)", ""), ("Model ID", ""),
+                                   ("Anthropic-format base URL (optional, https://...)", ""),
+                                   ("OpenAI-format base URL (optional, https://...)", "")):
+                resp = rumps.Window(message=label, title="Add Module", default_text=default, ok="Next", cancel="Cancel",
+                                    dimensions=(360, 24)).run()
+                if not resp.clicked:
+                    return
+                fields.append(resp.text.strip())
+            name, model, anthropic_url, openai_url = fields
+        resp = rumps.Window(message=f"API key for {name} (stored in your macOS Keychain)",
+                            title="Add Module", default_text="", ok="Add", cancel="Cancel", dimensions=(360, 24),
+                            secure=True).run()
+        if not resp.clicked:
+            return
+        key = resp.text.strip()
+        try:
+            module = modules.add_module(self.config, name, model, key, anthropic_url, openai_url)
+            self.config.set("module_selected", module["id"])
+        except (ValueError, RuntimeError) as exc:
+            rumps.alert("Add Module", str(exc))
+            return
+        self._update_modules_menu()
+        self._check_module(module, key)
+
+    def _check_module(self, module: dict, key: str):
+        from . import modules
+
+        def _run():
+            for fmt in ("anthropic", "openai"):
+                url = modules._url(module, fmt)
+                if not url:
+                    continue
+                ok, msg = modules.test_connection(url, module["model"], key, fmt=fmt)
+                rumps.notification("codebone", f"{module['name']} ({fmt} format): " + ("works" if ok else "failed"), msg)
+
+        threading.Thread(target=_run, daemon=True, name="codebone-module-test").start()
+
+    def test_selected_module(self, _):
+        from . import modules
+
+        module = modules.get_module(self.config, self.config.get("module_selected"))
+        key = modules.Keychain().get(module["id"]) if module else None
+        if not module or not key:
+            rumps.alert("Modules", "Select a module with a stored key first.")
+            return
+        self._check_module(module, key)
+
+    def remove_module_dialog(self, module_id: str, name: str):
+        from . import modules
+
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        if rumps.alert("Remove Module", f"Remove {name}, switch its apps back and delete its API key?", ok="Remove", cancel="Cancel") != 1:
+            return
+        try:
+            modules.remove_module(self.config, module_id)
+        except modules.SettingsUnreadable as exc:
+            rumps.alert("Modules", str(exc))
+        self._update_modules_menu()
 
     def clear_recent_projects(self, _):
         """Clears the recent projects list and refreshes the submenu."""

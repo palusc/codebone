@@ -610,6 +610,54 @@ def _prune(dirs: Tuple[Path, ...], gone: str, dry: bool) -> List[Path]:
 # ── the run ─────────────────────────────────────────────────────────────────
 
 
+# Model modules (src/modules.py): same names, kept here so this file stays runnable on its own
+_MODULE_MARK = "codebone-module"
+_MODULE_ENV_KEYS = ("ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL")
+
+
+def _restore_module_settings(path: Path, text: str, data: dict, previous) -> None:
+    previous = previous if isinstance(previous, dict) else {}
+    env = dict(data.get("env")) if isinstance(data.get("env"), dict) else {}
+    for k in _MODULE_ENV_KEYS:
+        if previous.get(k) is None:
+            env.pop(k, None)
+        else:
+            env[k] = previous[k]
+    if env:
+        data["env"] = env
+    else:
+        data.pop("env", None)
+    if previous.get("apiKeyHelper") is None:
+        data.pop("apiKeyHelper", None)
+    else:
+        data["apiKeyHelper"] = previous["apiKeyHelper"]
+    if data:
+        _save(path, text, data)
+    else:
+        path.unlink()  # codebone had created the file and nothing else is in it
+
+
+def _restore_opencode_settings(path: Path, text: str, data: dict, previous) -> None:
+    previous = previous if isinstance(previous, dict) else {}
+    prov = dict(data["provider"])
+    if previous.get("provider") is None:
+        prov.pop("codebone", None)
+    else:
+        prov["codebone"] = previous["provider"]
+    if prov:
+        data["provider"] = prov
+    else:
+        data.pop("provider", None)
+    if previous.get("model") is None:
+        data.pop("model", None)
+    else:
+        data["model"] = previous["model"]
+    if data:
+        _save(path, text, data)
+    else:
+        path.unlink()
+
+
 class _Runner:
     def __init__(self, home: Path, bundle, remove_app: bool, dry_run: bool, system: bool):
         self.home, self.bundle, self.remove_app = home, bundle, remove_app
@@ -628,7 +676,7 @@ class _Runner:
             self.app_paths, self.protected_apps = _app_bundles(self.home, self.bundle, self.system, self.projects)
         except Exception as exc:  # noqa: BLE001
             self.report.errors.append(f"apps: {exc}")
-        steps = (self.services, self.processes, self.mcp, self.packages, self.data, self.apps, self.permissions)
+        steps = (self.services, self.processes, self.mcp, self.modules, self.packages, self.data, self.apps, self.permissions)
         for step in steps:  # every step stands alone: one failure never stops the rest
             try:
                 step()
@@ -669,6 +717,42 @@ class _Runner:
                 self.edit_config(cfg)
             except Exception as exc:  # noqa: BLE001
                 self.report.errors.append(f"MCP config {self.t(cfg.path)}: {exc}")
+
+    def modules(self) -> None:
+        """Take Claude Code off a routed model module (restoring its previous settings) and delete the module keys."""
+        path = self.home / ".claude" / "settings.json"
+        backups: dict = {}
+        try:
+            got = json.loads((self.home / "Library" / "Application Support" / "codebone" / "config.json")
+                             .read_text(encoding="utf-8")).get("module_backups")
+            backups = got if isinstance(got, dict) else {}
+        except (OSError, ValueError, AttributeError, RecursionError):
+            pass
+        backup = backups.get("claude-code")
+        oc = self.home / ".config" / "opencode" / "opencode.json"
+        if oc.exists():
+            otext, odata = _parse(oc)
+            prov = odata.get("provider") if isinstance(odata, dict) and isinstance(odata.get("provider"), dict) else {}
+            if isinstance(prov.get("codebone"), dict) and "codebone/keys" in json.dumps(prov["codebone"]):
+                if not self.dry:
+                    _restore_opencode_settings(oc, otext, odata, backups.get("opencode"))
+                self.report.removed.append(f"model routing in {self.t(oc)} (previous settings restored)")
+        if path.exists():
+            _text, data = _parse(path)
+            if data is None:
+                if _text is not None and _MODULE_MARK in _text:
+                    self.report.skipped.append(f"{self.t(path)} is not valid JSON; check it for codebone model routing by hand")
+            elif _MODULE_MARK in str(data.get("apiKeyHelper", "")):
+                if not self.dry:
+                    _restore_module_settings(path, _text, data, backup)
+                self.report.removed.append(f"model routing in {self.t(path)} (previous settings restored)")
+        if self.system:  # the Keychain is machine-wide state: never touched for a fake home
+            if _run(["security", "find-generic-password", "-s", _MODULE_MARK])[0] == 0:
+                if not self.dry:
+                    for _ in range(50):
+                        if _run(["security", "delete-generic-password", "-s", _MODULE_MARK])[0] != 0:
+                            break
+                self.report.removed.append("module API keys in the macOS Keychain")
 
     def edit_config(self, cfg: _Cfg) -> None:
         path = cfg.path
@@ -807,6 +891,16 @@ def collect_targets(home=None, bundle=None, *, system: Optional[bool] = None) ->
         names = _ours(data, cfg.nested) if data is not None else []
         if names:
             out.append(Target("mcp", f"MCP entry ({cfg.label}): {', '.join(dict.fromkeys(names))}", str(cfg.path)))
+    ocp = home / ".config" / "opencode" / "opencode.json"
+    if ocp.exists():
+        _t, od = _parse(ocp)
+        if isinstance(od, dict) and isinstance(od.get("provider"), dict) and "codebone/keys" in json.dumps(od["provider"].get("codebone", "")):
+            out.append(Target("mcp", "Model routing in opencode config (restored)", str(ocp)))
+    sp = home / ".claude" / "settings.json"
+    if sp.exists():
+        _text, sdata = _parse(sp)
+        if sdata is not None and _MODULE_MARK in str(sdata.get("apiKeyHelper", "")):
+            out.append(Target("mcp", "Model routing in Claude Code settings (restored)", str(sp)))
     for plist in _launch_agents(home):
         out.append(Target("service", f"{_LABELS['service']}: {plist.name}", str(plist), True, _size(plist)))
     for kind, path in _fs_targets(home):

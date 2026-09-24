@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Context that navigates**: `cb()` now returns layout, domains, key entities and a one-line summary per file (about 1,500 tokens for a 56-file project of 125,000 tokens of source); `cb(query="several words")` ranks files by name, entities and summary and lists linked files; `codebone_graph(file=...)` shows which files are connected through shared tables, routes or events. MCP tool descriptions are much shorter.
 - Model status (download progress, "no model, using heuristics") is shown in the graph page and in `/codebone/status`; the graph page refreshes when the index revision changes instead of polling the whole graph.
 
+- **Modules**: a library of model APIs (preset for MiMo V2.6 Pro, or any Anthropic- or OpenAI-format endpoint) with a switch per app: Claude Code and opencode are configured directly (API keys in the macOS Keychain, previous settings restored when switched off and on uninstall), other apps get copy buttons for URL, model ID and key. The connection can be tested from the menu.
+
 ### Changed
 - One install recipe (`scripts/build_bundle.sh`) behind the DMG, ZIP/Homebrew and `install.sh`: bundled Python 3.13.15, packages pinned in `requirements.lock`, native launcher, and the pinned base model (exact Hugging Face revision + SHA-256) bundled in the app and linked on first launch.
 - Per-project MCP files (`.cursor`, `.gemini`, `.agents`) are no longer written into indexed folders; global client configs are only touched for installed clients and no longer pin a port.

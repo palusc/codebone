@@ -1356,20 +1356,26 @@ class CodeBoneApp(rumps.App):
         from . import modules
 
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-        preset = modules.PRESETS[0]
-        choice = rumps.alert(
-            title="Add Module",
-            message=(f"A module is a model API your coding apps can use instead of their default.\n\n"
-                     f"Preset: {preset['name']}\nModel: {preset['model']}\n\n"
-                     "Custom needs a base URL in Anthropic format (for Claude Code) and/or OpenAI format (for opencode)."),
-            ok=preset["name"], cancel="Cancel", other="Custom...",
-        )
-        if choice == 0:
-            return
-        if choice == 1:
-            name, model = preset["name"], preset["model"]
-            anthropic_url, openai_url = preset["anthropic_url"], preset["openai_url"]
-        else:
+        name = model = anthropic_url = openai_url = None
+        for i, preset in enumerate(modules.PRESETS):
+            last = i == len(modules.PRESETS) - 1
+            choice = rumps.alert(
+                title="Add Module",
+                message=(f"A module is a model API your coding apps can use instead of their default.\n\n"
+                         f"Preset: {preset['name']}\nModel: {preset['model']}\n\n"
+                         "Custom needs a base URL in Anthropic format (for Claude Code) and/or OpenAI format (for opencode)."),
+                ok=preset["name"], cancel="Cancel", other=("Custom..." if last else "Other provider..."),
+            )
+            if choice == 0:
+                return
+            if choice == 1:
+                name, model = preset["name"], preset["model"]
+                anthropic_url = preset.get("anthropic_url", "")
+                openai_url = preset.get("openai_url", "")
+                break
+            if last:
+                name = ""  # falls through to the custom-entry form below
+        if name is None or name == "":
             fields = []
             for label, default in (("Name (shown in the menu)", ""), ("Model ID", ""),
                                    ("Anthropic-format base URL (optional, https://...)", ""),
@@ -1841,7 +1847,7 @@ class CodeBoneApp(rumps.App):
         current_vendor = self.config.get("brain_cloud_vendor", "openai")
         current_key = self.config.get("brain_cloud_api_key", "")
         window = rumps.Window(
-            message="Enter your API key:\nFormat: 'openai:sk-...' or 'anthropic:sk-ant-...'",
+            message="Enter your API key:\nFormat: 'openai:sk-...', 'anthropic:sk-ant-...' or 'openrouter:sk-or-...'",
             title="Cloud BYOK",
             default_text=f"{current_vendor}:{current_key}" if current_key else "openai:",
             ok="Save",

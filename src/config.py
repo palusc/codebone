@@ -327,7 +327,7 @@ DEFAULTS = {
     "watched_extensions": DEFAULT_WATCHED_EXTENSIONS,
     "brain_provider": "builtin",  # "builtin" | "local_url" | "cloud"
     "brain_local_url": "http://localhost:11434/api/generate",
-    "brain_cloud_vendor": "openai",  # "openai" | "anthropic"
+    "brain_cloud_vendor": "openai",  # "openai" | "anthropic" | "openrouter"
     "brain_cloud_api_key": "",
     "brain_cloud_model": "gpt-6",
     "deep_scan_model_path": None,

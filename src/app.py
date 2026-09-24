@@ -1,19 +1,23 @@
 """The 'Bone' UI — codebone macOS menu bar app."""
+import fcntl
 import json
 import logging
 import os
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Optional
 
 import objc
 import rumps
+from PyObjCTools import AppHelper
+from Foundation import NSRunLoop, NSDate
 from AppKit import (
     NSOpenPanel,
     NSApplication,
     NSApplicationActivationPolicyAccessory,
-    NSFloatingWindowLevel,
+    NSApplicationActivationPolicyRegular,
     NSFont,
     NSFontAttributeName,
     NSForegroundColorAttributeName,
@@ -53,9 +57,10 @@ from AppKit import (
 from .config import Config
 from .feedback import record_feedback
 from .logging_setup import configure_logging
-from .permissions import check_folder_access, open_full_disk_access_settings
+from .permissions import check_folder_access, open_full_disk_access_settings, reveal_codebone_in_finder
 from .server import ServerThread
 from .service import CodeBoneService, PugService
+from .updater import CURRENT_VERSION, check_for_updates, download_and_install_update, restart_app
 
 configure_logging()
 logger = logging.getLogger("codebone.app")
@@ -89,7 +94,7 @@ def _get_icon(path_str: str) -> str:
     return path_str
 
 
-def _set_symbol_icon(menu_item: Optional[rumps.MenuItem], symbol_name: str, size: float = 14.0):
+def _set_symbol_icon(menu_item: Optional[rumps.MenuItem], symbol_name: str, size: float = 15.0):
     """Sets a native Apple SF Symbol vector icon on an NSMenuItem with standard point size."""
     if menu_item is None:
         return
@@ -97,13 +102,15 @@ def _set_symbol_icon(menu_item: Optional[rumps.MenuItem], symbol_name: str, size
     try:
         img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(symbol_name, None)
         if img:
+            img = img.copy()
             try:
                 cfg = NSImageSymbolConfiguration.configurationWithPointSize_weight_(size, 4)
                 configured = img.imageWithSymbolConfiguration_(cfg)
                 if configured:
-                    img = configured
+                    img = configured.copy()
             except Exception:
                 pass
+            img.setSize_(NSSize(size, size))
             img.setTemplate_(True)
             raw_item.setImage_(img)
     except Exception as exc:
@@ -111,68 +118,98 @@ def _set_symbol_icon(menu_item: Optional[rumps.MenuItem], symbol_name: str, size
 
 
 def choose_folder(title: str) -> Optional[str]:
-    """Displays native macOS open folder panel with guaranteed focus and floating window level."""
+    """Displays native macOS open folder panel with clean runloop draining and proper activation."""
     try:
         NSMenu.cancelTracking()
     except Exception:
         pass
-    app = NSApplication.sharedApplication()
-    app.activateIgnoringOtherApps_(True)
 
-    panel = NSOpenPanel.openPanel()
-    panel.setTitle_(title)
-    panel.setMessage_(title)
-    panel.setPrompt_("Select")
-    panel.setCanChooseFiles_(False)
-    panel.setCanChooseDirectories_(True)
-    panel.setAllowsMultipleSelection_(False)
-    panel.setResolvesAliases_(True)
-    panel.setCanCreateDirectories_(True)
-    panel.setFloatingPanel_(True)
-    panel.setLevel_(NSFloatingWindowLevel)
-    panel.center()
-
+    # Drain runloop so any active NSMenu tracking window dismisses completely from screen
     try:
+        run_loop = NSRunLoop.currentRunLoop()
+        run_loop.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.15))
+    except Exception:
+        pass
+
+    app = NSApplication.sharedApplication()
+    prev_policy = app.activationPolicy()
+    try:
+        app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+        app.activateIgnoringOtherApps_(True)
+
+        panel = NSOpenPanel.openPanel()
+        panel.setTitle_(title)
+        panel.setMessage_(title)
+        panel.setPrompt_("Select")
+        panel.setCanChooseFiles_(False)
+        panel.setCanChooseDirectories_(True)
+        panel.setAllowsMultipleSelection_(False)
+        panel.setResolvesAliases_(True)
+        panel.setCanCreateDirectories_(True)
+        panel.center()
+
         response = panel.runModal()
         if response == 1:  # NSModalResponseOK
             urls = panel.URLs()
             if urls and len(urls) > 0:
                 return str(urls[0].path())
     finally:
-        panel.orderOut_(None)
+        try:
+            panel.orderOut_(None)
+        except Exception:
+            pass
+        try:
+            app.setActivationPolicy_(prev_policy)
+        except Exception:
+            pass
     return None
 
 
 def choose_file(title: str, extensions: list[str]) -> Optional[str]:
-    """Displays native macOS open file panel with guaranteed focus and floating window level."""
+    """Displays native macOS open file panel with clean runloop draining and proper activation."""
     try:
         NSMenu.cancelTracking()
     except Exception:
         pass
-    app = NSApplication.sharedApplication()
-    app.activateIgnoringOtherApps_(True)
 
-    panel = NSOpenPanel.openPanel()
-    panel.setTitle_(title)
-    panel.setMessage_(title)
-    panel.setPrompt_("Open")
-    panel.setCanChooseFiles_(True)
-    panel.setCanChooseDirectories_(False)
-    panel.setAllowsMultipleSelection_(False)
-    panel.setResolvesAliases_(True)
-    panel.setAllowedFileTypes_(extensions)
-    panel.setFloatingPanel_(True)
-    panel.setLevel_(NSFloatingWindowLevel)
-    panel.center()
-
+    # Drain runloop so any active NSMenu tracking window dismisses completely from screen
     try:
+        run_loop = NSRunLoop.currentRunLoop()
+        run_loop.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.15))
+    except Exception:
+        pass
+
+    app = NSApplication.sharedApplication()
+    prev_policy = app.activationPolicy()
+    try:
+        app.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+        app.activateIgnoringOtherApps_(True)
+
+        panel = NSOpenPanel.openPanel()
+        panel.setTitle_(title)
+        panel.setMessage_(title)
+        panel.setPrompt_("Open")
+        panel.setCanChooseFiles_(True)
+        panel.setCanChooseDirectories_(False)
+        panel.setAllowsMultipleSelection_(False)
+        panel.setResolvesAliases_(True)
+        panel.setAllowedFileTypes_(extensions)
+        panel.center()
+
         response = panel.runModal()
         if response == 1:  # NSModalResponseOK
             urls = panel.URLs()
             if urls and len(urls) > 0:
                 return str(urls[0].path())
     finally:
-        panel.orderOut_(None)
+        try:
+            panel.orderOut_(None)
+        except Exception:
+            pass
+        try:
+            app.setActivationPolicy_(prev_policy)
+        except Exception:
+            pass
     return None
 
 
@@ -454,6 +491,18 @@ class CodeBoneApp(rumps.App):
         self.select_project_item = rumps.MenuItem("Select Project Folder...", callback=self.choose_project)
         _set_symbol_icon(self.select_project_item, "folder")
 
+        # MCP AI Assistants Setup
+        self.mcp_setup_item = rumps.MenuItem("Connect AI Assistants (MCP)...", callback=self.open_mcp_setup)
+        _set_symbol_icon(self.mcp_setup_item, "bolt.fill")
+
+        # Recent Projects / History Submenu (Verlauf)
+        self.recent_projects_menu = rumps.MenuItem("Recent Projects")
+        _set_symbol_icon(self.recent_projects_menu, "clock.arrow.circlepath")
+
+        # Model modules: API endpoints Claude Code can be routed through (for coding, not for indexing)
+        self.modules_menu = rumps.MenuItem("Modules")
+        _set_symbol_icon(self.modules_menu, "square.stack.3d.up")
+
         # Model Selection Submenu (Dynamic active model list)
         self.brain_menu = rumps.MenuItem("Model")
         _set_symbol_icon(self.brain_menu, "brain")
@@ -492,6 +541,9 @@ class CodeBoneApp(rumps.App):
         self.feedback_item = rumps.MenuItem("Feedback & Bug Report...", callback=self.open_feedback_dialog)
         _set_symbol_icon(self.feedback_item, "exclamationmark.bubble")
 
+        self.check_updates_item = rumps.MenuItem("Check for Updates...", callback=self.check_updates)
+        _set_symbol_icon(self.check_updates_item, "arrow.triangle.2.circlepath")
+
         self.uninstall_item = rumps.MenuItem("Uninstall codebone...", callback=self.confirm_uninstall)
         _set_symbol_icon(self.uninstall_item, "trash")
         self.settings_menu.update([
@@ -503,6 +555,7 @@ class CodeBoneApp(rumps.App):
             self.view_logs_item,
             self.full_disk_access_item,
             None,
+            self.check_updates_item,
             self.export_scan_item,
             self.import_scan_item,
             self.reset_map_item,
@@ -518,9 +571,12 @@ class CodeBoneApp(rumps.App):
 
         self.menu = [
             self.header_item,
+            self.mcp_setup_item,
             None,
             self.rescan_item,
             self.select_project_item,
+            self.recent_projects_menu,
+            self.modules_menu,
             None,
             self.settings_menu,
             None,
@@ -542,6 +598,7 @@ class CodeBoneApp(rumps.App):
         # Start watcher if configured
         if self.config.is_configured:
             self.service.start(auto_scan=True)
+        self.service.ensure_builtin_model()
 
     def _build_header_view(self):
         """Constructs the native macOS popover header view with live status indicator and knowledge graph card."""
@@ -646,7 +703,7 @@ class CodeBoneApp(rumps.App):
         rumps.alert(
             title="About codebone",
             message=(
-                "codebone (v1.0.0)\n"
+                f"codebone (v{CURRENT_VERSION})\n"
                 "Real-time Local Codebase Intelligence & Knowledge Graph\n\n"
                 "Runs zero-cloud semantic indexing and provides live architecture "
                 "context (models, routes, events, and business domains) to AI coding agents.\n\n"
@@ -654,10 +711,122 @@ class CodeBoneApp(rumps.App):
                 "• Incremental Real-time File System Watcher\n"
                 "• Interactive Visual Knowledge Graph HUD\n"
                 "• Model Context Protocol (MCP) Server\n\n"
-                "Developed by Paul Schirra"
+                "Developed by palusc"
             ),
             ok="OK",
         )
+
+    def check_updates(self, _):
+        """Checks GitHub Releases for new codebone versions with interactive update and install flow."""
+        try:
+            NSMenu.cancelTracking()
+        except Exception:
+            pass
+
+        try:
+            run_loop = NSRunLoop.currentRunLoop()
+            run_loop.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.1))
+        except Exception:
+            pass
+
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+
+        try:
+            update_info = check_for_updates(current_version=CURRENT_VERSION)
+        except Exception as exc:
+            logger.error("Failed to check for updates: %s", exc)
+            rumps.alert(
+                title="Update Check Failed",
+                message=f"Could not connect to GitHub to check for updates:\n{exc}",
+                ok="OK",
+            )
+            return
+
+        if not update_info.get("update_available"):
+            if update_info.get("error"):
+                err_msg = update_info["error"]
+                rumps.alert(
+                    title="Update Check Failed",
+                    message=f"Could not check for updates:\n{err_msg}",
+                    ok="OK",
+                )
+            else:
+                latest = update_info.get("latest_version", CURRENT_VERSION)
+                rumps.alert(
+                    title="codebone is Up to Date",
+                    message=f"codebone v{latest} is currently the newest version.",
+                    ok="OK",
+                )
+            return
+
+        # An update is available
+        latest_ver = update_info.get("latest_version")
+        rel_notes = (update_info.get("release_notes") or "").strip()
+        if len(rel_notes) > 350:
+            rel_notes = rel_notes[:347] + "..."
+        if not rel_notes:
+            rel_notes = "Performance improvements, UI refinements, and bug fixes."
+
+        size_mb = update_info.get("asset_size", 0) / (1024 * 1024)
+        size_str = f" ({size_mb:.1f} MB)" if size_mb > 0 else ""
+
+        confirm = rumps.alert(
+            title=f"codebone v{latest_ver} Available",
+            message=(
+                f"A new version of codebone is available!\n\n"
+                f"Current Version: v{CURRENT_VERSION}\n"
+                f"Latest Version:  v{latest_ver}{size_str}\n\n"
+                f"Release Notes:\n{rel_notes}\n\n"
+                f"Would you like to download and install this update now?"
+            ),
+            ok="Install & Restart",
+            cancel="Later",
+        )
+
+        if confirm != 1:
+            return
+
+        download_url = update_info.get("download_url")
+        if not download_url:
+            rumps.alert(
+                title="Update Package Missing",
+                message=(
+                    f"No automated update bundle was found for v{latest_ver}.\n"
+                    f"Please visit: {update_info.get('html_url')}"
+                ),
+                ok="OK",
+            )
+            return
+
+        rumps.notification(
+            title="codebone Update",
+            subtitle=f"Downloading v{latest_ver}...",
+            message="Installing update in the background.",
+        )
+
+        def _do_install():
+            try:
+                download_and_install_update(download_url, expected_version=latest_ver,
+                                            checksum_url=update_info.get("checksum_url"))
+                rumps.notification(
+                    title="codebone Update",
+                    subtitle="Update Installed",
+                    message="Restarting codebone now...",
+                )
+                restart_app()
+            except Exception as err:
+                logger.error("Failed to install update: %s", err)
+
+                def _show():
+                    NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+                    rumps.alert(
+                        title="Update Installation Failed",
+                        message=f"An error occurred while installing the update:\n{err}",
+                        ok="OK",
+                    )
+                self._on_main(_show)
+
+        threading.Thread(target=_do_install, daemon=True, name="codebone-updater").start()
 
     def open_repo(self, _):
         if self.config.project_path and self.config.project_path.exists():
@@ -676,9 +845,9 @@ class CodeBoneApp(rumps.App):
         def _run():
             try:
                 def _on_prog(cur, tot, f):
-                    self._push_stats()
+                    self._on_main(self._push_stats)
 
-                total, sniffed, skipped = self.service.rescan_all(on_progress=_on_prog, force=True)
+                total, sniffed, skipped = self.service.rescan_all(on_progress=_on_prog, wait=True)
                 conn_count = len(self.service.storage.graph_edges())
                 rumps.notification(
                     "codebone",
@@ -689,7 +858,7 @@ class CodeBoneApp(rumps.App):
                 logger.exception("Rescan failed")
                 rumps.notification("codebone", "Rescan Failed", str(exc))
             finally:
-                self._update_ui_state()
+                self._on_main(self._update_ui_state)
 
         threading.Thread(target=_run, daemon=True, name="codebone-rescan").start()
 
@@ -702,6 +871,12 @@ class CodeBoneApp(rumps.App):
         repo_name = data.get("repo_name", "None")
         file_count = data.get("file_count", 0)
         connection_count = data.get("connection_count", 0)
+
+        signature = (configured, running, sniffing, repo_name, file_count, connection_count,
+                     json.dumps(scan_progress, sort_keys=True) if scan_progress else None)
+        if signature == getattr(self, "_last_stats_signature", None):
+            return  # nothing changed: do not make AppKit redraw the menu every 2 s
+        self._last_stats_signature = signature
 
         # 1. Update top row folder button (folder name directly under 'codebone')
         if hasattr(self, "folder_btn") and self.folder_btn is not None:
@@ -745,19 +920,58 @@ class CodeBoneApp(rumps.App):
                 stats_text = "0 Nodes  ·  0 Connections"
             self.card_stats_label.setStringValue_(stats_text)
 
+    def _apply_all_icons(self):
+        """Applies native Apple SF Symbol vector icons across the entire menu hierarchy."""
+        # Top-level menu items
+        _set_symbol_icon(self.mcp_setup_item, "bolt.fill")
+        _set_symbol_icon(self.rescan_item, "arrow.clockwise")
+        _set_symbol_icon(self.select_project_item, "folder")
+        _set_symbol_icon(self.recent_projects_menu, "clock.arrow.circlepath")
+        _set_symbol_icon(self.settings_menu, "gearshape")
+        _set_symbol_icon(self.feedback_item, "exclamationmark.bubble")
+        _set_symbol_icon(self.about_item, "info.circle")
+        _set_symbol_icon(self.quit_item, "power")
+
+        # Settings submenu items
+        _set_symbol_icon(self.brain_menu, "brain")
+        _set_symbol_icon(self.adopt_scan_item, "link")
+        _set_symbol_icon(self.copy_curl_item, "doc.on.clipboard")
+        _set_symbol_icon(self.open_repo_item, "folder")
+        _set_symbol_icon(self.view_logs_item, "doc.text")
+        _set_symbol_icon(self.full_disk_access_item, "lock.shield")
+        _set_symbol_icon(self.check_updates_item, "arrow.triangle.2.circlepath")
+        _set_symbol_icon(self.export_scan_item, "square.and.arrow.up")
+        _set_symbol_icon(self.import_scan_item, "square.and.arrow.down")
+        _set_symbol_icon(self.reset_map_item, "trash")
+        _set_symbol_icon(self.uninstall_item, "trash")
+
     def _update_ui_state(self):
         """Updates the menu bar icon and refreshes menu status."""
         self.icon = _get_icon(ICON_ACTIVE if self.config.is_configured else ICON_INACTIVE)
         if not self.icon:
             self.title = "codebone"
+        if hasattr(self, "mcp_setup_item") and self.mcp_setup_item:
+            if self.config.is_first_days():
+                self.mcp_setup_item.title = "⚡ Connect AI Assistants (MCP)..."
+            else:
+                self.mcp_setup_item.title = "Connect AI Assistants (MCP)..."
+        self._apply_all_icons()
+        self._update_recent_projects_menu()
         self._update_brain_checks()
+        self._update_modules_menu()
         self._push_stats()
 
+    @staticmethod
+    def _on_main(fn, *args):
+        """AppKit objects (menus, labels, alerts) may only be touched on the main thread; the watcher, scans and
+        the updater run on background threads and hop over with this."""
+        AppHelper.callAfter(fn, *args)
+
     def _on_sniff_start(self):
-        self._update_ui_state()
+        self._on_main(self._push_stats)
 
     def _on_sniff_end(self):
-        self._update_ui_state()
+        self._on_main(self._push_stats)
 
     def _update_brain_checks(self):
         """Rebuilds the Model & Brain submenu with an active list of known models and providers."""
@@ -816,30 +1030,272 @@ class CodeBoneApp(rumps.App):
         self._update_ui_state()
         rumps.notification("codebone", "Model switched", f"Active model: {name}")
 
+    def _update_recent_projects_menu(self):
+        """Rebuilds the Recent Projects / History submenu from saved config and scan snapshots."""
+        if getattr(self.recent_projects_menu, "_menu", None) is not None:
+            self.recent_projects_menu.clear()
+
+        # Gather recent projects from config MRU and scan registry
+        seen_paths = set()
+        recent_list = []
+
+        # 1. From config.recent_projects
+        for p_str in self.config.recent_projects:
+            if not p_str:
+                continue
+            p = Path(p_str)
+            if p.exists() and str(p) not in seen_paths:
+                seen_paths.add(str(p))
+                recent_list.append(p)
+
+        # 2. From saved scan snapshots (scans_registry.json)
+        try:
+            for s in self.service.scans.list_scans():
+                p_str = s.get("project_path")
+                if p_str:
+                    p = Path(p_str)
+                    if p.exists() and str(p) not in seen_paths:
+                        seen_paths.add(str(p))
+                        recent_list.append(p)
+        except Exception:
+            pass
+
+        # Also ensure current project is in list if configured
+        current_proj = self.config.project_path
+        if current_proj and current_proj.exists() and str(current_proj) not in seen_paths:
+            self.config.add_recent_project(str(current_proj))
+            recent_list.insert(0, current_proj)
+
+        if not recent_list:
+            empty_item = rumps.MenuItem("No Recent Projects", callback=None)
+            self.recent_projects_menu.add(empty_item)
+            return
+
+        for p in recent_list[:10]:
+            name = p.name or str(p)
+            try:
+                rel_to_home = f"~/{p.relative_to(Path.home())}"
+            except Exception:
+                rel_to_home = str(p)
+
+            item_label = f"{name}  ({rel_to_home})"
+            item = rumps.MenuItem(
+                item_label,
+                callback=lambda _, target_path=p: self.open_project_path(target_path),
+            )
+            _set_symbol_icon(item, "folder")
+            if current_proj and current_proj.resolve() == p.resolve():
+                item.state = True
+            self.recent_projects_menu.add(item)
+
+        self.recent_projects_menu.add(None)
+        clear_item = rumps.MenuItem("Clear Recent Projects", callback=self.clear_recent_projects)
+        _set_symbol_icon(clear_item, "trash")
+        self.recent_projects_menu.add(clear_item)
+
+    # ── model modules ────────────────────────────────────────────────────
+    def _update_modules_menu(self):
+        from . import modules
+
+        if getattr(self.modules_menu, "_menu", None) is not None:
+            self.modules_menu.clear()
+        library = modules.list_modules(self.config)
+        selected = modules.get_module(self.config, self.config.get("module_selected"))
+        active = set(modules.enabled_apps(self.config))
+
+        for m in library:  # which model
+            item = rumps.MenuItem(m["name"], callback=lambda _, mid=m["id"]: self.pick_module(mid))
+            item.state = bool(selected and selected["id"] == m["id"])
+            self.modules_menu.add(item)
+        if library:
+            self.modules_menu.add(None)
+            for app_id, (label, fmt) in modules.APPS.items():  # which apps use it
+                needs = "" if (selected is None or modules.supports(selected, app_id)) else f"  (needs {modules.FORMAT_NAMES[fmt]} URL)"
+                item = rumps.MenuItem(f"Use for {label}{needs}", callback=lambda _, a=app_id: self.toggle_module_app(a))
+                item.state = app_id in active
+                self.modules_menu.add(item)
+            copy_menu = rumps.MenuItem("Copy for Other Apps")
+            for what, fn in (("Anthropic-format base URL", lambda: (selected or {}).get("anthropic_url")),
+                             ("OpenAI-format base URL", lambda: (selected or {}).get("openai_url")),
+                             ("Model ID", lambda: (selected or {}).get("model")),
+                             ("API key", lambda: modules.Keychain().get(selected["id"]) if selected else None)):
+                copy_menu.add(rumps.MenuItem(what, callback=lambda _, w=what, f=fn: self.copy_module_value(w, f)))
+            self.modules_menu.add(copy_menu)
+            self.modules_menu.add(None)
+        self.modules_menu.add(rumps.MenuItem("Add Module...", callback=self.add_module_dialog))
+        if library:
+            self.modules_menu.add(rumps.MenuItem("Test Connection", callback=self.test_selected_module))
+            remove_menu = rumps.MenuItem("Remove Module")
+            for m in library:
+                remove_menu.add(rumps.MenuItem(m["name"], callback=lambda _, mid=m["id"], n=m["name"]: self.remove_module_dialog(mid, n)))
+            self.modules_menu.add(remove_menu)
+
+    def toggle_module_app(self, app_id: str):
+        from . import modules
+
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        label = modules.APPS[app_id][0]
+        turning_on = app_id not in modules.enabled_apps(self.config)
+        try:
+            module = modules.set_app_enabled(self.config, app_id, turning_on)
+        except modules.SettingsUnreadable as exc:
+            rumps.alert("Modules", f"{label}'s settings file could not be read, so nothing was changed:\n{exc}")
+            return
+        except ValueError as exc:
+            rumps.alert("Modules", str(exc))
+            return
+        if module:
+            rumps.notification("codebone", f"{label} now uses {module['name']}", "New sessions pick this up; running ones keep their model.")
+        else:
+            rumps.notification("codebone", f"{label} is back on its normal model", "New sessions use your usual setup again.")
+        self._update_modules_menu()
+
+    def copy_module_value(self, what: str, getter):
+        value = getter()
+        if not value:
+            rumps.alert("Modules", f"This module has no {what}.")
+            return
+        copy_to_clipboard(value)
+        rumps.notification("codebone", f"{what} copied", "Paste it into the other app's model settings.")
+
+    def pick_module(self, module_id: str):
+        from . import modules
+
+        try:
+            modules.select_module(self.config, module_id)
+        except (ValueError, modules.SettingsUnreadable) as exc:
+            rumps.alert("Modules", str(exc))
+        self._update_modules_menu()
+
+    def add_module_dialog(self, _):
+        from . import modules
+
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        preset = modules.PRESETS[0]
+        choice = rumps.alert(
+            title="Add Module",
+            message=(f"A module is a model API your coding apps can use instead of their default.\n\n"
+                     f"Preset: {preset['name']}\nModel: {preset['model']}\n\n"
+                     "Custom needs a base URL in Anthropic format (for Claude Code) and/or OpenAI format (for opencode)."),
+            ok=preset["name"], cancel="Cancel", other="Custom...",
+        )
+        if choice == 0:
+            return
+        if choice == 1:
+            name, model = preset["name"], preset["model"]
+            anthropic_url, openai_url = preset["anthropic_url"], preset["openai_url"]
+        else:
+            fields = []
+            for label, default in (("Name (shown in the menu)", ""), ("Model ID", ""),
+                                   ("Anthropic-format base URL (optional, https://...)", ""),
+                                   ("OpenAI-format base URL (optional, https://...)", "")):
+                resp = rumps.Window(message=label, title="Add Module", default_text=default, ok="Next", cancel="Cancel",
+                                    dimensions=(360, 24)).run()
+                if not resp.clicked:
+                    return
+                fields.append(resp.text.strip())
+            name, model, anthropic_url, openai_url = fields
+        resp = rumps.Window(message=f"API key for {name} (stored in your macOS Keychain)",
+                            title="Add Module", default_text="", ok="Add", cancel="Cancel", dimensions=(360, 24),
+                            secure=True).run()
+        if not resp.clicked:
+            return
+        key = resp.text.strip()
+        try:
+            module = modules.add_module(self.config, name, model, key, anthropic_url, openai_url)
+            self.config.set("module_selected", module["id"])
+        except (ValueError, RuntimeError) as exc:
+            rumps.alert("Add Module", str(exc))
+            return
+        self._update_modules_menu()
+        self._check_module(module, key)
+
+    def _check_module(self, module: dict, key: str):
+        from . import modules
+
+        def _run():
+            for fmt in ("anthropic", "openai"):
+                url = modules._url(module, fmt)
+                if not url:
+                    continue
+                ok, msg = modules.test_connection(url, module["model"], key, fmt=fmt)
+                rumps.notification("codebone", f"{module['name']} ({fmt} format): " + ("works" if ok else "failed"), msg)
+
+        threading.Thread(target=_run, daemon=True, name="codebone-module-test").start()
+
+    def test_selected_module(self, _):
+        from . import modules
+
+        module = modules.get_module(self.config, self.config.get("module_selected"))
+        key = modules.Keychain().get(module["id"]) if module else None
+        if not module or not key:
+            rumps.alert("Modules", "Select a module with a stored key first.")
+            return
+        self._check_module(module, key)
+
+    def remove_module_dialog(self, module_id: str, name: str):
+        from . import modules
+
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        if rumps.alert("Remove Module", f"Remove {name}, switch its apps back and delete its API key?", ok="Remove", cancel="Cancel") != 1:
+            return
+        try:
+            modules.remove_module(self.config, module_id)
+        except modules.SettingsUnreadable as exc:
+            rumps.alert("Modules", str(exc))
+        self._update_modules_menu()
+
+    def clear_recent_projects(self, _):
+        """Clears the recent projects list and refreshes the submenu."""
+        self.config.clear_recent_projects()
+        self._update_recent_projects_menu()
+        rumps.notification("codebone", "Recent Projects Cleared", "The project history has been reset.")
+
     def choose_project(self, _):
         path = choose_folder("Select Project Folder to Sniff")
         if not path:
             return
-        p = Path(path)
+        self.open_project_path(Path(path))
+
+    def open_project_path(self, p: Path):
+        """Activates and switches to the specified project folder."""
+        if not p or not p.exists():
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            rumps.alert("Project Not Found", f"The folder '{p}' no longer exists on disk.")
+            self.config.remove_recent_project(str(p))
+            self._update_recent_projects_menu()
+            return
+
+        current_proj = self.config.project_path
+        if current_proj and current_proj.resolve() == p.resolve() and self.service.watching:
+            rumps.notification("codebone", "Already Active", f"'{p.name}' is already the active project.")
+            return
 
         # Check macOS disk permissions / TCC
         has_access, reason = check_folder_access(p)
         if not has_access:
             NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
             res = rumps.alert(
-                "Disk Access Restricted",
-                f"codebone cannot read files in '{p.name}' ({reason}).\n\n"
-                "macOS requires permissions to read folders like Desktop, Documents, Downloads, or external volumes.\n\n"
-                "Would you like to open macOS System Settings to grant Full Disk Access?",
-                ok="Open System Settings",
+                title="Disk Access Restricted",
+                message=(
+                    f"codebone cannot read files in '{p.name}' ({reason}).\n\n"
+                    "macOS requires permissions to read folders like Desktop, Documents, Downloads, or external volumes.\n\n"
+                    "How to enable:\n"
+                    "1. Find 'codebone' in Full Disk Access and toggle it ON.\n"
+                    "2. If not listed, drag codebone.app from Finder into the list.\n\n"
+                    "Click 'Open Settings & Reveal' to open both windows automatically."
+                ),
+                ok="Open Settings & Reveal",
                 cancel="Cancel",
             )
             if res == 1:
                 open_full_disk_access_settings()
+                reveal_codebone_in_finder()
             return
 
+        self.config.add_recent_project(str(p))
         self.config.set("project_path", str(p))
-        self.service.stop()
+        self.service.start(auto_scan=False)  # aborts a running scan, drops the old project's rows, watches the new folder
         self._update_ui_state()
 
         # Step 1: Fast initial assessment (Baseline Overview)
@@ -878,10 +1334,9 @@ class CodeBoneApp(rumps.App):
                     )
                 except Exception as exc:
                     logger.warning("Matching scan adoption failed, falling back to rescan: %s", exc)
-                    self.service.rescan_all()
+                    self.service.rescan_all(wait=True)
                 finally:
-                    self._update_ui_state()
-                    self.service.start(auto_scan=False)
+                    self._on_main(self._update_ui_state)
 
             threading.Thread(target=_run_matched, daemon=True, name="codebone-matched-adopt").start()
         else:
@@ -897,9 +1352,9 @@ class CodeBoneApp(rumps.App):
                 t0 = time.time()
                 try:
                     def _on_prog(cur, tot, f):
-                        self._push_stats()
+                        self._on_main(self._push_stats)
 
-                    total_scanned, sniffed, skipped = self.service.rescan_all(on_progress=_on_prog)
+                    total_scanned, sniffed, skipped = self.service.rescan_all(on_progress=_on_prog, wait=True)
                     dur = max(1, round(time.time() - t0))
                     conn_count = len(self.service.storage.graph_edges())
                     rumps.notification(
@@ -911,8 +1366,7 @@ class CodeBoneApp(rumps.App):
                     logger.exception("Initial baseline scan failed")
                     rumps.notification("codebone — Scan Error", str(exc), "")
                 finally:
-                    self._update_ui_state()
-                    self.service.start(auto_scan=False)
+                    self._on_main(self._update_ui_state)
 
             threading.Thread(target=_run_initial, daemon=True, name="codebone-initial-scan").start()
 
@@ -922,7 +1376,7 @@ class CodeBoneApp(rumps.App):
             if not path:
                 return
             self.config.set("project_path", path)
-            self.service.stop()
+            self.service.start(auto_scan=False)
             self._update_ui_state()
 
         scans = self.service.scans.list_scans()
@@ -981,8 +1435,7 @@ class CodeBoneApp(rumps.App):
                     "Scan Adoption Complete!",
                     f"{reused} files reused, {renamed} renamed, {modified} modified, {added} added. Semantic Graph synchronized!",
                 )
-                self._update_ui_state()
-                self.service.start(auto_scan=False)
+                self._on_main(self._update_ui_state)
             except Exception as exc:
                 logger.exception("Error during scan adoption: %s", exc)
                 rumps.notification("codebone", "Adoption Failed", str(exc))
@@ -1013,6 +1466,19 @@ class CodeBoneApp(rumps.App):
             rumps.notification("codebone", "Scan Imported", f"Imported '{meta['project_name']}' ({meta['file_count']} files).")
         except Exception as exc:
             rumps.notification("codebone", "Import Failed", str(exc))
+
+    def open_mcp_setup(self, _):
+        """Opens the GitHub MCP setup instructions section and re-patches MCP configs."""
+        try:
+            from .server import patch_mcp_configs
+            server_port = getattr(getattr(self, "server", None), "port", None) or self.config.get("active_port") or self.config.get("server_port", 8053)
+            patch_mcp_configs(server_port)
+        except Exception as exc:
+            logger.warning("Could not patch MCP configs during open_mcp_setup: %s", exc)
+        from AppKit import NSURL, NSWorkspace
+        url = NSURL.URLWithString_("https://github.com/palusc/codebone#mcp-setup")
+        if url:
+            NSWorkspace.sharedWorkspace().openURL_(url)
 
     def view_live_graph(self, _):
         port = getattr(getattr(self, "server", None), "port", None) or self.config.get("active_port") or self.config.get("server_port", 8053)
@@ -1082,42 +1548,81 @@ class CodeBoneApp(rumps.App):
                 subprocess.Popen(["open", res["github_url"]])
 
     def confirm_uninstall(self, _):
-        """Launches the dedicated standalone uninstaller to completely wipe data and prepare app deletion."""
-        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-        uninstaller_paths = [
-            Path("/Applications/Uninstall codebone.app"),
-            Path.home() / "Applications" / "Uninstall codebone.app",
-        ]
-        target = next((p for p in uninstaller_paths if p.exists()), None)
+        """Complete removal from inside the app: shows exactly what will go, then removes it (src/uninstall.py)."""
+        from . import uninstall
 
-        res = rumps.alert(
-            title="Uninstall codebone",
-            message=(
-                "Do you want to run the codebone Uninstaller?\n\n"
-                "The uninstaller will:\n"
-                "• Stop all running background processes\n"
-                "• Delete all local data, databases, and AI models\n"
-                "• Remove MCP configurations from Claude & Cursor\n"
-                "• Prepare codebone.app to be dragged into the Trash"
-            ),
-            ok="Open Uninstaller",
-            cancel="Cancel",
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        try:
+            targets = uninstall.collect_targets()
+        except Exception as exc:
+            logger.exception("Could not work out what to uninstall")
+            rumps.alert("Uninstall codebone", f"Could not inspect this installation:\n{exc}")
+            return
+
+        def _size(n):
+            return uninstall._fmt_size(n) if n else ""
+
+        lines = []
+        for t_ in targets:
+            if t_.kind == "process":
+                continue
+            size = _size(t_.size_bytes)
+            lines.append(f"\u2022 {t_.label}" + (f" ({size})" if size else ""))
+        shown = lines[:14] + ([f"\u2022 ... and {len(lines) - 14} more items"] if len(lines) > 14 else [])
+        message = (
+            "This removes codebone completely from your Mac:\n\n" + "\n".join(shown) +
+            "\n\nYour project folders are not touched. codebone quits when it is done."
         )
-        if res == 1:
-            if target:
-                subprocess.Popen(["open", str(target)])
-            else:
-                fallback_sh = Path(__file__).resolve().parent.parent / "uninstall.sh"
-                if fallback_sh.exists():
-                    subprocess.Popen(["open", "-a", "Terminal", str(fallback_sh)])
-                else:
-                    rumps.alert("Uninstaller Not Found", "Please run ./uninstall.sh from the repository.")
+        if rumps.alert(title="Uninstall codebone", message=message, ok="Uninstall", cancel="Cancel") != 1:
+            return
+
+        self._stats_timer.stop()  # nothing of ours may write to the files that are about to disappear
+        threading.Thread(target=self._run_uninstall, daemon=True, name="codebone-uninstall").start()
+
+    def _run_uninstall(self):
+        from . import uninstall
+
+        report_text = ""
+        try:
+            self.server.stop()
+            self.service.close()
+            report = uninstall.run_uninstall()
+            report_text = report.format()
+        except Exception as exc:
+            logger.exception("Uninstall failed")
+            report_text = f"Uninstall did not finish: {exc}\n\nYou can also run:  python3 -m src.uninstall"
+
+        def _done():
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            rumps.alert(title="Uninstall codebone", message=report_text[:1800], ok="OK")
+            rumps.quit_application()
+
+        self._on_main(_done)
 
     def open_disk_access_settings(self, _):
+        """Opens Full Disk Access in macOS System Settings and provides a guided dialog with 1-click Finder reveal."""
         try:
             open_full_disk_access_settings()
         except Exception as exc:
             logger.error("Failed to open Full Disk Access settings: %s", exc)
+
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        res = rumps.alert(
+            title="Enable Full Disk Access",
+            message=(
+                "codebone requires Full Disk Access to scan projects located in Desktop, Documents, "
+                "Downloads, or external volumes.\n\n"
+                "How to enable:\n"
+                "1. Look for 'codebone' in the Full Disk Access list in System Settings and toggle it ON (🔵).\n\n"
+                "2. If 'codebone' is not listed:\n"
+                "   Click 'Reveal in Finder' below, then drag codebone.app directly into the System Settings window.\n\n"
+                "3. macOS will prompt to restart codebone to apply permissions."
+            ),
+            ok="Reveal in Finder",
+            cancel="Done",
+        )
+        if res == 1:
+            reveal_codebone_in_finder()
 
     def copy_curl(self, _):
         cmd = self.server.curl_command()
@@ -1216,7 +1721,7 @@ class CodeBoneApp(rumps.App):
                 logger.exception("Deep scan failed")
                 rumps.notification("codebone", "Deep Scan Failed", str(exc))
             finally:
-                self._update_ui_state()
+                self._on_main(self._update_ui_state)
 
         threading.Thread(target=_run, daemon=True, name="codebone-deep-scan").start()
 
@@ -1229,18 +1734,76 @@ class CodeBoneApp(rumps.App):
 
     def quit_app(self, _):
         self._stats_timer.stop()
-        self.service.stop()
+        self.service.close()  # stops the watcher and unloads the model
         self.server.stop()
         rumps.quit_application()
 
 
+_instance_lock = None
+
+
+_REOPEN_DISTRIBUTED_NOTIFICATION = "com.codebone.app.reopen"
+
+
+def _acquire_single_instance() -> bool:
+    """Two instances would index into the same database and fight over the port; the second one just exits."""
+    global _instance_lock
+    from .config import CONFIG_DIR
+
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        _instance_lock = open(CONFIG_DIR / "app.lock", "w")
+        fcntl.flock(_instance_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
 def main():
+    if not _acquire_single_instance():
+        # A relaunch (e.g. double-clicking the app again) would otherwise just exit silently, leaving
+        # the user thinking nothing happened. Nudge the already-running instance to open its menu instead.
+        try:
+            from Foundation import NSDistributedNotificationCenter
+            NSDistributedNotificationCenter.defaultCenter().postNotificationName_object_userInfo_(
+                _REOPEN_DISTRIBUTED_NOTIFICATION, None, None
+            )
+        except Exception:
+            pass
+        try:
+            rumps.notification("codebone", "Already running", "codebone is already active — check your menu bar.")
+        except Exception:
+            pass
+        print("codebone is already running.", file=sys.stderr)
+        return
     try:
         from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
         NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
     except Exception:
         pass
     app = CodeBoneApp()
+
+    def _open_menu():
+        try:
+            app._nsapp.nsstatusitem.button().performClick_(None)
+        except Exception:
+            pass
+
+    # Menu-bar-only app: clicking the .app while it runs would otherwise do nothing visible.
+    def _reopen(self, sender, has_windows):
+        _open_menu()
+        return False
+
+    rumps.rumps.NSApp.applicationShouldHandleReopen_hasVisibleWindows_ = _reopen
+
+    try:
+        from Foundation import NSDistributedNotificationCenter
+        NSDistributedNotificationCenter.defaultCenter().addObserverForName_object_queue_usingBlock_(
+            _REOPEN_DISTRIBUTED_NOTIFICATION, None, None, lambda note: _open_menu()
+        )
+    except Exception:
+        pass
+
     app.run()
 
 

@@ -108,7 +108,7 @@ def test_feedback_api_endpoints():
         cfg.config_file = Path(tmp_dir) / "config.json"
         service = CodeBoneService(cfg)
         app = create_app(service)
-        client = TestClient(app)
+        client = TestClient(app, base_url="http://127.0.0.1")
 
         tmp_feedback_file = Path(tmp_dir) / "feedback.jsonl"
         with patch("src.feedback.FEEDBACK_FILE", tmp_feedback_file), \
@@ -140,3 +140,11 @@ def test_feedback_api_endpoints():
             legacy_resp = client.get("/pug/feedback")
             assert legacy_resp.status_code == 200
             assert len(legacy_resp.json()["feedback"]) == 1
+
+
+def test_diagnostics_do_not_leak_user_names_or_tokens():
+    from src.feedback import _sanitize_log_line, build_system_diagnostics
+    diag = build_system_diagnostics({"project": "/Users/paul/Desktop/secret-client-acme"})
+    assert "paul" not in diag["project"]
+    line = _sanitize_log_line("auth failed token=abcdef123456 ghp_" + "a" * 30 + " /Users/paul/x")
+    assert "abcdef123456" not in line and "ghp_" not in line and "/Users/paul" not in line

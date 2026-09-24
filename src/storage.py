@@ -1,13 +1,17 @@
 """Internal SQLite store for codebone's semantic knowledge graph."""
 import json
+import logging
+import os
 import sqlite3
+import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .prompts import parse_analysis
+from .prompts import _clean_entity_list, parse_analysis, sanitize_text
 
-import threading
+logger = logging.getLogger("codebone.storage")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
@@ -19,38 +23,132 @@ CREATE TABLE IF NOT EXISTS files (
     summary TEXT NOT NULL,
     updated_at REAL NOT NULL,
     mtime REAL DEFAULT 0,
-    content_hash TEXT DEFAULT ''
+    content_hash TEXT DEFAULT '',
+    source TEXT DEFAULT 'model'
+);
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
 );
 """
 
+# Rendering limits for the graph: entity-sharing links are windowed per entity and capped overall so a
+# 5000-file project does not produce a multi-megabyte payload.
+MAX_PEERS_PER_ENTITY = 6
+MAX_EDGES = 6000
+MAX_DOMAIN_PEERS = 15
+
 
 class Storage:
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, readonly: bool = False):
         self.db_path = db_path
+        self.readonly = readonly
         self._lock = threading.RLock()
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self._revision = 0
+        self._cache: dict = {}
+        self._has_entities_col = False
+        if readonly:
+            # Foreign or snapshot databases are inspected without ever modifying them
+            self._conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+            return
+        try:
+            self._open()
+        except sqlite3.DatabaseError as exc:
+            self._quarantine(exc)
+            self._open()
+
+    def _open(self):
+        self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.execute("PRAGMA synchronous=NORMAL")
-        self._conn.execute(SCHEMA)
+        self._conn.executescript(SCHEMA)
         self._migrate()
+        self._conn.execute("SELECT COUNT(*) FROM files").fetchone()  # surfaces a damaged file immediately
         self._conn.commit()
 
+    def _quarantine(self, exc: Exception):
+        """A damaged index must never keep the app from starting: move it aside and begin empty (the index is
+        rebuilt from the source files anyway)."""
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+        stamp = int(time.time())
+        for suffix in ("", "-wal", "-shm"):
+            src = Path(str(self.db_path) + suffix)
+            if src.exists():
+                try:
+                    os.replace(src, Path(f"{self.db_path}.corrupt-{stamp}{suffix}"))
+                except OSError:
+                    pass
+        logger.error("Index database was unreadable (%s); moved aside as %s.corrupt-%d", exc, self.db_path, stamp)
+
     def _migrate(self):
-        cursor = self._conn.execute("PRAGMA table_info(files)")
-        columns = [row["name"] for row in cursor.fetchall()]
-        if "content_hash" not in columns:
-            self._conn.execute("ALTER TABLE files ADD COLUMN content_hash TEXT DEFAULT ''")
-        if "tables" not in columns:
-            self._conn.execute("ALTER TABLE files ADD COLUMN tables TEXT DEFAULT '[]'")
-        if "routes" not in columns:
-            self._conn.execute("ALTER TABLE files ADD COLUMN routes TEXT DEFAULT '[]'")
-        if "events" not in columns:
-            self._conn.execute("ALTER TABLE files ADD COLUMN events TEXT DEFAULT '[]'")
-        if "domains" not in columns:
-            self._conn.execute("ALTER TABLE files ADD COLUMN domains TEXT DEFAULT '[]'")
+        columns = [row["name"] for row in self._conn.execute("PRAGMA table_info(files)").fetchall()]
+        for name, ddl in (
+            ("content_hash", "TEXT DEFAULT ''"),
+            ("mtime", "REAL DEFAULT 0"),
+            ("tables", "TEXT DEFAULT '[]'"),
+            ("routes", "TEXT DEFAULT '[]'"),
+            ("events", "TEXT DEFAULT '[]'"),
+            ("domains", "TEXT DEFAULT '[]'"),
+            ("source", "TEXT DEFAULT 'model'"),
+        ):
+            if name not in columns:
+                self._conn.execute(f"ALTER TABLE files ADD COLUMN {name} {ddl}")
         self._has_entities_col = "entities" in columns
+
+    # ── change tracking ─────────────────────────────────────────────────
+    @property
+    def revision(self) -> int:
+        """Increases on every write; readers use it to know whether cached views are still valid."""
+        return self._revision
+
+    def _touch(self):
+        self._revision += 1
+        self._cache.clear()
+
+    def _cached(self, key, build):
+        with self._lock:
+            hit = self._cache.get(key)
+            if hit is None:
+                hit = self._cache[key] = build()
+            return hit
+
+    # ── meta ─────────────────────────────────────────────────────────────
+    def get_meta(self, key: str) -> Optional[str]:
+        with self._lock:
+            row = self._conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+            return row["value"] if row else None
+
+    def set_meta(self, key: str, value: str):
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+            self._conn.commit()
+
+    # ── writes ───────────────────────────────────────────────────────────
+    def _upsert(self, path, tables, routes, events, domains, summary, updated_at, mtime, content_hash, source):
+        cols = ["path", "tables", "routes", "events", "domains", "summary", "updated_at", "mtime", "content_hash", "source"]
+        vals = [path, json.dumps(tables), json.dumps(routes), json.dumps(events), json.dumps(domains),
+                summary, updated_at, mtime, content_hash, source]
+        if self._has_entities_col:  # legacy schema kept a NOT NULL combined column
+            cols.insert(1, "entities")
+            vals.insert(1, json.dumps(tables + routes + events + domains))
+        updates = ", ".join(f"{c} = excluded.{c}" for c in cols[1:])
+        with self._lock:
+            self._conn.execute(
+                f"INSERT INTO files ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))}) "
+                f"ON CONFLICT(path) DO UPDATE SET {updates}",
+                vals,
+            )
+            self._conn.commit()
+            self._touch()
 
     def update_file(
         self,
@@ -58,69 +156,10 @@ class Storage:
         raw_output: str,
         mtime: float = 0.0,
         content_hash: str = "",
+        source: str = "model",
     ) -> dict:
         tables, routes, events, domains, summary = parse_analysis(raw_output)
-
-        with self._lock:
-            if self._has_entities_col:
-                all_entities = json.dumps(tables + routes + events + domains)
-                self._conn.execute(
-                    """
-                    INSERT INTO files (path, entities, tables, routes, events, domains, summary, updated_at, mtime, content_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(path) DO UPDATE SET
-                        entities = excluded.entities,
-                        tables = excluded.tables,
-                        routes = excluded.routes,
-                        events = excluded.events,
-                        domains = excluded.domains,
-                        summary = excluded.summary,
-                        updated_at = excluded.updated_at,
-                        mtime = excluded.mtime,
-                        content_hash = excluded.content_hash
-                    """,
-                    (
-                        rel_path,
-                        all_entities,
-                        json.dumps(tables),
-                        json.dumps(routes),
-                        json.dumps(events),
-                        json.dumps(domains),
-                        summary,
-                        time.time(),
-                        mtime,
-                        content_hash,
-                    ),
-                )
-            else:
-                self._conn.execute(
-                    """
-                    INSERT INTO files (path, tables, routes, events, domains, summary, updated_at, mtime, content_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(path) DO UPDATE SET
-                        tables = excluded.tables,
-                        routes = excluded.routes,
-                        events = excluded.events,
-                        domains = excluded.domains,
-                        summary = excluded.summary,
-                        updated_at = excluded.updated_at,
-                        mtime = excluded.mtime,
-                        content_hash = excluded.content_hash
-                    """,
-                    (
-                        rel_path,
-                        json.dumps(tables),
-                        json.dumps(routes),
-                        json.dumps(events),
-                        json.dumps(domains),
-                        summary,
-                        time.time(),
-                        mtime,
-                        content_hash,
-                    ),
-                )
-            self._conn.commit()
-
+        self._upsert(rel_path, tables, routes, events, domains, summary, time.time(), mtime, content_hash, source)
         return {
             "path": rel_path,
             "tables": tables,
@@ -130,6 +169,79 @@ class Storage:
             "summary": summary,
         }
 
+    def insert_record(self, entry: dict):
+        """Insert or replace a pre-existing analysis record. Records come from snapshots and imported scan files, so
+        text and entity names are cleaned the same way as fresh model output."""
+        self._upsert(
+            entry["path"],
+            _clean_entity_list([str(x) for x in entry.get("tables", [])]),
+            _clean_entity_list([str(x) for x in entry.get("routes", [])]),
+            _clean_entity_list([str(x) for x in entry.get("events", [])]),
+            _clean_entity_list([str(x) for x in entry.get("domains", [])]),
+            sanitize_text(str(entry.get("summary", ""))),
+            entry.get("updated_at", time.time()),
+            entry.get("mtime", 0.0),
+            entry.get("content_hash", ""),
+            entry.get("source", "model"),
+        )
+
+    def set_mtime(self, rel_path: str, mtime: float):
+        """Refresh the stored mtime of an unchanged file so the next rescan can skip it without reading it."""
+        with self._lock:
+            self._conn.execute("UPDATE files SET mtime = ? WHERE path = ?", (mtime, rel_path))
+            self._conn.commit()
+
+    def remove_file(self, rel_path: str):
+        self.remove_files([rel_path])
+
+    def remove_files(self, rel_paths: List[str]):
+        if not rel_paths:
+            return
+        with self._lock:
+            self._conn.executemany("DELETE FROM files WHERE path = ?", [(p,) for p in rel_paths])
+            self._conn.commit()
+            self._touch()
+
+    def reset(self):
+        with self._lock:
+            self._conn.execute("DELETE FROM files")
+            self._conn.commit()
+            self._touch()
+
+    # ── snapshots ────────────────────────────────────────────────────────
+    def snapshot_to(self, dest_path: Path):
+        """Atomically copy the SQLite database to a snapshot file."""
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(prefix=".codebone-", suffix=".tmp", dir=dest_path.parent)  # never a sibling of the user's
+        os.close(fd)
+        try:
+            with self._lock:
+                bck = sqlite3.connect(tmp_name)
+                with bck:
+                    self._conn.backup(bck)
+                bck.close()
+            os.replace(tmp_name, dest_path)
+        finally:
+            Path(tmp_name).unlink(missing_ok=True)
+
+    def restore_from(self, source_path: Path):
+        """Atomically restore the SQLite database from a snapshot file."""
+        src = sqlite3.connect(str(source_path))
+        with self._lock:
+            with self._conn:
+                src.backup(self._conn)
+            self._migrate()
+            self._touch()
+        src.close()
+
+    def close(self):
+        with self._lock:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+
+    # ── reads ────────────────────────────────────────────────────────────
     def get_file_mtimes(self) -> Dict[str, float]:
         with self._lock:
             rows = self._conn.execute("SELECT path, COALESCE(mtime, 0) as mtime FROM files").fetchall()
@@ -140,43 +252,16 @@ class Storage:
             rows = self._conn.execute("SELECT path, COALESCE(content_hash, '') as h FROM files").fetchall()
             return {r["path"]: r["h"] for r in rows}
 
-    def remove_file(self, rel_path: str):
+    def get_file_sources(self) -> Dict[str, str]:
+        """path -> 'model' or 'regex' (which analyser produced the row)."""
         with self._lock:
-            self._conn.execute("DELETE FROM files WHERE path = ?", (rel_path,))
-            self._conn.commit()
+            rows = self._conn.execute("SELECT path, COALESCE(source, 'model') as s FROM files").fetchall()
+            return {r["path"]: r["s"] for r in rows}
 
-    def remove_files(self, rel_paths: List[str]):
-        if not rel_paths:
-            return
+    def get_file_hash(self, rel_path: str) -> str:
         with self._lock:
-            self._conn.executemany("DELETE FROM files WHERE path = ?", [(p,) for p in rel_paths])
-            self._conn.commit()
-
-    def reset(self):
-        with self._lock:
-            self._conn.execute("DELETE FROM files")
-            self._conn.commit()
-
-    def snapshot_to(self, dest_path: Path):
-        """Atomically copy the SQLite database to a snapshot file."""
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_dest = dest_path.with_suffix(".tmp")
-        with self._lock:
-            bck = sqlite3.connect(str(tmp_dest))
-            with bck:
-                self._conn.backup(bck)
-            bck.close()
-        import os
-        os.replace(tmp_dest, dest_path)
-
-    def restore_from(self, source_path: Path):
-        """Atomically restore the SQLite database from a snapshot file."""
-        src = sqlite3.connect(str(source_path))
-        with self._lock:
-            with self._conn:
-                src.backup(self._conn)
-            self._migrate()
-        src.close()
+            row = self._conn.execute("SELECT content_hash FROM files WHERE path = ?", (rel_path,)).fetchone()
+            return (row["content_hash"] or "") if row else ""
 
     def get_records_by_hash(self) -> Dict[str, List[dict]]:
         """Maps content_hash to list of file records (used for rename/move detection)."""
@@ -184,81 +269,8 @@ class Storage:
             rows = self._conn.execute("SELECT * FROM files WHERE content_hash != ''").fetchall()
             result: Dict[str, List[dict]] = {}
             for r in rows:
-                d = self._row_to_dict(r)
-                result.setdefault(r["content_hash"], []).append(d)
+                result.setdefault(r["content_hash"], []).append(self._row_to_dict(r))
             return result
-
-    def insert_record(self, entry: dict):
-        """Insert or replace a pre-existing analysis record."""
-        path = entry["path"]
-        tables = entry.get("tables", [])
-        routes = entry.get("routes", [])
-        events = entry.get("events", [])
-        domains = entry.get("domains", [])
-        summary = entry.get("summary", "")
-        updated_at = entry.get("updated_at", time.time())
-        mtime = entry.get("mtime", 0.0)
-        content_hash = entry.get("content_hash", "")
-
-        with self._lock:
-            if self._has_entities_col:
-                all_entities = json.dumps(tables + routes + events + domains)
-                self._conn.execute(
-                    """
-                    INSERT INTO files (path, entities, tables, routes, events, domains, summary, updated_at, mtime, content_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(path) DO UPDATE SET
-                        entities = excluded.entities,
-                        tables = excluded.tables,
-                        routes = excluded.routes,
-                        events = excluded.events,
-                        domains = excluded.domains,
-                        summary = excluded.summary,
-                        updated_at = excluded.updated_at,
-                        mtime = excluded.mtime,
-                        content_hash = excluded.content_hash
-                    """,
-                    (
-                        path,
-                        all_entities,
-                        json.dumps(tables),
-                        json.dumps(routes),
-                        json.dumps(events),
-                        json.dumps(domains),
-                        summary,
-                        updated_at,
-                        mtime,
-                        content_hash,
-                    ),
-                )
-            else:
-                self._conn.execute(
-                    """
-                    INSERT INTO files (path, tables, routes, events, domains, summary, updated_at, mtime, content_hash)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(path) DO UPDATE SET
-                        tables = excluded.tables,
-                        routes = excluded.routes,
-                        events = excluded.events,
-                        domains = excluded.domains,
-                        summary = excluded.summary,
-                        updated_at = excluded.updated_at,
-                        mtime = excluded.mtime,
-                        content_hash = excluded.content_hash
-                    """,
-                    (
-                        path,
-                        json.dumps(tables),
-                        json.dumps(routes),
-                        json.dumps(events),
-                        json.dumps(domains),
-                        summary,
-                        updated_at,
-                        mtime,
-                        content_hash,
-                    ),
-                )
-            self._conn.commit()
 
     def get_file(self, rel_path: str) -> Optional[dict]:
         with self._lock:
@@ -266,104 +278,73 @@ class Storage:
             return self._row_to_dict(row) if row else None
 
     def all_files(self) -> List[dict]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM files ORDER BY updated_at DESC"
-            ).fetchall()
+        """All rows, newest first. The list is cached until the next write and shared: treat it as read-only."""
+        def build():
+            rows = self._conn.execute("SELECT * FROM files ORDER BY updated_at DESC").fetchall()
             return [self._row_to_dict(r) for r in rows]
+        return self._cached("all_files", build)
 
     def recent(self, limit: int = 15) -> List[dict]:
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM files ORDER BY updated_at DESC LIMIT ?", (limit,)
-            ).fetchall()
+            rows = self._conn.execute("SELECT * FROM files ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
             return [self._row_to_dict(r) for r in rows]
 
     def file_count(self) -> int:
         with self._lock:
             return self._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
 
-    def entity_index(self) -> dict:
-        """Returns inverted indexes: table -> [files], route -> [files], event -> [files], domain -> [files]."""
-        tables_map: Dict[str, List[str]] = {}
-        routes_map: Dict[str, List[str]] = {}
-        events_map: Dict[str, List[str]] = {}
-        domains_map: Dict[str, List[str]] = {}
-
-        for entry in self.all_files():
+    @staticmethod
+    def _build_index(files: List[dict]) -> dict:
+        """Inverted indexes table/route/event/domain -> [files]. Names that differ only in case are one entity."""
+        maps: Dict[str, Dict[str, List[str]]] = {"tables": {}, "routes": {}, "events": {}, "domains": {}}
+        canon: Dict[str, Dict[str, str]] = {k: {} for k in maps}
+        for entry in sorted(files, key=lambda f: f["path"]):  # path order: the chosen spelling is stable
             p = entry["path"]
-            for t in entry.get("tables", []):
-                tables_map.setdefault(t, []).append(p)
-            for r in entry.get("routes", []):
-                routes_map.setdefault(r, []).append(p)
-            for e in entry.get("events", []):
-                events_map.setdefault(e, []).append(p)
-            for d in entry.get("domains", []):
-                domains_map.setdefault(d, []).append(p)
+            for cat, cat_map in maps.items():
+                for name in entry.get(cat, []):
+                    key = canon[cat].setdefault(name.lower(), name)
+                    bucket = cat_map.setdefault(key, [])
+                    if p not in bucket:
+                        bucket.append(p)
+        return maps
 
-        return {
-            "tables": tables_map,
-            "routes": routes_map,
-            "events": events_map,
-            "domains": domains_map,
-        }
+    def entity_index(self) -> dict:
+        """Returns inverted indexes: table -> [files], route -> [files], event -> [files], domain -> [files].
+        Cached until the next write and shared: treat it as read-only."""
+        return self._cached("entity_index", lambda: self._build_index(self.all_files()))
 
-    def all_domains(self) -> List[str]:
+    def all_domains(self, idx: Optional[dict] = None) -> List[str]:
         """Returns sorted list of all unique domain names across the codebase."""
-        idx = self.entity_index()
-        return sorted(list(idx.get("domains", {}).keys()))
+        idx = idx or self.entity_index()
+        return sorted(idx.get("domains", {}).keys())
 
     def filtered_entity_index(self, allowed_paths: set[str]) -> dict:
         """Returns inverted indexes filtered to a specific set of file paths."""
-        tables_map: Dict[str, List[str]] = {}
-        routes_map: Dict[str, List[str]] = {}
-        events_map: Dict[str, List[str]] = {}
-        domains_map: Dict[str, List[str]] = {}
+        return self._build_index([f for f in self.all_files() if f["path"] in allowed_paths])
 
-        for entry in self.all_files():
-            p = entry["path"]
-            if p not in allowed_paths:
-                continue
-            for t in entry.get("tables", []):
-                tables_map.setdefault(t, []).append(p)
-            for r in entry.get("routes", []):
-                routes_map.setdefault(r, []).append(p)
-            for e in entry.get("events", []):
-                events_map.setdefault(e, []).append(p)
-            for d in entry.get("domains", []):
-                domains_map.setdefault(d, []).append(p)
+    def graph_edges(self, index: Optional[dict] = None, include_domains: bool = False) -> List[dict]:
+        """Files are logically connected if they share a DB table, API route or event (and optionally a domain).
+        Pairwise domain edges are opt-in: the live graph already draws domain hub nodes, so they are noise (and
+        quadratic). Links per entity are windowed and the total is capped, see MAX_EDGES."""
+        if index is None:
+            return self._cached(("edges", include_domains), lambda: self._compute_edges(self.entity_index(), include_domains))
+        return self._compute_edges(index, include_domains)
 
-        return {
-            "tables": tables_map,
-            "routes": routes_map,
-            "events": events_map,
-            "domains": domains_map,
-        }
-
-    def graph_edges(self) -> List[dict]:
-        """Files are logically connected if they share an overarching domain, DB table, API route, or event."""
-        edges = []
-        index = self.entity_index()
-
-        for category, cat_map in [
-            ("domain", index.get("domains", {})),
-            ("table", index.get("tables", {})),
-            ("route", index.get("routes", {})),
-            ("event", index.get("events", {})),
-        ]:
-            for entity_name, paths in cat_map.items():
+    @staticmethod
+    def _compute_edges(index: dict, include_domains: bool) -> List[dict]:
+        edges: List[dict] = []
+        categories = [("table", "tables", MAX_PEERS_PER_ENTITY), ("route", "routes", MAX_PEERS_PER_ENTITY),
+                      ("event", "events", MAX_PEERS_PER_ENTITY)]
+        if include_domains:
+            categories.insert(0, ("domain", "domains", MAX_DOMAIN_PEERS))
+        for category, key, max_peers in categories:
+            for entity_name, paths in sorted(index.get(key, {}).items()):
                 unique = sorted(set(paths))
-                # Fan-out safeguard: cap neighbor pairs per entity to avoid O(N^2) browser freezing
-                max_peers = 15 if category == "domain" else 25
                 for i in range(len(unique)):
-                    limit = min(len(unique), i + 1 + max_peers)
-                    for j in range(i + 1, limit):
-                        edges.append({
-                            "from": unique[i],
-                            "to": unique[j],
-                            "type": category,
-                            "entity": entity_name,
-                        })
+                    for j in range(i + 1, min(len(unique), i + 1 + max_peers)):
+                        if len(edges) >= MAX_EDGES:
+                            return edges
+                        edges.append({"from": unique[i], "to": unique[j], "type": category, "entity": entity_name})
         return edges
 
     def _row_to_dict(self, row) -> dict:
@@ -375,14 +356,16 @@ class Storage:
             except (json.JSONDecodeError, TypeError):
                 return []
 
+        keys = row.keys()
         return {
             "path": row["path"],
             "tables": _parse(row["tables"]),
             "routes": _parse(row["routes"]),
             "events": _parse(row["events"]),
-            "domains": _parse(row["domains"]) if "domains" in row.keys() else [],
+            "domains": _parse(row["domains"]) if "domains" in keys else [],
             "summary": row["summary"],
             "updated_at": row["updated_at"],
             "mtime": row["mtime"],
-            "content_hash": row["content_hash"] if "content_hash" in row.keys() else "",
+            "content_hash": row["content_hash"] if "content_hash" in keys else "",
+            "source": (row["source"] if "source" in keys else None) or "model",
         }

@@ -1,18 +1,34 @@
-"""PugService ties together config, brain provider, watcher, storage, and server."""
+"""CodeBoneService ties together config, brain provider, watcher, storage, and server."""
+import ast
 import hashlib
+import json
 import logging
+import os
 import threading
 import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from .config import Config, is_watched_file, load_gitignore_spec
-from .providers import Provider, build_provider
+from .config import (
+    BASE_MODEL_PATH,
+    MAX_FILE_BYTES,
+    Config,
+    is_watched_file,
+    list_watched_files,
+    load_gitignore_spec,
+)
+from .providers import FastFallbackProvider, Provider, build_provider
 from .scans import ScanManager, ScanReconciler
 from .storage import Storage
 from .watcher import Sniffer
 
 logger = logging.getLogger("codebone.service")
+
+# Bump when the analysis (prompt, extraction rules, vocabulary) changes so rows written by an older analyser are rebuilt
+ANALYSIS_VERSION = "2"
+BROKEN_GRACE_SECONDS = 20.0  # how long an unparsable edit keeps the previous analysis
+PROGRESS_INTERVAL = 0.25  # seconds between progress callbacks during a scan
+SNAPSHOT_INTERVAL = 600.0  # at most one automatic snapshot per 10 minutes
 
 
 class CodeBoneService:
@@ -25,18 +41,66 @@ class CodeBoneService:
         self.last_synced: Optional[str] = None
         self.last_error: Optional[str] = None
         self.last_reconciliation: Optional[dict] = None
-        self.sniffing = False
         self.scan_progress: Optional[dict] = None
         self.last_baseline: Optional[dict] = None
+        self.model_status: Optional[str] = None  # e.g. "downloading 42%" while the base model is fetched
         self.on_activity_start: Optional[Callable[[], None]] = None
         self.on_activity_end: Optional[Callable[[], None]] = None
-        self._lock = threading.Lock()
+        # _lock serialises single write units (one file, one batch step) so the watcher can interleave with a
+        # running scan instead of waiting for all of it; _scan_guard allows one full scan at a time.
+        self._lock = threading.RLock()
+        self._scan_guard = threading.Lock()
+        self._rescan_requested = False
+        self._req_lock = threading.Lock()  # makes 'request another pass' and 'release the scan guard' one atomic step
+        self._epoch = 0  # bumped when watching stops or the project changes: running scans notice and abort
+        self._active = 0
+        self._active_lock = threading.Lock()
+        self._last_snapshot = 0.0
+        self._broken_since: dict = {}
+        self._snapshot_revision = -1
+
+    # ── activity bookkeeping ────────────────────────────────────────────
+    @property
+    def sniffing(self) -> bool:
+        return self._active > 0
+
+    def _begin(self):
+        with self._active_lock:
+            self._active += 1
+            first = self._active == 1
+        if first and self.on_activity_start:
+            self.on_activity_start()
+
+    def _end(self):
+        with self._active_lock:
+            self._active = max(0, self._active - 1)
+            last = self._active == 0
+        if last and self.on_activity_end:
+            self.on_activity_end()
+
+    # ── lifecycle ───────────────────────────────────────────────────────
+    def _bind_project(self):
+        """The index belongs to exactly one project folder. Opening another one must not serve (or mtime-skip
+        against) the previous project's rows."""
+        proj = self.config.project_path
+        if not proj:
+            return
+        with self._lock:
+            stale = self.storage.get_meta("analysis_version") != ANALYSIS_VERSION
+            if self.storage.get_meta("project_path") != str(proj) or stale:
+                if self.storage.file_count():
+                    logger.info("Rebuilding the index (%s)", "new analysis version" if stale else f"project changed to {proj}")
+                    self.storage.reset()
+                self.storage.set_meta("project_path", str(proj))
+                self.storage.set_meta("analysis_version", ANALYSIS_VERSION)
 
     def start(self, auto_scan: bool = True, on_progress: Optional[Callable[[int, int, str], None]] = None):
         if not self.config.is_configured:
-            logger.warning("codebone not configured — skipping sniffer start")
+            logger.warning("codebone not configured, skipping sniffer start")
             return
+        self.stop()
         project_path = self.config.project_path
+        self._bind_project()
         ignore_dirs = list(self.config.get_ignore_dirs(project_path))
         self.sniffer = Sniffer(
             project_path=project_path,
@@ -56,57 +120,103 @@ class CodeBoneService:
             ).start()
 
     def stop(self):
-        if self.sniffer:
-            self.sniffer.stop()
-            self.sniffer = None
-        if hasattr(self.provider, "close"):
-            self.provider.close()
+        """Stop watching and tell any running scan to abort. The loaded model stays in memory so switching
+        projects does not reload it; use close() when the app quits."""
+        self._epoch += 1
+        sniffer, self.sniffer = self.sniffer, None
+        if sniffer:
+            sniffer.stop()
+
+    def close(self):
+        self.stop()
+        if self._scan_guard.acquire(timeout=5):  # a running scan notices the new epoch after its current file
+            self._scan_guard.release()
+        provider = self.provider
+        if hasattr(provider, "close"):
+            provider.close()
+
+    @property
+    def scanning(self) -> bool:
+        return self._scan_guard.locked()
+
+    @property
+    def watching(self) -> bool:
+        return self.sniffer is not None and self.sniffer.is_alive()
+
+    @property
+    def is_running(self) -> bool:
+        return self.watching
+
+    def ensure_builtin_model(self):
+        """Every install path must end with the pinned base model. It is linked from the app bundle (DMG/installer)
+        or downloaded once; afterwards the provider is reloaded and the project re-indexed with the real brain."""
+        model_path = Path(self.config.get("model_path") or "")
+        if self.config.get("brain_provider", "builtin") != "builtin" or str(model_path) != BASE_MODEL_PATH:
+            return
+        if model_path.exists() or self.model_status:
+            return
+        threading.Thread(target=self._install_model, args=(model_path,), daemon=True, name="codebone-model-install").start()
+
+    def _install_model(self, dest: Path):
+        from . import model_fetch
+
+        self.model_status = "preparing model"
+        try:
+            model_fetch.install(dest, lambda pct: setattr(self, "model_status", f"downloading {pct}%"))
+        except Exception as exc:
+            logger.warning("Base model unavailable (regex fallback stays active): %s", exc)
+            return
+        finally:
+            self.model_status = None
+        self.reload_provider()
+        if self._model_ready() and self.config.is_configured:
+            self.rescan_all()  # rows written by the regex fallback are re-analysed automatically
 
     def reload_provider(self):
-        """Call after brain settings change."""
-        self.provider = build_provider(self.config)
+        """Call after brain settings change. The old provider is closed once nothing can be using it."""
+        new = build_provider(self.config)
+        with self._lock:
+            old, self.provider = self.provider, new
+        if old is not new and hasattr(old, "close"):
+            old.close()
 
+    def _model_ready(self) -> bool:
+        """True when a real model backs the provider (cheap: never loads or contacts anything)."""
+        provider = self.provider
+        return not isinstance(provider, FastFallbackProvider) and bool(getattr(provider, "ready", False))
+
+    # ── baseline ────────────────────────────────────────────────────────
     def inspect_baseline(self, project_path: Optional[Path] = None) -> dict:
         """Fast pre-scan assessment that produces a baseline overview:
         counts files, groups languages, determines files needing indexing vs cached,
         and calculates an estimated initial load duration."""
         proj = project_path or self.config.project_path
+        empty = {
+            "total_files": 0,
+            "files_to_index": 0,
+            "cached_files": 0,
+            "languages": [],
+            "languages_summary": "No files",
+            "estimated_seconds": 0,
+            "estimated_time_str": "0s",
+        }
         if not proj or not proj.exists():
-            return {
-                "total_files": 0,
-                "files_to_index": 0,
-                "cached_files": 0,
-                "languages": [],
-                "languages_summary": "No files",
-                "estimated_seconds": 0,
-                "estimated_time_str": "0s",
-            }
+            return empty
 
-        extensions = set(self.config.get("watched_extensions"))
-        ignore_dirs = self.config.get_ignore_dirs(proj)
-        gitignore_spec = load_gitignore_spec(proj)
-
-        matching_files: list[Path] = []
         try:
-            for path in proj.rglob("*"):
-                if is_watched_file(path, extensions, ignore_dirs, gitignore_spec=gitignore_spec, project_path=proj):
-                    matching_files.append(path)
+            matching_files = list_watched_files(
+                proj,
+                set(self.config.get("watched_extensions")),
+                self.config.get_ignore_dirs(proj),
+                load_gitignore_spec(proj),
+            )
         except OSError:
             logger.exception("Error during baseline inspection of %s", proj)
-            return {
-                "total_files": 0,
-                "files_to_index": 0,
-                "cached_files": 0,
-                "languages": [],
-                "languages_summary": "Error reading files",
-                "estimated_seconds": 0,
-                "estimated_time_str": "0s",
-            }
+            return {**empty, "languages_summary": "Error reading files"}
 
         total = len(matching_files)
         existing_mtimes = self.storage.get_file_mtimes()
 
-        # Count per extension
         ext_counts: dict[str, int] = {}
         files_to_sniff = 0
         cached_count = 0
@@ -121,12 +231,11 @@ class CodeBoneService:
                 files_to_sniff += 1
                 continue
 
-            if rel in existing_mtimes and existing_mtimes[rel] >= mtime:
+            if rel in existing_mtimes and abs(existing_mtimes[rel] - mtime) < 1e-3:
                 cached_count += 1
             else:
                 files_to_sniff += 1
 
-        # Format top languages
         ext_map = {
             ".py": "Python", ".js": "JavaScript", ".ts": "TypeScript",
             ".tsx": "React TSX", ".jsx": "React JSX", ".go": "Go",
@@ -143,9 +252,10 @@ class CodeBoneService:
         languages = [f"{ext_map.get(ext, ext)} ({cnt})" for ext, cnt in sorted_exts]
         languages_summary = ", ".join(languages[:3]) if languages else "None"
 
-        # Time estimation based on active provider
         provider_type = self.config.get("brain_provider", "builtin")
-        if provider_type == "builtin":
+        if not self._model_ready() and provider_type == "builtin":
+            sec_per_file = 0.02  # regex fallback until the model is available
+        elif provider_type == "builtin":
             sec_per_file = 0.35  # Apple Silicon Metal Qwen 0.5B
         elif provider_type == "local_url":
             sec_per_file = 0.5   # Ollama / Local HTTP
@@ -158,12 +268,11 @@ class CodeBoneService:
         if files_to_sniff == 0 and total > 0:
             est_time_str = "< 1 second (all cached)"
         elif est_seconds < 5:
-            est_time_str = "~3–5 seconds"
+            est_time_str = "~3-5 seconds"
         elif est_seconds < 60:
             est_time_str = f"~{est_seconds} seconds"
         else:
-            mins = round(est_seconds / 60, 1)
-            est_time_str = f"~{mins} minutes"
+            est_time_str = f"~{round(est_seconds / 60, 1)} minutes"
 
         res = {
             "total_files": total,
@@ -177,12 +286,8 @@ class CodeBoneService:
         self.last_baseline = res
         return res
 
-    @property
-    def is_running(self) -> bool:
-        return self.sniffer is not None and self.sniffer.is_alive()
-
     def stats_snapshot(self) -> dict:
-        """Lightweight status/counts payload for the menu bar dashboard."""
+        """Lightweight status/counts payload for the menu bar dashboard (all reads are cached until the next write)."""
         index = self.storage.entity_index()
         proj = self.config.project_path
         return {
@@ -192,11 +297,12 @@ class CodeBoneService:
             "repo_name": proj.name if proj else "None",
             "model_name": self.config.active_model_display_name,
             "sniffing": self.sniffing,
+            "model_status": self.model_status,
             "scan_progress": self.scan_progress,
             "baseline": self.last_baseline,
             "last_synced": self.last_synced,
             "file_count": self.storage.file_count(),
-            "connection_count": len(self.storage.graph_edges()),
+            "connection_count": len(self.storage.graph_edges(index)),
             "domain_count": len(index["domains"]),
             "table_count": len(index["tables"]),
             "route_count": len(index["routes"]),
@@ -204,122 +310,165 @@ class CodeBoneService:
         }
 
     def reset_map(self):
-        self.storage.reset()
+        """Clear the index. A running scan is told to stop first: it works from a stale snapshot of what exists."""
+        self._epoch += 1
+        with self._lock:
+            self.storage.reset()
         self.last_synced = None
 
+    # ── full scan ───────────────────────────────────────────────────────
     def rescan_all(
         self,
         on_progress: Optional[Callable[[int, int, str], None]] = None,
         force: bool = False,
+        wait: bool = False,
     ) -> tuple[int, int, int]:
-        """Full scan of the project folder:
-        - Detects watched files
-        - Compares mtime and hash to skip unchanged files (unless force=True)
-        - Sniffs new/modified files
-        - Removes stale database entries
-        """
+        """Full scan of the project folder: sniffs new or modified files (mtime, then SHA-256), re-analyses rows
+        written by the regex fallback once a real model is ready, and removes rows of deleted files.
+
+        Only one scan runs at a time; a call made during a scan asks for one more pass afterwards and returns
+        (0, 0, 0). wait=True blocks until it can run instead."""
         if not self.config.is_configured:
             return 0, 0, 0
+        if wait:
+            self._scan_guard.acquire()
+        else:
+            with self._req_lock:
+                if not self._scan_guard.acquire(blocking=False):
+                    self._rescan_requested = True
+                    return 0, 0, 0
+        try:
+            while True:
+                result = self._rescan_once(on_progress, force)
+                with self._req_lock:
+                    if not self._rescan_requested:
+                        self._scan_guard.release()
+                        return result
+                    self._rescan_requested = False
+                force = False
+        except BaseException:
+            if self._scan_guard.locked():
+                try:
+                    self._scan_guard.release()
+                except RuntimeError:
+                    pass
+            raise
+
+    def _rescan_once(self, on_progress, force) -> tuple[int, int, int]:
         project_path = self.config.project_path
         if not project_path or not project_path.exists():
             return 0, 0, 0
+        epoch = self._epoch
+        self._bind_project()
 
-        extensions = set(self.config.get("watched_extensions"))
-        ignore_dirs = self.config.get_ignore_dirs(project_path)
-        gitignore_spec = load_gitignore_spec(project_path)
-
-        matching_files: list[Path] = []
         try:
-            for path in project_path.rglob("*"):
-                if is_watched_file(path, extensions, ignore_dirs, gitignore_spec=gitignore_spec, project_path=project_path):
-                    matching_files.append(path)
-        except OSError:
-            logger.exception("Error scanning project path %s", project_path)
+            matching_files = list_watched_files(
+                project_path,
+                set(self.config.get("watched_extensions")),
+                self.config.get_ignore_dirs(project_path),
+                load_gitignore_spec(project_path),
+            )
+        except OSError as exc:
+            # An unreadable folder (permissions, unmounted volume) is not an empty project: keep the index
+            self.last_error = f"Cannot read project folder: {exc}"
+            logger.warning("%s", self.last_error)
             return 0, 0, 0
+        self.last_error = None
 
         total = len(matching_files)
         existing_mtimes = self.storage.get_file_mtimes()
-        active_rel_paths = set()
-
-        sniffed = 0
-        skipped = 0
+        sources = self.storage.get_file_sources()
+        model_ready = self._model_ready()
+        active_rel: set[str] = set()
+        sniffed = skipped = 0
         start_time = time.time()
+        last_report = 0.0
+        aborted = False
 
-        with self._lock:
-            self.sniffing = True
-            if self.on_activity_start:
-                self.on_activity_start()
-            try:
-                for idx, path in enumerate(matching_files, start=1):
-                    try:
-                        rel_path = str(path.relative_to(project_path))
-                    except ValueError:
-                        rel_path = str(path)
-                    active_rel_paths.add(rel_path)
+        self._begin()
+        try:
+            for idx, path in enumerate(matching_files, start=1):
+                if epoch != self._epoch:
+                    aborted = True
+                    break
+                try:
+                    rel_path = str(path.relative_to(project_path))
+                except ValueError:
+                    rel_path = str(path)
+                active_rel.add(rel_path)
 
-                    elapsed = max(0.01, time.time() - start_time)
-                    rate = idx / elapsed
-                    remaining_count = total - idx
-                    eta_sec = max(0, round(remaining_count / rate)) if rate > 0 else 0
-                    if eta_sec < 60:
-                        eta_str = f"~{eta_sec}s"
-                    else:
-                        eta_str = f"~{round(eta_sec / 60, 1)}m"
-
+                now = time.time()
+                if now - last_report >= PROGRESS_INTERVAL or idx == total:
+                    last_report = now
+                    elapsed = max(0.01, now - start_time)
+                    eta_sec = max(0, round((total - idx) / (idx / elapsed)))
                     self.scan_progress = {
                         "current": idx,
                         "total": total,
                         "sniffed": sniffed,
                         "skipped": skipped,
-                        "pct": int((idx / total) * 100),
+                        "pct": int(idx * 100 / max(1, total)),
                         "eta_seconds": eta_sec,
-                        "eta_str": eta_str,
+                        "eta_str": f"~{eta_sec}s" if eta_sec < 60 else f"~{round(eta_sec / 60, 1)}m",
                         "current_file": rel_path,
                     }
-
                     if on_progress:
                         on_progress(idx, total, rel_path)
 
-                    try:
-                        file_stat = path.stat()
-                        mtime = file_stat.st_mtime
-                    except OSError:
-                        continue
+                try:
+                    mtime = path.stat().st_mtime
+                except OSError:
+                    continue
 
-                    # If mtime unchanged, skip reading and re-sniffing
-                    if not force and rel_path in existing_mtimes and existing_mtimes[rel_path] >= mtime:
-                        skipped += 1
-                        continue
+                unchanged = rel_path in existing_mtimes and abs(existing_mtimes[rel_path] - mtime) < 1e-3
+                stale_regex = model_ready and sources.get(rel_path) == "regex"
+                if not force and unchanged and not stale_regex:
+                    skipped += 1
+                    continue
 
-                    try:
-                        self._sniff_file(path, mtime=mtime, force=force)
-                        sniffed += 1
-                    except Exception as exc:
-                        logger.debug("Tolerated error sniffing %s during rescan: %s", path, exc)
+                try:
+                    outcome = self._sniff_file(path, mtime=mtime, force=force or stale_regex)
+                except Exception as exc:
+                    logger.debug("Tolerated error sniffing %s during rescan: %s", path, exc)
+                    continue
+                if outcome == "sniffed":
+                    sniffed += 1
+                else:
+                    skipped += 1
 
-                # Clean up deleted files
-                deleted_paths = [p for p in existing_mtimes.keys() if p not in active_rel_paths]
-                if deleted_paths:
+            if not aborted:
+                deleted_paths = [p for p in existing_mtimes
+                                 if p not in active_rel and not (project_path / p).exists()]  # not recreated meanwhile
+                if deleted_paths and total == 0:
+                    logger.warning("Project lists as empty but %d files are indexed; keeping the index", len(deleted_paths))
+                elif deleted_paths:
                     self.storage.remove_files(deleted_paths)
                     logger.info("Cleaned up %d deleted files from storage", len(deleted_paths))
+        finally:
+            self.scan_progress = None
+            self._end()
 
-            finally:
-                self.sniffing = False
-                self.scan_progress = None
-                if self.on_activity_end:
-                    self.on_activity_end()
-
-        logger.info("Rescan finished: %d total, %d sniffed, %d skipped", total, sniffed, skipped)
-        if self.config.project_path:
-            try:
-                self.scans.save_snapshot(
-                    project_name=self.config.project_path.name,
-                    project_path=self.config.project_path,
-                    storage=self.storage,
-                )
-            except Exception as exc:
-                logger.warning("Failed to auto-save scan snapshot: %s", exc)
+        logger.info("Rescan %s: %d total, %d sniffed, %d skipped", "aborted" if aborted else "finished", total, sniffed, skipped)
+        if not aborted:
+            self._maybe_snapshot(force=True)
         return total, sniffed, skipped
+
+    def _maybe_snapshot(self, force: bool = False):
+        """Snapshots are full DB copies: write one only if the index changed and the last one is not recent."""
+        if not self.config.project_path or self.storage.revision == self._snapshot_revision:
+            return
+        if not force and time.time() - self._last_snapshot < SNAPSHOT_INTERVAL:
+            return
+        try:
+            self.scans.save_snapshot(
+                project_name=self.config.project_path.name,
+                project_path=self.config.project_path,
+                storage=self.storage,
+            )
+            self._last_snapshot = time.time()
+            self._snapshot_revision = self.storage.revision
+        except Exception as exc:
+            logger.warning("Failed to auto-save scan snapshot: %s", exc)
 
     def run_deep_scan(
         self,
@@ -333,14 +482,18 @@ class CodeBoneService:
 
         from .providers import BuiltinProvider
 
-        original_provider = self.provider
         deep_provider = BuiltinProvider(model_path=model_path, n_ctx=4096)
-        self.provider = deep_provider
-        try:
-            return self.rescan_all(on_progress=on_progress, force=True)
-        finally:
-            deep_provider.close()
-            self.provider = original_provider
+        with self._scan_guard:  # no normal scan may run while the provider is swapped
+            with self._lock:
+                original, self.provider = self.provider, deep_provider
+            try:
+                self._rescan_requested = False
+                return self._rescan_once(on_progress, True)
+            finally:
+                with self._lock:
+                    if self.provider is deep_provider:  # a brain switch during the scan wins
+                        self.provider = original
+                deep_provider.close()
 
     def adopt_scan(
         self,
@@ -360,11 +513,10 @@ class CodeBoneService:
         if not source_db_path.exists():
             raise FileNotFoundError(f"Source database file missing: {source_db_path}")
 
-        with self._lock:
-            self.sniffing = True
-            if self.on_activity_start:
-                self.on_activity_start()
+        with self._scan_guard:
+            self._begin()
             try:
+                self._bind_project()
                 report = ScanReconciler.reconcile(
                     target_project=project_path,
                     source_db_path=source_db_path,
@@ -375,111 +527,105 @@ class CodeBoneService:
                 )
                 self.last_reconciliation = report
                 self.last_synced = "reconciled"
-
-                # Update snapshot with reconciled state
-                self.scans.save_snapshot(
-                    project_name=project_path.name,
-                    project_path=project_path,
-                    storage=self.storage,
-                )
+                self._maybe_snapshot(force=True)
                 return report
             finally:
-                self.sniffing = False
-                if self.on_activity_end:
-                    self.on_activity_end()
+                self._end()
 
-    def _handle_change(self, path: Path):
-        with self._lock:
-            self.sniffing = True
-            if self.on_activity_start:
-                self.on_activity_start()
-            try:
-                self._sniff_file(path)
-            except Exception as exc:
-                logger.debug("Tolerated error sniffing %s: %s", path, exc)
-            finally:
-                self.sniffing = False
-                if self.on_activity_end:
-                    self.on_activity_end()
-
-    def _sniff_file(self, path: Path, mtime: Optional[float] = None, force: bool = False):
+    # ── single files and batches ────────────────────────────────────────
+    def _rel(self, path: Path) -> Optional[str]:
+        """Path relative to the project folder, or None for anything outside it (never index absolute paths)."""
         project_path = self.config.project_path
         if not project_path:
-            return
+            return None
+        for candidate in (path, path.resolve()):
+            try:
+                return str(candidate.relative_to(project_path))
+            except ValueError:
+                continue
+        return None
+
+    def _handle_change(self, path: Path):
+        self._begin()
+        try:
+            self._sniff_file(path, live=True)
+        except Exception as exc:
+            logger.debug("Tolerated error sniffing %s: %s", path, exc)
+        finally:
+            self._end()
+
+    def _sniff_file(self, path: Path, mtime: Optional[float] = None, force: bool = False, live: bool = False) -> str:
+        """Analyse one file. Returns "sniffed", "unchanged" (same content) or "skipped" (outside the project, too big,
+        binary, or not worth overwriting good data). live=True marks a watcher event: a file that stops parsing
+        right after an edit keeps its previous analysis for a grace period (it is probably mid-edit)."""
+        rel_path = self._rel(path)
+        if rel_path is None:
+            return "skipped"
 
         try:
-            rel_path = str(path.relative_to(project_path))
-        except ValueError:
-            rel_path = str(path)
-
-        try:
+            st = path.stat()
+            if st.st_size > MAX_FILE_BYTES:
+                logger.debug("Skipping %s: %d bytes exceeds the size limit", rel_path, st.st_size)
+                return "skipped"
             content_bytes = path.read_bytes()
-            code = content_bytes.decode("utf-8", errors="ignore")
-            if mtime is None:
-                mtime = path.stat().st_mtime
         except OSError:
-            return
-
-        # Check content hash
+            return "skipped"
+        if b"\0" in content_bytes[:8192]:
+            return "skipped"  # binary content behind a source-looking name
+        if mtime is None:
+            mtime = st.st_mtime
+        code = content_bytes.decode("utf-8", errors="ignore")
         content_hash = hashlib.sha256(content_bytes).hexdigest()
-        existing_hashes = self.storage.get_file_hashes()
-        if not force and existing_hashes.get(rel_path) == content_hash:
-            # File content has not actually changed
-            return
 
-        # Syntax-error-resilience for incomplete code during edits (Issue #5):
-        # If code has broken syntax (e.g. unclosed parenthesis/quotes during typing),
-        # quietly preserve the last known good state in SQLite without error logs.
-        if path.suffix == ".py":
-            try:
-                import ast
-                ast.parse(code)
-            except SyntaxError as syn_err:
-                logger.debug(
-                    "Tolerated syntax error in incomplete file %s during edit (preserving previous state): %s",
-                    rel_path,
-                    syn_err,
-                )
-                return
-        elif path.suffix == ".json":
-            try:
-                import json
-                json.loads(code)
-            except Exception as json_err:
-                logger.debug(
-                    "Tolerated malformed JSON in %s during edit (preserving previous state): %s",
-                    rel_path,
-                    json_err,
-                )
-                return
+        with self._lock:
+            row = self.storage.get_file(rel_path)
+            if row and not force and row["content_hash"] == content_hash:
+                if abs((row["mtime"] or 0) - mtime) > 1e-3:
+                    self.storage.set_mtime(rel_path, mtime)  # touched but identical: refresh, do not re-analyse
+                return "unchanged"
 
+            # Mid-edit syntax errors must not destroy the last good analysis. Only for live edits of files we
+            # already know, and only for a grace period: JSONC, Python 2 or template files never parse and must
+            # not stay frozen forever.
+            if live and row and not _parses(path.suffix, code):
+                first_seen = self._broken_since.setdefault(rel_path, time.monotonic())
+                if time.monotonic() - first_seen < BROKEN_GRACE_SECONDS:
+                    logger.debug("Preserving previous analysis of %s (currently unparsable)", rel_path)
+                    return "skipped"
+            else:
+                self._broken_since.pop(rel_path, None)
+
+            provider = self.provider
+            model_backed = not isinstance(provider, FastFallbackProvider)
+            if row and force and row["source"] == "model" and not (model_backed and self._model_ready()):
+                return "skipped"  # never replace model output with regex output
+
+        # Inference (a network call for local-URL and cloud brains) runs without the service lock, so the menu bar
+        # thread can switch brains and the watcher can proceed while it is busy.
         try:
-            raw_output = self.provider.sniff(rel_path, code[:6000])
-            res = self.storage.update_file(
-                rel_path,
-                raw_output,
-                mtime=mtime,
-                content_hash=content_hash,
-            )
-            self.last_synced = rel_path
-            logger.info(
-                "Sniffed %s -> %d tables, %d routes, %d events, %d domains",
-                rel_path,
-                len(res.get("tables", [])),
-                len(res.get("routes", [])),
-                len(res.get("events", [])),
-                len(res.get("domains", [])),
-            )
+            raw_output = provider.sniff(rel_path, code)
+            source = getattr(provider, "last_source", "model" if model_backed else "regex")
         except (SyntaxError, ValueError) as exc:
-            logger.debug(
-                "Tolerated parsing error in %s (preserved previous state): %s",
-                rel_path,
-                exc,
-            )
-            return
+            logger.debug("Tolerated parsing error in %s (preserved previous state): %s", rel_path, exc)
+            return "skipped"
         except Exception as exc:
             logger.debug("Non-fatal parsing issue for %s: %s", rel_path, exc)
-            return
+            return "skipped"
+
+        with self._lock:
+            if self._rel(path) != rel_path:  # the project changed while we were analysing
+                return "skipped"
+            res = self.storage.update_file(rel_path, raw_output, mtime=mtime, content_hash=content_hash, source=source)
+        self.last_synced = rel_path
+        logger.info(
+            "Sniffed %s -> %d tables, %d routes, %d events, %d domains",
+            rel_path,
+            len(res.get("tables", [])),
+            len(res.get("routes", [])),
+            len(res.get("events", [])),
+            len(res.get("domains", [])),
+        )
+        return "sniffed"
 
     def _handle_batch(self, changed: set[Path], deleted: set[Path]):
         """Handles burst changes (e.g. git checkout, branch switch, mass file moves/refactors)."""
@@ -487,96 +633,83 @@ class CodeBoneService:
         if not project_path:
             return
 
-        with self._lock:
-            self.sniffing = True
-            if self.on_activity_start:
-                self.on_activity_start()
-            try:
-                # 1. Batch delete removed files in SQLite
-                deleted_rels = []
-                for p in deleted:
-                    try:
-                        rel = str(p.relative_to(project_path))
-                        deleted_rels.append(rel)
-                    except ValueError:
-                        pass
-                if deleted_rels:
-                    self.storage.remove_files(deleted_rels)
-                    logger.info("Batch deleted %d files from storage", len(deleted_rels))
+        self._begin()
+        try:
+            hashes = self.storage.get_file_hashes()
+            records_by_hash = self.storage.get_records_by_hash()
 
-                # 2. Check changed files against existing SHA-256 hashes
-                existing_hashes = self.storage.get_file_hashes()
-                records_by_hash = self.storage.get_records_by_hash()
-
-                genuine_sniff_paths: list[Path] = []
-                for p in changed:
-                    if not p.exists() or not p.is_file():
+            # 1. Look at changed files first: identical content that already has an analysis is re-linked, not re-analysed
+            genuine_sniff_paths: list[Path] = []
+            for p in changed:
+                rel = self._rel(p)
+                if rel is None or not p.is_file():
+                    continue
+                try:
+                    if p.stat().st_size > MAX_FILE_BYTES:
                         continue
+                    content_hash = hashlib.sha256(p.read_bytes()).hexdigest()
+                except OSError:
+                    continue
+                if hashes.get(rel) == content_hash:
+                    continue
+                prev_records = records_by_hash.get(content_hash)
+                if prev_records:
+                    rec = dict(prev_records[0])
+                    rec["path"] = rel
                     try:
-                        rel = str(p.relative_to(project_path))
-                    except ValueError:
-                        continue
-
-                    try:
-                        content_bytes = p.read_bytes()
-                        content_hash = hashlib.sha256(content_bytes).hexdigest()
+                        rec["mtime"] = p.stat().st_mtime
                     except OSError:
-                        continue
+                        pass
+                    with self._lock:
+                        self.storage.insert_record(rec)
+                    logger.info("Re-linked %s via SHA-256 (no analysis needed)", rel)
+                    continue
+                genuine_sniff_paths.append(p)
 
-                    # If file has identical hash at this path, skip
-                    if existing_hashes.get(rel) == content_hash:
-                        continue
+            # 2. Then drop rows of files that are really gone (a stale delete must not remove a re-created file)
+            deleted_rels = []
+            for p in deleted:
+                rel = self._rel(p)
+                if rel is not None and not p.exists():
+                    deleted_rels.append(rel)
+            if deleted_rels:
+                with self._lock:
+                    self.storage.remove_files(deleted_rels)
+                logger.info("Batch deleted %d files from storage", len(deleted_rels))
 
-                    # If hash matches a previously indexed file that was moved/renamed:
-                    if content_hash in records_by_hash:
-                        prev_records = records_by_hash[content_hash]
-                        if prev_records:
-                            rec = dict(prev_records[0])
-                            rec["path"] = rel
-                            try:
-                                rec["mtime"] = p.stat().st_mtime
-                            except OSError:
-                                pass
-                            self.storage.insert_record(rec)
-                            logger.info("Instantly re-linked moved file %s via SHA-256 (0 LLM cost)", rel)
-                            continue
-
-                    genuine_sniff_paths.append(p)
-
-                # 3. Process genuine code modifications
-                if genuine_sniff_paths:
-                    logger.info("Batch sniffing %d modified/new files", len(genuine_sniff_paths))
-                    for p in genuine_sniff_paths:
-                        try:
-                            self._sniff_file(p)
-                        except Exception as exc:
-                            self.last_error = str(exc)
-                            logger.debug("Tolerated error sniffing file %s in batch: %s", p, exc)
-
-                # 4. If this was a large batch (e.g. branch switch with >= 8 files), auto-save snapshot
-                if len(changed) + len(deleted) >= 8:
+            # 3. Analyse genuine modifications
+            if genuine_sniff_paths:
+                logger.info("Batch sniffing %d modified/new files", len(genuine_sniff_paths))
+                for p in genuine_sniff_paths:
                     try:
-                        self.scans.save_snapshot(
-                            project_name=project_path.name,
-                            project_path=project_path,
-                            storage=self.storage,
-                        )
+                        self._sniff_file(p, live=True)
                     except Exception as exc:
-                        logger.warning("Failed to auto-save scan snapshot after batch: %s", exc)
-            finally:
-                self.sniffing = False
-                if self.on_activity_end:
-                    self.on_activity_end()
+                        self.last_error = str(exc)
+                        logger.debug("Tolerated error sniffing file %s in batch: %s", p, exc)
+
+            if len(changed) + len(deleted) >= 8:
+                self._maybe_snapshot()
+        finally:
+            self._end()
 
     def _handle_delete(self, path: Path):
-        project_path = self.config.project_path
-        if not project_path:
+        rel = self._rel(path)
+        if rel is None:
             return
-        try:
-            rel_path = str(path.relative_to(project_path))
-        except ValueError:
-            rel_path = str(path)
-        self.storage.remove_file(rel_path)
+        with self._lock:
+            self.storage.remove_file(rel)
+
+
+def _parses(suffix: str, code: str) -> bool:
+    """False only for Python/JSON that is provably broken right now (typically mid-edit)."""
+    try:
+        if suffix == ".py":
+            ast.parse(code)
+        elif suffix == ".json":
+            json.loads(code)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return False
+    return True
 
 
 # Backwards compatibility alias

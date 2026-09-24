@@ -1,247 +1,103 @@
 #!/bin/bash
-# codebone Installer — Minimal, robust, local-first setup for macOS.
+# codebone installer (terminal). Builds the exact same codebone.app as the DMG (scripts/build_bundle.sh):
+# bundled Python, pinned packages, pinned model, native launcher. Nothing here depends on Homebrew or system Python.
 set -euo pipefail
-
-echo "🦴 Installing codebone (The Semantic Local-Server)..."
-
-if [[ "$(uname -s)" != "Darwin" ]]; then
-  echo "Error: codebone is designed specifically for macOS (Metal / Menu Bar)." >&2
-  exit 1
-fi
-
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "Error: python3 not found. Please install Python 3.10+ (e.g. via 'brew install python')." >&2
-  exit 1
-fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CODEBONE_HOME="$HOME/Library/Application Support/codebone"
 APP_NAME="codebone.app"
 
-TARGET_DIR="/Applications"
-if [[ ! -w "$TARGET_DIR" ]]; then
-  TARGET_DIR="$HOME/Applications"
+ok()   { echo "   ✅  $*"; }
+fail() { echo "   ❌  $*" >&2; }
+
+[[ "$(uname -s)" == "Darwin" ]] || { fail "codebone is macOS only (Metal / menu bar)."; exit 1; }
+[[ "$(uname -m)" == "arm64" ]] || { fail "codebone needs Apple Silicon (arm64)."; exit 1; }
+
+COMMIT="$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo "local")"
+VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$REPO_DIR/src/__init__.py")"
+echo "🦴 Installing codebone v$VERSION ($COMMIT)"
+
+echo "0/4 Preflight"
+if ! xcode-select -p >/dev/null 2>&1 || ! command -v clang >/dev/null 2>&1; then
+  fail "Xcode Command Line Tools are required (compiler for the native launcher and llama.cpp)."
+  fail "A system dialog will open. Install, then re-run ./install.sh"
+  xcode-select --install 2>/dev/null || true
+  exit 1
 fi
+ok "Xcode CLT — clang present"
+command -v curl >/dev/null 2>&1 || { fail "curl not found"; exit 1; }
+ok "curl"
+
+TARGET_DIR="/Applications"
+[[ -w "$TARGET_DIR" ]] || TARGET_DIR="$HOME/Applications"
 mkdir -p "$TARGET_DIR"
+APP_BUNDLE="$TARGET_DIR/$APP_NAME"
 
-# Terminate any previously running instances (both codebone and legacy CodeBone/PUG)
-pkill -f "/codebone.app/" >/dev/null 2>&1 || true
-pkill -f "/CodeBone.app/" >/dev/null 2>&1 || true
-pkill -f "codebone_main.py" >/dev/null 2>&1 || true
-pkill -f "/PUG.app/" >/dev/null 2>&1 || true
-pkill -f "pug_main.py" >/dev/null 2>&1 || true
+echo "1/4 Building codebone.app (Python + pinned packages + model; first run takes several minutes)"
+BUILD_DIR="$(mktemp -d)"
+trap 'rm -rf "$BUILD_DIR"' EXIT
+"$REPO_DIR/scripts/build_bundle.sh" "$BUILD_DIR"
+
+echo "2/4 Installing to $APP_BUNDLE"
+# Only ever touch apps that really are codebone/PUG (bundle id), never something that merely has a similar name
+is_ours() {
+  local id
+  id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$1/Contents/Info.plist" 2>/dev/null || true)"
+  [[ "$id" == com.codebone.app || "$id" == com.pug.app ]]
+}
+for old in "$TARGET_DIR/codebone.app" "$TARGET_DIR/CodeBone.app" "$TARGET_DIR/PUG.app" \
+           "/Applications/CodeBone.app" "/Applications/PUG.app" "$HOME/Applications/CodeBone.app" "$HOME/Applications/PUG.app"; do
+  if [[ -d "$old" ]] && is_ours "$old"; then
+    pkill -f "$old/Contents/MacOS/" >/dev/null 2>&1 || true
+    [[ "$old" == "$APP_BUNDLE" ]] || rm -rf "$old"
+  fi
+done
 sleep 0.5
-
-# Clean up legacy CodeBone.app / PUG.app and login items
-rm -rf "$TARGET_DIR/CodeBone.app" "/Applications/CodeBone.app" "$HOME/Applications/CodeBone.app"
-rm -rf "$TARGET_DIR/PUG.app" "/Applications/PUG.app" "$HOME/Applications/PUG.app"
 launchctl unload "$HOME/Library/LaunchAgents/com.pug.app.plist" >/dev/null 2>&1 || true
 rm -f "$HOME/Library/LaunchAgents/com.pug.app.plist"
 
-echo "1/5 Preparing Application Support directories at $CODEBONE_HOME..."
-mkdir -p "$CODEBONE_HOME/models"
-mkdir -p "$HOME/Library/Logs/codebone"
+rm -rf "$APP_BUNDLE"
+ditto "$BUILD_DIR/$APP_NAME" "$APP_BUNDLE"
+xattr -cr "$APP_BUNDLE" 2>/dev/null || true
 
-# Migrate legacy database if found
+echo "3/4 Preparing Application Support and MCP"
+RES="$APP_BUNDLE/Contents/Resources"
+PY="$RES/venv/bin/python3"
+mkdir -p "$CODEBONE_HOME/models" "$HOME/Library/Logs/codebone"
 if [[ -f "$CODEBONE_HOME/pug.sqlite3" && ! -f "$CODEBONE_HOME/codebone.sqlite3" ]]; then
   mv "$CODEBONE_HOME/pug.sqlite3" "$CODEBONE_HOME/codebone.sqlite3" 2>/dev/null || true
 fi
-if [[ -d "$HOME/Library/Application Support/PUG/models" && ! -f "$CODEBONE_HOME/models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf" ]]; then
-  if [[ -f "$HOME/Library/Application Support/PUG/models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf" ]]; then
-    cp "$HOME/Library/Application Support/PUG/models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf" "$CODEBONE_HOME/models/" 2>/dev/null || true
-  fi
-fi
-
-echo "2/5 Creating self-contained macOS Application bundle at $TARGET_DIR/$APP_NAME..."
-APP_BUNDLE="$TARGET_DIR/$APP_NAME"
-CONTENTS="$APP_BUNDLE/Contents"
-MACOS="$CONTENTS/MacOS"
-RESOURCES="$CONTENTS/Resources"
-
-mkdir -p "$MACOS" "$RESOURCES"
-
-# Sync source code into App Bundle Resources
-mkdir -p "$RESOURCES/src"
-rsync -a --delete \
-  --exclude ".git" \
-  --exclude "__pycache__" \
-  --exclude ".venv" \
-  --exclude "venv" \
-  --exclude "dist" \
-  --exclude "build" \
-  "$REPO_DIR/" "$RESOURCES/src/"
-
-# Copy AppIcon and status bar icons
-if [[ -f "$REPO_DIR/resources/AppIcon.icns" ]]; then
-  cp "$REPO_DIR/resources/AppIcon.icns" "$RESOURCES/"
-fi
-rm -f "$RESOURCES/bone_idle"* "$RESOURCES/bone_inactive@2x.png"
-for icon in bone_active.png bone_inactive.png; do
-  if [[ -f "$REPO_DIR/resources/$icon" ]]; then
-    cp "$REPO_DIR/resources/$icon" "$RESOURCES/"
-  fi
+for link in venv src; do
+  [[ -e "$CODEBONE_HOME/$link" && ! -L "$CODEBONE_HOME/$link" ]] && rm -rf "${CODEBONE_HOME:?}/$link"
 done
+ln -sfn "$RES/venv" "$CODEBONE_HOME/venv"
+ln -sfn "$RES/src" "$CODEBONE_HOME/src"
+# Model: linked from the bundle (verified against the pinned SHA-256), same as a DMG install does on first launch
+"$PY" "$RES/src/scripts/download_model.py"
 
-# Symlinks for Application Support
-if [[ -e "$CODEBONE_HOME/src" && ! -L "$CODEBONE_HOME/src" ]]; then
-  rm -rf "$CODEBONE_HOME/src"
+if command -v claude >/dev/null 2>&1; then
+  claude mcp remove -s user pug >/dev/null 2>&1 || true
+  claude mcp remove -s user codebone >/dev/null 2>&1 || true
+  claude mcp add -s user codebone -- "$PY" -m codebone_mcp.server >/dev/null 2>&1 \
+    && ok "Registered with Claude Code" || fail "Could not register with Claude Code (the app retries on every start)"
 fi
-ln -sfn "$RESOURCES/src" "$CODEBONE_HOME/src"
+# Claude Desktop / Cursor / Gemini configs are patched by the app itself on every start (same for DMG installs).
 
-echo "3/5 Configuring Python virtual environment inside App Bundle..."
-APP_VENV="$RESOURCES/venv"
-if [[ ! -d "$APP_VENV" ]]; then
-  python3 -m venv "$APP_VENV"
-fi
-if [[ -e "$CODEBONE_HOME/venv" && ! -L "$CODEBONE_HOME/venv" ]]; then
-  rm -rf "$CODEBONE_HOME/venv"
-fi
-ln -sfn "$APP_VENV" "$CODEBONE_HOME/venv"
-
-# Ensure pip & wheel are up to date
-"$APP_VENV/bin/pip" install --quiet --upgrade pip wheel
-
-echo "4/5 Installing dependencies with Apple Silicon Metal acceleration..."
-export CMAKE_ARGS="-DGGML_METAL=on"
-"$APP_VENV/bin/pip" install --quiet -r "$RESOURCES/src/requirements.txt"
-
-# Link source dir into site-packages so codebone_mcp and src imports work globally
-"$APP_VENV/bin/python3" -c "import site; from pathlib import Path; sp = Path(site.getsitepackages()[0]); (sp / 'pug.pth').unlink(missing_ok=True); (sp / 'codebone.pth').write_text('$RESOURCES/src\n')"
-
-echo "5/5 Checking local AI model (Qwen2.5-Coder 0.5B)..."
-if ! "$APP_VENV/bin/python3" "$RESOURCES/src/scripts/download_model.py" --check >/dev/null 2>&1; then
-  echo "    Downloading base GGUF model (~390 MB) for local zero-impact mapping..."
-  "$APP_VENV/bin/python3" "$RESOURCES/src/scripts/download_model.py" || {
-    echo "    Warning: Model download could not complete. FastFallbackProvider will be active."
-  }
-else
-  echo "    Base model already installed."
-fi
-
-# Info.plist with proper AppIcon and metadata
-cat > "$CONTENTS/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleName</key>
-    <string>codebone</string>
-    <key>CFBundleDisplayName</key>
-    <string>codebone</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.codebone.app</string>
-    <key>CFBundleVersion</key>
-    <string>1.0.0</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
-    <key>CFBundleExecutable</key>
-    <string>codebone</string>
-    <key>CFBundleIconFile</key>
-    <string>AppIcon</string>
-    <key>CFBundleIconName</key>
-    <string>AppIcon</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSDocumentsFolderUsageDescription</key>
-    <string>codebone requires access to your Documents folder to index code repositories located there.</string>
-    <key>NSDesktopFolderUsageDescription</key>
-    <string>codebone requires access to your Desktop folder to index code repositories located there.</string>
-    <key>NSDownloadsFolderUsageDescription</key>
-    <string>codebone requires access to your Downloads folder to index code repositories located there.</string>
-    <key>NSRemovableVolumesUsageDescription</key>
-    <string>codebone requires access to external volumes to index code repositories stored on external drives.</string>
-</dict>
-</plist>
-EOF
-
-# Compile native Mach-O executable launcher embedding Python directly.
-# This prevents PID/audit token mismatches that cause MenuBarAgent to reject status items on macOS.
-PYTHON_CFLAGS=$(python3-config --cflags 2>/dev/null || echo "")
-PYTHON_LDFLAGS=$(python3-config --ldflags --embed 2>/dev/null || python3-config --ldflags 2>/dev/null || echo "")
-
-if command -v clang >/dev/null 2>&1 && [[ -n "$PYTHON_CFLAGS" && -n "$PYTHON_LDFLAGS" ]]; then
-  clang -O2 $PYTHON_CFLAGS -o "$MACOS/codebone" -x c - $PYTHON_LDFLAGS << 'EOF'
-#define PY_SSIZE_T_CLEAN
-#include <Python.h>
-#include <mach-o/dyld.h>
-#include <libgen.h>
-#include <limits.h>
-#include <stdio.h>
-#include <stdlib.h>
-
-int main(int argc, char *argv[]) {
-    char exe_path[PATH_MAX];
-    uint32_t size = sizeof(exe_path);
-    if (_NSGetExecutablePath(exe_path, &size) != 0) {
-        return 1;
-    }
-    char *dir = dirname(exe_path);
-    char script[PATH_MAX];
-    snprintf(script, sizeof(script), "%s/../Resources/src/codebone_main.py", dir);
-
-    char *py_argv[] = { "codebone", script, NULL };
-    return Py_BytesMain(2, py_argv);
-}
-EOF
-else
-  cat > "$MACOS/codebone" <<EOF
-#!/bin/bash
-DIR="\$(cd "\$(dirname "\$0")" && pwd)"
-exec "\$DIR/../Resources/venv/bin/python3" "\$DIR/../Resources/src/codebone_main.py"
-EOF
-fi
-chmod +x "$MACOS/codebone"
-
-# Refresh LaunchServices database so icon and file size update immediately
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP_BUNDLE" >/dev/null 2>&1 || true
 touch "$APP_BUNDLE"
 
-# Register MCP for Claude CLI if installed
-if command -v claude >/dev/null 2>&1; then
-  echo "Wiring up codebone to Claude via MCP..."
-  claude mcp remove pug >/dev/null 2>&1 || true
-  claude mcp add -s user codebone -- "$APP_VENV/bin/python3" "$RESOURCES/src/codebone_mcp/server.py" 2>/dev/null || true
-fi
-
-# Register with local MCP configuration if present
-GEMINI_MCP="$HOME/.gemini/config/mcp_config.json"
-if [[ -f "$GEMINI_MCP" ]]; then
-  "$APP_VENV/bin/python3" -c "
-import json
-p = '$GEMINI_MCP'
-try:
-    with open(p, 'r') as f:
-        data = json.load(f)
-except Exception:
-    data = {}
-servers = data.setdefault('mcpServers', {})
-servers.pop('pug', None)
-servers['codebone'] = {
-    'command': '$APP_VENV/bin/python3',
-    'args': ['$RESOURCES/src/codebone_mcp/server.py'],
-    'env': {'CODEBONE_PORT': '8053'}
-}
-with open(p, 'w') as f:
-    json.dump(data, f, indent=2)
-" 2>/dev/null || true
-fi
-
-# Build standalone Uninstaller application alongside codebone.app
-if [[ -f "$REPO_DIR/scripts/build_uninstaller.sh" ]]; then
-  "$REPO_DIR/scripts/build_uninstaller.sh" "$TARGET_DIR" >/dev/null 2>&1 || true
-fi
-
-echo ""
-echo "✨ codebone is installed successfully!"
-echo "   App:         $APP_BUNDLE"
-echo "   Uninstaller: $TARGET_DIR/Uninstall codebone.app"
-echo "   Server:      http://localhost:8053"
-echo "   Logs:        $HOME/Library/Logs/codebone/codebone.log"
-echo ""
-echo "Starting codebone now..."
+echo "4/4 Starting codebone"
 open "$APP_BUNDLE" || true
+for _ in {1..20}; do
+  if curl -s -m 1 http://127.0.0.1:8053/codebone/status >/dev/null 2>&1; then
+    echo "🟢 codebone server is responding on http://127.0.0.1:8053"
+    break
+  fi
+  sleep 0.5
+done
 
+echo ""
+echo "✨ codebone v$VERSION installed"
+echo "   App:         $APP_BUNDLE"
+echo "   Uninstall:   codebone menu > Settings > Uninstall codebone..."
+echo "   Logs:        $HOME/Library/Logs/codebone/codebone.log"

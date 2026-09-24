@@ -165,7 +165,7 @@ def test_path_traversal_protection_in_api():
         config.set("project_path", tmp_dir)
         service = CodeBoneService(config)
         app = create_app(service)
-        client = TestClient(app)
+        client = TestClient(app, base_url="http://127.0.0.1")
 
         # 1. Adopt scan path traversal
         res = client.post("/codebone/scans/adopt", json={"scan_id": "../../etc/passwd"})

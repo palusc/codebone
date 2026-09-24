@@ -5,7 +5,7 @@ All notable changes to codebone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.9] - 2026-09-24
 
 ### Changed
 - **The map now covers literally everything, gitignore included.** `.gitignore`/`.npmignore`/`.dockerignore` rules are no longer applied — build output, caches, `.git` internals and gitignored files are mapped like any other file, and secret-shaped files (`.env`, keys, `credentials*`) are nodes too. Their content is still never read: secrets land as path-only nodes (`_path_only`), files above the 32 MB read cap and binaries are catalogued by category and size instead (`_catalog_asset`).

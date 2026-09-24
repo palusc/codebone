@@ -60,13 +60,19 @@ def test_unreadable_project_root_does_not_wipe_the_index(tmp_path, monkeypatch):
     assert "Cannot read project folder" in svc.last_error
 
 
-def test_binary_and_oversized_files_are_skipped(tmp_path):
+def test_binary_and_oversized_files_are_catalogued_not_analysed(tmp_path):
+    """A file too big or binary to read as code still gets a node in the map (the project isn't fully
+    mapped without its assets), just catalogued by category/size instead of sniffed for tables/routes/events."""
     svc, proj = make(tmp_path)
     (proj / "blob.py").write_bytes(b"\x00\x01\x02" * 100)
     (proj / "huge.json").write_text('{"a": "' + "x" * 1_100_000 + '"}')
     (proj / "ok.py").write_text("def ok(): pass\n")
     svc.rescan_all()
-    assert [f["path"] for f in svc.storage.all_files()] == ["ok.py"]
+    paths = sorted(f["path"] for f in svc.storage.all_files())
+    assert paths == ["blob.py", "huge.json", "ok.py"]
+    blob = svc.storage.get_file("blob.py")
+    assert blob["tables"] == [] and blob["routes"] == [] and blob["events"] == []
+    assert "binary" in blob["summary"]
 
 
 def test_new_file_with_syntax_error_is_indexed_but_edits_keep_old_analysis(tmp_path):

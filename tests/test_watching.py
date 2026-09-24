@@ -10,13 +10,15 @@ from src.config import Config, is_watched_file, list_watched_files
 
 
 def test_ignore_rules_only_look_inside_the_project(tmp_path):
-    proj = tmp_path / "build" / "app"  # the project itself lives below a directory called "build"
+    # codebone maps every real project file now, including node_modules — but a directory the project
+    # merely happens to live under (here "build", an ancestor of proj) must never affect what's ignored.
+    proj = tmp_path / "build" / "app"
     (proj / "src").mkdir(parents=True)
     (proj / "src" / "a.py").write_text("x = 1\n")
     (proj / "node_modules" / "dep").mkdir(parents=True)
     (proj / "node_modules" / "dep" / "b.py").write_text("x = 1\n")
     found = list_watched_files(proj)
-    assert [p.name for p in found] == ["a.py"]
+    assert sorted(p.name for p in found) == ["a.py", "b.py"]
 
 
 def test_secrets_and_junk_are_never_indexed(tmp_path):
@@ -31,7 +33,7 @@ def test_deleted_files_are_recognised_by_name_alone(tmp_path):
     gone = tmp_path / "gone.py"
     assert not is_watched_file(gone, project_path=tmp_path)  # does not exist
     assert is_watched_file(gone, project_path=tmp_path, check_exists=False)
-    assert not is_watched_file(tmp_path / "gone.png", project_path=tmp_path, check_exists=False)
+    assert not is_watched_file(tmp_path / "id_rsa", project_path=tmp_path, check_exists=False)  # secret name, still excluded
 
 
 def test_symlink_leading_outside_the_project_is_rejected(tmp_path):
@@ -56,7 +58,7 @@ def test_gitignore_prunes_directories(tmp_path):
     (tmp_path / "a.tmp.py").write_text("x = 1\n")
     (tmp_path / "keep.py").write_text("x = 1\n")
     found = list_watched_files(tmp_path, gitignore_spec=load_gitignore_spec(tmp_path))
-    assert [p.name for p in found] == ["keep.py"]
+    assert sorted(p.name for p in found) == [".gitignore", "keep.py"]
 
 
 def test_battery_state_is_cached(monkeypatch):

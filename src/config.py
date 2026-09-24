@@ -99,29 +99,13 @@ EXACT_WATCHED_FILENAMES = {
     "LICENSE",
 }
 
-# Strict hardcoded directories to always ignore
+# codebone maps the whole project — source, config, docs, lockfiles, images, compiled output, dependencies —
+# so a directory only belongs here if it is either not real project content (.git's internal object store,
+# codebone's own data directory) or a credential store that must never be read, whatever it contains.
 GLOBAL_IGNORED_DIRS = {
-    "node_modules",
-    ".next",
-    "dist",
-    "build",
-    "venv",
-    ".venv",
     ".git",
-    ".turbo",
-    ".cache",
-    ".pytest_cache",
-    "target",
-    ".idea",
-    ".vscode",
-    "coverage",
-    ".mypy_cache",
     ".codebone",
     ".pug",
-    "__pycache__",
-    ".parcel-cache",
-    ".nuxt",
-    ".output",
     # Credential stores: nothing below these is ever read
     ".ssh",
     ".aws",
@@ -130,21 +114,14 @@ GLOBAL_IGNORED_DIRS = {
     "secrets",
 }
 
-# Strict lockfiles and OS metadata to always ignore
+# Pure OS-generated metadata, never project content (auto-regenerated, carries no code/architecture signal)
 IGNORED_FILENAMES = {
-    "package-lock.json",
-    "pnpm-lock.yaml",
-    "yarn.lock",
-    "Cargo.lock",
-    "poetry.lock",
-    "composer.lock",
-    "Gemfile.lock",
-    "bun.lockb",
     ".DS_Store",
     "Thumbs.db",
 }
 
-# Non-code, binary, media, models, compiled bytecodes, and database files
+# Legacy: no longer used to exclude files (every extension is mapped now), kept for callers that still
+# import it. See _asset_category in service.py for how these are classified instead of skipped.
 IGNORED_EXTENSIONS = {
     # Images & icons
     ".png", ".jpg", ".jpeg", ".gif", ".ico", ".icns", ".svg", ".webp", ".bmp", ".tiff", ".psd",
@@ -233,15 +210,16 @@ def is_watched_file(
     project_path: Optional[Path] = None,
     check_exists: bool = True,
 ) -> bool:
-    """True if the path is a source, config or doc file worth indexing.
+    """True if the path belongs in the project map. Every real project file counts now — source, config,
+    docs, images, lockfiles, compiled output, dependencies — so codebone builds a complete picture of what
+    is actually on disk. Only secrets/credential-shaped names (never read, whatever the extension) and pure
+    OS metadata (.DS_Store) are left out; a file too large or binary to analyse as code still gets a node
+    in the map, just catalogued instead of sniffed (see _asset_category / Service._catalog_asset).
 
-    Cheap name/extension/ignore checks run first; the filesystem is only touched at the end. With
-    check_exists=False (used for deletion events) the file does not have to exist any more."""
+    Cheap name/ignore checks run first; the filesystem is only touched at the end. With check_exists=False
+    (used for deletion events) the file does not have to exist any more."""
     name = path.name
     if name in IGNORED_FILENAMES or _is_secret_or_junk(name):
-        return False
-    suffix = path.suffix.lower()
-    if suffix in IGNORED_EXTENSIONS:
         return False
 
     rel = _relative_parts(path, project_path)
@@ -259,10 +237,6 @@ def is_watched_file(
         except Exception:
             pass
 
-    exts = extensions if extensions is not None else set(DEFAULT_WATCHED_EXTENSIONS)
-    if name not in EXACT_WATCHED_FILENAMES and suffix not in exts:
-        return False
-
     if not check_exists:
         return True
     try:
@@ -272,7 +246,7 @@ def is_watched_file(
             target = path.resolve()
             if project_path and not target.is_relative_to(project_path.resolve()):
                 return False
-            if _is_secret_or_junk(target.name) or target.suffix.lower() in IGNORED_EXTENSIONS:
+            if _is_secret_or_junk(target.name):
                 return False  # a harmless-looking link must not smuggle in a secret file
             return target.is_file()
         return stat.S_ISREG(st.st_mode)
@@ -552,12 +526,10 @@ class Config:
         self.save()
 
     def get_ignore_dirs(self, project_path: Optional[Path] = None) -> set[str]:
-        """Directory names that are never indexed. .gitignore rules are applied separately through load_gitignore_spec."""
+        """Directory names that are never indexed. .gitignore rules are applied separately through
+        load_gitignore_spec. Every real project directory is mapped now (dependencies, caches, build
+        output included) — only .git's internal storage, codebone's own data directory, and credential
+        stores are always protected, whatever the user's own ignore_dirs setting says."""
         base_ignores = set(self.data.get("ignore_dirs", []))
-        # Ensure standard dependencies, caches, and build targets are always protected
-        base_ignores.update({
-            ".git", "node_modules", ".venv", "venv", "__pycache__", "build",
-            "dist", ".codebone", ".pug", ".next", ".turbo", "target", ".cache", ".idea",
-            ".vscode", "coverage", ".pytest_cache", ".mypy_cache"
-        })
+        base_ignores.update({".git", ".codebone", ".pug", ".ssh", ".aws", ".gnupg", ".secrets", "secrets"})
         return base_ignores

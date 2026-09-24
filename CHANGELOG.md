@@ -7,9 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.5] - 2026-09-24
 
+### Changed
+- **codebone now maps every real file in a project, not just a curated extension whitelist.** Lockfiles, images, fonts, archives, compiled binaries, build output, `node_modules`, `.venv`, `dist`/`build`, and other previously-excluded directories are all included now, so the map matches what's actually on disk instead of an approximation. A file too large or binary to analyse as code still gets a node — catalogued by category and size (`_catalog_asset`) — instead of vanishing entirely. Only credential-shaped files/names (`.env`, keys, `id_rsa`, ...), `.git`'s internal object store, and codebone's own data directory stay excluded; those are a security/self-reference boundary, not a curation choice.
+
 ### Fixed
 - **In-app updates downloaded the ~490 MB bundled base model on every release**, even for a one-line code fix, although an already-installed copy always has a valid, checksummed copy of that exact model on disk already (`src/model_fetch.py` checks that before ever looking at the app bundle or the network). The release build now also publishes a lightweight `*-update.zip` with the bundled model stripped out and re-signed; the in-app updater prefers it automatically, falling back to the full ZIP for older releases that don't have one yet. Update downloads should now be tens of MB instead of ~500 MB.
 - **A scan could silently skip part of a project** (a subfolder without read access, a broken mount) and still report "Scan Complete" with no indication anything was wrong — `os.walk` swallows that kind of error by default. Unreadable subfolders are now collected and surfaced in the scan notification instead of disappearing into a lower-than-expected file/connection count with no explanation.
+- **The Nodes/Connections count under-reported real connectivity**: it only counted files sharing an exact DB table/API route/event name, while the live graph itself also groups files by shared domain (Testing, Documentation, ...) — a signal that's often the only one populated for a given project. Every place that surfaces a connection count now includes domain-shared edges too.
 
 ## [1.3.4] - 2026-09-24
 

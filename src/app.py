@@ -923,11 +923,17 @@ class CodeBoneApp(rumps.App):
 
                 total, sniffed, skipped = self.service.rescan_all(on_progress=_on_prog, wait=True)
                 conn_count = len(self.service.storage.graph_edges())
-                rumps.notification(
-                    "codebone",
-                    "Scan Complete",
-                    f"Mapped {total} files & {conn_count} connections ({sniffed} updated, {skipped} cached).",
-                )
+                if self.service.last_error:
+                    # A scan can "succeed" (return normally) while having silently skipped part of the
+                    # project (an unreadable subfolder, permissions) — surface that instead of reporting
+                    # a clean count that doesn't match what's actually on disk.
+                    rumps.notification("codebone", "Scan Finished with Issues", self.service.last_error)
+                else:
+                    rumps.notification(
+                        "codebone",
+                        "Scan Complete",
+                        f"Mapped {total} files & {conn_count} connections ({sniffed} updated, {skipped} cached).",
+                    )
             except Exception as exc:
                 logger.exception("Rescan failed")
                 rumps.notification("codebone", "Rescan Failed", str(exc))

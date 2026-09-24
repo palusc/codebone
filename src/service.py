@@ -361,19 +361,29 @@ class CodeBoneService:
         epoch = self._epoch
         self._bind_project()
 
+        unreadable_dirs: list = []
         try:
             matching_files = list_watched_files(
                 project_path,
                 set(self.config.get("watched_extensions")),
                 self.config.get_ignore_dirs(project_path),
                 load_gitignore_spec(project_path),
+                unreadable_dirs=unreadable_dirs,
             )
         except OSError as exc:
             # An unreadable folder (permissions, unmounted volume) is not an empty project: keep the index
             self.last_error = f"Cannot read project folder: {exc}"
             logger.warning("%s", self.last_error)
             return 0, 0, 0
-        self.last_error = None
+        if unreadable_dirs:
+            self.last_error = (
+                f"{len(unreadable_dirs)} folder(s) could not be read and were skipped "
+                f"(check macOS Disk Access Settings): {', '.join(unreadable_dirs[:3])}"
+                + ("..." if len(unreadable_dirs) > 3 else "")
+            )
+            logger.warning("%s", self.last_error)
+        else:
+            self.last_error = None
 
         total = len(matching_files)
         existing_mtimes = self.storage.get_file_mtimes()

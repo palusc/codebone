@@ -5,6 +5,21 @@ All notable changes to codebone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.5] - 2026-09-24
+
+### Fixed
+- **In-app updates downloaded the ~490 MB bundled base model on every release**, even for a one-line code fix, although an already-installed copy always has a valid, checksummed copy of that exact model on disk already (`src/model_fetch.py` checks that before ever looking at the app bundle or the network). The release build now also publishes a lightweight `*-update.zip` with the bundled model stripped out and re-signed; the in-app updater prefers it automatically, falling back to the full ZIP for older releases that don't have one yet. Update downloads should now be tens of MB instead of ~500 MB.
+- **A scan could silently skip part of a project** (a subfolder without read access, a broken mount) and still report "Scan Complete" with no indication anything was wrong — `os.walk` swallows that kind of error by default. Unreadable subfolders are now collected and surfaced in the scan notification instead of disappearing into a lower-than-expected file/connection count with no explanation.
+
+## [1.3.4] - 2026-09-24
+
+### Changed
+- **Settings restructured**: Model moved out of the main menu's top level into Settings, grouped into a "Project" submenu (Adopt/Link Scan, Copy Context, Open in Finder, View Logs, Disk Access) and a "Scan Data" submenu (Export/Import Scan, Reset Knowledge Map), so it's clear where a given setting lives instead of one flat list.
+
+### Fixed
+- Two releases queued back-to-back (two PRs merged close together) could fail: the second release job's checkout stayed pinned to the commit that triggered it, so pushing its version bump after the first job's own release commit had landed was rejected as non-fast-forward. The release workflow now resyncs to the real tip of `main` before bumping.
+- The release-notes fallback read `HEAD`'s commit message, but by that point in the job `HEAD` is already the bot's own one-line `chore(release): ...` commit — that's why v1.3.3 shipped with an empty release body. It now reads the commit that actually triggered the run instead.
+
 ## [1.3.3] - 2026-09-24
 
 ### Added

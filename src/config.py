@@ -285,14 +285,26 @@ def list_watched_files(
     extensions: Optional[set[str]] = None,
     ignore_dirs: Optional[set[str]] = None,
     gitignore_spec: Optional[object] = None,
+    unreadable_dirs: Optional[list] = None,
 ) -> list[Path]:
     """All indexable files below project_path. Ignored directories are pruned instead of walked (a node_modules
     tree used to be traversed and stat'ed file by file). Raises OSError if the root itself cannot be listed, so
-    callers can tell "empty project" from "folder unreadable" and never wipe an index because of the latter."""
+    callers can tell "empty project" from "folder unreadable" and never wipe an index because of the latter.
+
+    A subdirectory that can't be listed (permissions, a broken mount) is skipped by os.walk without raising —
+    by default that failure is completely silent, and files under it just vanish from the count with no sign
+    anything went wrong. Pass unreadable_dirs to collect those paths instead of losing them quietly."""
     root = Path(project_path)
     os.listdir(root)
     found: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+
+    def _onerror(exc: OSError):
+        path = getattr(exc, "filename", None) or str(exc)
+        logger.warning("Skipping unreadable directory while scanning %s: %s (%s)", root, path, exc)
+        if unreadable_dirs is not None:
+            unreadable_dirs.append(path)
+
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=_onerror):
         rel_dir = os.path.relpath(dirpath, root)
         prefix = "" if rel_dir == "." else rel_dir + "/"
         keep = []

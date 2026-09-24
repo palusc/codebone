@@ -126,3 +126,5 @@ jobs:
             dist/codebone-macos-arm64.dmg
             dist/codebone-macos-arm64.zip
             dist/codebone-macos-arm64.zip.sha256
+            dist/codebone-macos-arm64-update.zip
+            dist/codebone-macos-arm64-update.zip.sha256

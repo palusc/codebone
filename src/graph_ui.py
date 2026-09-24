@@ -1035,25 +1035,29 @@ function buildGraph(graph, fit) {
   const previous = nodeById;
   const files = graph.files || {};
   const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
-  // Object.create(null): a domain called "constructor" or "toString" must be an ordinary key
-  const domainFiles = Object.create(null), tables = new Set(), routes = new Set(), events = new Set();
+  const tables = new Set(), routes = new Set(), events = new Set();
   for (const path of graph.nodes) {
     const f = Object.prototype.hasOwnProperty.call(files, path) ? files[path] : {};
-    (f.domains || []).forEach(d => (domainFiles[d] = domainFiles[d] || []).push(path));
     (f.tables || []).forEach(t => tables.add(t));
     (f.routes || []).forEach(r => routes.add(r));
     (f.events || []).forEach(e => events.add(e));
   }
 
+  // Hub nodes come from server-side modularity clustering over the shared-entity graph
+  // (Storage.communities()), not a fixed bucket per domain keyword: files land in the same
+  // cluster because the graph actually connects them, directly or through a chain of shared
+  // tables/routes/events/domains. A community of exactly one file is just a regular node —
+  // no hub for something with nothing to be a hub of.
+  const communities = (graph.communities || []).filter(c => c.files.length > 1);
+
   const map = Object.create(null);
-  const domains = Object.keys(domainFiles).sort();
-  domains.forEach((d, i) => {
-    const id = 'domain:' + d, old = previous[id];
-    const angle = (2 * Math.PI * i) / (domains.length || 1), r = Math.min(cx, cy) * 0.35;
+  communities.forEach((c, i) => {
+    const id = 'domain:' + c.id, old = previous[id];
+    const angle = (2 * Math.PI * i) / (communities.length || 1), r = Math.min(cx, cy) * 0.35;
     map[id] = {
-      id, label: d, type: 'domain', radius: COLOR_MAP.domain.radius, vx: 0, vy: 0,
+      id, label: c.label, type: 'domain', radius: COLOR_MAP.domain.radius, vx: 0, vy: 0,
       x: old ? old.x : cx + Math.cos(angle) * r, y: old ? old.y : cy + Math.sin(angle) * r,
-      data: { domains: [d], summary: 'Domain spanning ' + domainFiles[d].length + ' modules.' },
+      data: { domains: [c.label], summary: 'Cluster of ' + c.files.length + ' files around ' + c.label + '.' },
     };
   });
   graph.nodes.forEach((path, i) => {
@@ -1075,12 +1079,12 @@ function buildGraph(graph, fit) {
     if (a && b) list.push({ a, b, from, to, type, entity });
   };
   (graph.edges || []).forEach(e => push('file:' + e.from, 'file:' + e.to, e.type, e.entity));
-  domains.forEach(d => domainFiles[d].forEach(p => push('domain:' + d, 'file:' + p, 'domain', d)));
+  communities.forEach(c => c.files.forEach(p => push('domain:' + c.id, 'file:' + p, 'domain', c.label)));
   edges = list;
 
   $('count-all').textContent = nodes.length;
   $('count-files').textContent = graph.nodes.length;
-  $('count-domains').textContent = domains.length;
+  $('count-domains').textContent = communities.length;
   $('count-tables').textContent = tables.size;
   $('count-routes').textContent = routes.size;
   $('count-events').textContent = events.size;

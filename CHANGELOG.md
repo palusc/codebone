@@ -5,6 +5,11 @@ All notable changes to codebone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.6] - 2026-09-24
+
+### Changed
+- **The live graph's clusters are now computed from real graph structure instead of a fixed bucket per domain keyword.** `Storage.communities()` runs modularity-based community detection (Louvain, via `networkx`) over the same table/route/event/domain co-occurrence graph the connection count uses — two files land in the same cluster because the graph actually connects them, directly or through a chain of shared entities, not because a regex matched the same word in both paths. Each cluster is labeled after its highest-degree member (its structural hub) instead of a domain name; a lone unconnected file is just a node, not a one-file "cluster." Adds `networkx` as a dependency (pure Python, no extra system packages).
+
 ## [1.3.5] - 2026-09-24
 
 ### Changed

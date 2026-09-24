@@ -21,6 +21,7 @@ jsonschema-specifications==2025.9.1
 llama_cpp_python==0.3.35
 MarkupSafe==3.0.3
 mcp==1.30.0
+networkx==3.6.1
 numpy==2.5.3
 packaging==26.3
 pathspec==1.1.1

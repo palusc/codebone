@@ -247,11 +247,18 @@ def create_app(service: CodeBoneService, allowed_hosts: Optional[set] = None) ->
     def graph():
         storage = service.storage
         all_files = storage.all_files()
+        communities = storage.communities()
         return {
             "revision": storage.revision,
             "nodes": [f["path"] for f in all_files],
             "files": {f["path"]: f for f in all_files},
             "edges": storage.graph_edges(),
+            # Real graph structure (modularity clustering over shared tables/routes/events/domains),
+            # not a fixed bucket per domain keyword — see Storage.communities().
+            "communities": [
+                {"id": cid, "label": label, "files": communities[cid]}
+                for cid, label in storage.community_labels(communities).items()
+            ],
         }
 
     @app.get("/codebone/graph/ui", response_class=Response)

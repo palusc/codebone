@@ -15,7 +15,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
-from . import context_format
+from . import anthropic_bridge, context_format
 from .config import find_free_port
 from .feedback import list_recent_feedback, record_feedback
 from .graph_ui import build_live_graph_html
@@ -383,6 +383,8 @@ def create_app(service: CodeBoneService, allowed_hosts: Optional[set] = None) ->
         if service.config.is_configured:
             threading.Thread(target=service.rescan_all, daemon=True, name="codebone-api-reset-rescan").start()
         return {"status": "reset", "message": "Knowledge graph reset and re-indexing initiated."}
+
+    anthropic_bridge.register(app, service.config)
 
     return app
 

@@ -15,6 +15,8 @@ import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from .bridge_common import bridge_path
+
 KEYCHAIN_SERVICE = "codebone-module"
 # Settings this module owns while a module is on. apiKeyHelper is also what marks the change as ours.
 ENV_KEYS = ("ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL")
@@ -91,16 +93,25 @@ def _is_ours(data: dict) -> bool:
     return KEYCHAIN_SERVICE in str(data.get("apiKeyHelper", ""))
 
 
-def _url(module: dict, fmt: str) -> Optional[str]:
-    return module.get(f"{fmt}_url") or (module.get("base_url") if fmt == "anthropic" else None)
+def _url(module: dict, fmt: str, port: Optional[int] = None) -> Optional[str]:
+    direct = module.get(f"{fmt}_url") or (module.get("base_url") if fmt == "anthropic" else None)
+    if direct:
+        return direct
+    # No Anthropic-format URL of its own (e.g. OpenRouter): route Claude Code through the local
+    # translation bridge instead, which speaks Anthropic on one side and this module's OpenAI-format
+    # URL on the other. Needs a live codebone server, so it's unavailable until one is known.
+    if fmt == "anthropic" and module.get("openai_url") and port:
+        return f"http://127.0.0.1:{port}{bridge_path(module['openai_url'], module['model'])}"
+    return None
 
 
-def supports(module: dict, app_id: str) -> bool:
-    return bool(_url(module, APPS[app_id][1]))
+def supports(module: dict, app_id: str, port: Optional[int] = None) -> bool:
+    return bool(_url(module, APPS[app_id][1], port))
 
 
 # ── Claude Code ──────────────────────────────────────────────────────────────
-def apply_claude(module: dict, previous: Optional[dict] = None, home: Optional[Path] = None) -> dict:
+def apply_claude(module: dict, previous: Optional[dict] = None, home: Optional[Path] = None,
+                 port: Optional[int] = None) -> dict:
     """Route Claude Code through `module`. Returns the backup (previous values of every key touched)."""
     path = settings_path(home)
     data = _read(path)
@@ -109,7 +120,7 @@ def apply_claude(module: dict, previous: Optional[dict] = None, home: Optional[P
         previous = {k: env.get(k) for k in ENV_KEYS}
         previous["apiKeyHelper"] = data.get("apiKeyHelper")
     env = dict(env)
-    env["ANTHROPIC_BASE_URL"] = _url(module, "anthropic")
+    env["ANTHROPIC_BASE_URL"] = _url(module, "anthropic", port)
     env["ANTHROPIC_MODEL"] = module["model"]
     env["ANTHROPIC_SMALL_FAST_MODEL"] = module["model"]
     data["env"] = env
@@ -260,11 +271,15 @@ def add_module(config, name: str, model: str, key: str, anthropic_url: str = "",
     return module
 
 
+def _port(config) -> Optional[int]:
+    return config.get("active_port") or config.get("server_port", 8053)
+
+
 def _apply(config, app_id: str, module: dict, home, keychain) -> None:
     backups = dict(config.get("module_backups") or {})
     previous = backups.get(app_id) if app_id in enabled_apps(config) else None
     if app_id == "claude-code":
-        backups[app_id] = apply_claude(module, previous, home)
+        backups[app_id] = apply_claude(module, previous, home, _port(config))
     else:
         key = (keychain or Keychain()).get(module["id"])
         if not key:
@@ -294,7 +309,7 @@ def set_app_enabled(config, app_id: str, on: bool, home: Optional[Path] = None,
     module = get_module(config, config.get("module_selected"))
     if not module:
         raise ValueError("Add and select a module first.")
-    if not supports(module, app_id):
+    if not supports(module, app_id, _port(config)):
         raise ValueError(f"{module['name']} has no {FORMAT_NAMES[APPS[app_id][1]]}-format URL, which {APPS[app_id][0]} needs.")
     _apply(config, app_id, module, home, keychain)
     apps[app_id] = True
@@ -309,7 +324,7 @@ def select_module(config, module_id: str, home: Optional[Path] = None, keychain:
         raise ValueError("Unknown module")
     config.set("module_selected", module_id)
     for app_id in enabled_apps(config):
-        set_app_enabled(config, app_id, supports(module, app_id), home=home, keychain=keychain)
+        set_app_enabled(config, app_id, supports(module, app_id, _port(config)), home=home, keychain=keychain)
 
 
 def remove_module(config, module_id: str, home: Optional[Path] = None, keychain: Optional[Keychain] = None) -> None:

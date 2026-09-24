@@ -4,8 +4,8 @@
 class Codebone < Formula
   desc "Invisible menubar assistant indexing live codebase structure on Apple Silicon"
   homepage "https://github.com/palusc/codebone"
-  url "https://github.com/palusc/codebone/releases/download/v1.3.1/codebone-macos-arm64.zip"
-  sha256 "09fd93d6c03068c91c8db353b53347e9eaaa228087ffb38a58398778c0911664"
+  url "https://github.com/palusc/codebone/releases/download/v1.3.2/codebone-macos-arm64.zip"
+  sha256 "7fd417fc4c46180faacdcf6add992eacc87556fbd9dabddc22d1b4d418ff4cf6"
   license "MIT"
   head "https://github.com/palusc/codebone.git", branch: "main"
 

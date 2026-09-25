@@ -28,6 +28,8 @@ AI assistants typically read 10–20 files just to understand your architecture 
 
 codebone runs in your macOS menu bar, watches every file save, and delivers a live architectural snapshot directly to Claude, Cursor, or Gemini via MCP.
 
+> 📊 **Don't take our word for it — measure it.** [codebone-benchmark](https://github.com/palusc/codebone-benchmark) ships a small messy project and one task. Run it with and without codebone, on any model you like, and compare tokens, time and cost on your own machine.
+
 ---
 
 ## 🚀 Download & Install

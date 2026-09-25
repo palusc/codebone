@@ -432,7 +432,7 @@ def test_connection(base_url: str, model: str, key: str, timeout: float = 20.0, 
     except urllib.error.HTTPError as exc:
         try:
             text = exc.read()[:160].decode("utf-8", "replace")
-        except OSError:  # server may reset the connection while the error body is read
+        except Exception:  # reset (OSError) or truncated chunked body (IncompleteRead): message only
             text = ""
         if exc.code in (401, 403):
             return False, "The endpoint rejected the API key."

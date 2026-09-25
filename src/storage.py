@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .imports import source_facts as _source_facts
+from .imports import source_facts as _source_facts, _SQL_STOP
 from .prompts import _clean_entity_list, parse_analysis, sanitize_text
 
 logger = logging.getLogger("codebone.storage")
@@ -373,9 +373,14 @@ class Storage:
         out = dict(row)
         derived = facts["tables"].get(p)
         if derived:
-            # stored DDL entities for .sql are the known-corrupt ones ('public' phantom); the
-            # schema-aware read-time list replaces them instead of unioning
-            out["tables"] = list(derived) if p.endswith(".sql") else list(dict.fromkeys(row["tables"] + derived))
+            if p.endswith(".sql"):
+                # stored .sql lists came from the old no-dot regex ('public' phantom, prose words):
+                # scrub those, keep stored names the current regex may not see (TEMP/odd-quoted DDL)
+                keep = [t for t in row["tables"] if t and "." not in t
+                        and t.lower() not in _SQL_STOP and t.lower() != "public"]
+                out["tables"] = list(dict.fromkeys(keep + derived))
+            else:
+                out["tables"] = list(dict.fromkeys(row["tables"] + derived))
         routes = facts["routes"].get(p)
         if routes:
             out["routes"] = list(dict.fromkeys(row["routes"] + routes))

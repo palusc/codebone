@@ -11,7 +11,9 @@ from typing import Callable, Optional
 
 from .config import (
     BASE_MODEL_PATH,
-    MAX_FILE_BYTES,
+    GLOBAL_IGNORED_DIRS,
+    MAX_READ_BYTES,
+    _is_secret_or_junk,
     Config,
     is_watched_file,
     list_watched_files,
@@ -302,7 +304,11 @@ class CodeBoneService:
             "baseline": self.last_baseline,
             "last_synced": self.last_synced,
             "file_count": self.storage.file_count(),
-            "connection_count": len(self.storage.graph_edges(index)),
+            # include_domains=True: table/route/event edges alone are sparse for most projects (a desktop
+            # app with no DB or REST routes has almost none), while the live graph already draws domain
+            # clusters from the same per-file domain data — excluding them here made the menu bar/
+            # notifications report "0 connections" even when the graph itself showed clear clustering.
+            "connection_count": len(self.storage.graph_edges(index, include_domains=True)),
             "domain_count": len(index["domains"]),
             "table_count": len(index["tables"]),
             "route_count": len(index["routes"]),
@@ -361,19 +367,31 @@ class CodeBoneService:
         epoch = self._epoch
         self._bind_project()
 
+        unreadable_dirs: list = []
         try:
             matching_files = list_watched_files(
                 project_path,
                 set(self.config.get("watched_extensions")),
                 self.config.get_ignore_dirs(project_path),
                 load_gitignore_spec(project_path),
+                unreadable_dirs=unreadable_dirs,
             )
+            # Big files are analysed last so they never delay the map of everything else
+            matching_files.sort(key=lambda p: p.stat().st_size if p.exists() else 0)
         except OSError as exc:
             # An unreadable folder (permissions, unmounted volume) is not an empty project: keep the index
             self.last_error = f"Cannot read project folder: {exc}"
             logger.warning("%s", self.last_error)
             return 0, 0, 0
-        self.last_error = None
+        if unreadable_dirs:
+            self.last_error = (
+                f"{len(unreadable_dirs)} folder(s) could not be read and were skipped "
+                f"(check macOS Disk Access Settings): {', '.join(unreadable_dirs[:3])}"
+                + ("..." if len(unreadable_dirs) > 3 else "")
+            )
+            logger.warning("%s", self.last_error)
+        else:
+            self.last_error = None
 
         total = len(matching_files)
         existing_mtimes = self.storage.get_file_mtimes()
@@ -555,25 +573,39 @@ class CodeBoneService:
             self._end()
 
     def _sniff_file(self, path: Path, mtime: Optional[float] = None, force: bool = False, live: bool = False) -> str:
-        """Analyse one file. Returns "sniffed", "unchanged" (same content) or "skipped" (outside the project, too big,
-        binary, or not worth overwriting good data). live=True marks a watcher event: a file that stops parsing
-        right after an edit keeps its previous analysis for a grace period (it is probably mid-edit)."""
+        """Analyse one file. Returns "sniffed", "unchanged" (same content) or "skipped" (outside the project or
+        not worth overwriting good data). Secret-shaped files (.env, keys, anything below a credential store)
+        get a path-only node via _path_only — their content is never read, whatever the extension. A file too
+        big to read fully or binary (an image, a compiled binary, an archive, ...) still gets a node in the map
+        via _catalog_asset — it just isn't semantically analysed.
+        live=True marks a watcher event: a file that stops parsing right after an edit keeps its previous
+        analysis for a grace period (it is probably mid-edit)."""
         rel_path = self._rel(path)
         if rel_path is None:
             return "skipped"
 
         try:
             st = path.stat()
-            if st.st_size > MAX_FILE_BYTES:
-                logger.debug("Skipping %s: %d bytes exceeds the size limit", rel_path, st.st_size)
-                return "skipped"
+        except OSError:
+            return "skipped"
+        if mtime is None:
+            mtime = st.st_mtime
+
+        # Never read credential-shaped content: secret-looking file names (also behind an innocent
+        # symlink) and anything below a credential store (.ssh, secrets, ...) stay path-only.
+        real = path.resolve() if path.is_symlink() else path
+        if _is_secret_or_junk(real.name) or any(d in GLOBAL_IGNORED_DIRS for d in real.parts):
+            return self._path_only(rel_path, mtime)
+
+        if st.st_size > MAX_READ_BYTES:
+            return self._catalog_asset(rel_path, path, st.st_size, mtime, force, "oversized")
+
+        try:
             content_bytes = path.read_bytes()
         except OSError:
             return "skipped"
         if b"\0" in content_bytes[:8192]:
-            return "skipped"  # binary content behind a source-looking name
-        if mtime is None:
-            mtime = st.st_mtime
+            return self._catalog_asset(rel_path, path, st.st_size, mtime, force, "binary")
         code = content_bytes.decode("utf-8", errors="ignore")
         content_hash = hashlib.sha256(content_bytes).hexdigest()
 
@@ -627,6 +659,32 @@ class CodeBoneService:
         )
         return "sniffed"
 
+    def _catalog_asset(self, rel_path: str, path: Path, size: int, mtime: float, force: bool, reason: str) -> str:
+        """Gives a non-code file (image, font, archive, compiled binary, oversized file, ...) a node in the map
+        without reading or analysing its content: no tables/routes/events, just a category and size so the map
+        stays complete. content_hash is a cheap size+mtime fingerprint (not a full read) so a huge or binary
+        file is never hashed byte-for-byte just to detect that it hasn't changed."""
+        content_hash = f"asset:{size}:{int(mtime)}"
+        with self._lock:
+            row = self.storage.get_file(rel_path)
+            if row and not force and row.get("content_hash") == content_hash:
+                return "unchanged"
+            category = "oversized" if reason == "oversized" else _asset_category(path)
+            size_str = f"{size / 1024:.1f} KB" if size < 1024 * 1024 else f"{size / (1024 * 1024):.1f} MB"
+            raw_output = f"TABLES: none\nROUTES: none\nEVENTS: none\nDOMAINS: Assets\nFLOW: {category} file ({size_str})"
+            self.storage.update_file(rel_path, raw_output, mtime=mtime, content_hash=content_hash, source="asset")
+        self.last_synced = rel_path
+        return "sniffed"
+
+    def _path_only(self, rel_path: str, mtime: float) -> str:
+        """A file whose content must never be read (.env, keys, files under credential stores) still gets a
+        node in the map: path only, no entities, no content hash."""
+        with self._lock:
+            row = self.storage.get_file(rel_path)
+            if not row or abs((row["mtime"] or 0) - mtime) > 1e-3:
+                self.storage.update_file(rel_path, "", mtime=mtime, content_hash="", source="regex")
+        return "sniffed"
+
     def _handle_batch(self, changed: set[Path], deleted: set[Path]):
         """Handles burst changes (e.g. git checkout, branch switch, mass file moves/refactors)."""
         project_path = self.config.project_path
@@ -645,9 +703,8 @@ class CodeBoneService:
                 if rel is None or not p.is_file():
                     continue
                 try:
-                    if p.stat().st_size > MAX_FILE_BYTES:
-                        continue
-                    content_hash = hashlib.sha256(p.read_bytes()).hexdigest()
+                    with open(p, "rb") as fh:
+                        content_hash = hashlib.sha256(fh.read(MAX_READ_BYTES)).hexdigest()
                 except OSError:
                     continue
                 if hashes.get(rel) == content_hash:
@@ -698,6 +755,28 @@ class CodeBoneService:
             return
         with self._lock:
             self.storage.remove_file(rel)
+
+
+ASSET_CATEGORIES = {
+    ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image", ".ico": "image", ".icns": "image",
+    ".svg": "image", ".webp": "image", ".bmp": "image", ".tiff": "image", ".psd": "image",
+    ".mp4": "video", ".mov": "video", ".avi": "video", ".mkv": "video", ".webm": "video",
+    ".mp3": "audio", ".wav": "audio", ".flac": "audio", ".ogg": "audio", ".aac": "audio",
+    ".zip": "archive", ".tar": "archive", ".gz": "archive", ".7z": "archive", ".rar": "archive",
+    ".bz2": "archive", ".xz": "archive", ".iso": "archive", ".dmg": "archive",
+    ".gguf": "model weights", ".bin": "model weights", ".safetensors": "model weights", ".onnx": "model weights",
+    ".pt": "model weights", ".pth": "model weights", ".pkl": "model weights", ".h5": "model weights", ".tflite": "model weights",
+    ".sqlite": "database", ".sqlite3": "database", ".db": "database", ".mdb": "database", ".accdb": "database",
+    ".pyc": "compiled", ".pyo": "compiled", ".class": "compiled", ".o": "compiled", ".obj": "compiled",
+    ".dylib": "compiled library", ".so": "compiled library", ".dll": "compiled library", ".exe": "executable", ".wasm": "compiled",
+    ".ttf": "font", ".otf": "font", ".woff": "font", ".woff2": "font", ".eot": "font",
+    ".pdf": "document", ".doc": "document", ".docx": "document", ".xls": "document", ".xlsx": "document",
+    ".ppt": "document", ".pptx": "document",
+}
+
+
+def _asset_category(path: Path) -> str:
+    return ASSET_CATEGORIES.get(path.suffix.lower(), "binary")
 
 
 def _parses(suffix: str, code: str) -> bool:

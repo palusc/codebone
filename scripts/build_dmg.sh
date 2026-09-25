@@ -115,13 +115,30 @@ if [[ ! -f "$DMG_FINAL" ]]; then
     -o "$DMG_FINAL" >/dev/null 2>&1
 fi
 
-# ZIP of the same bundle: consumed by the in-app updater (arm64 .zip asset) and the Homebrew formula
+# ZIP of the same bundle: consumed by the DMG's own "Applications" drag-install and the Homebrew formula
 ZIP_FINAL="$DMG_DIR/codebone-macos-arm64.zip"
 rm -f "$ZIP_FINAL"
 ditto -c -k --keepParent "$STAGING/codebone.app" "$ZIP_FINAL"
 cp "$DMG_FINAL" "$DMG_DIR/codebone-macos-arm64.dmg"
-# The in-app updater verifies the ZIP against this file (upload it with the release assets)
 (cd "$DMG_DIR" && shasum -a 256 codebone-macos-arm64.zip > codebone-macos-arm64.zip.sha256)
+
+# ─── 7. Lightweight update package (what the in-app updater actually downloads) ───
+# An already-installed copy already has a valid, checksummed copy of the bundled model on disk
+# (src/model_fetch.py checks that before ever looking at the app bundle or the network), so
+# re-shipping the ~490 MB model on every release — even a one-line code fix — is pure waste.
+# This variant is the same signed app with Contents/Resources/models stripped out and re-signed.
+echo "   Building lightweight update package (no bundled model)..."
+UPDATE_STAGING="$TMP_DIR/update-staging"
+mkdir -p "$UPDATE_STAGING"
+ditto "$STAGING/codebone.app" "$UPDATE_STAGING/codebone.app"
+rm -rf "$UPDATE_STAGING/codebone.app/Contents/Resources/models"
+xattr -cr "$UPDATE_STAGING/codebone.app" 2>/dev/null || true
+codesign --force --deep -s - "$UPDATE_STAGING/codebone.app"
+
+UPDATE_ZIP_FINAL="$DMG_DIR/codebone-macos-arm64-update.zip"
+rm -f "$UPDATE_ZIP_FINAL"
+ditto -c -k --keepParent "$UPDATE_STAGING/codebone.app" "$UPDATE_ZIP_FINAL"
+(cd "$DMG_DIR" && shasum -a 256 codebone-macos-arm64-update.zip > codebone-macos-arm64-update.zip.sha256)
 
 rm -rf "$TMP_DIR"
 
@@ -132,6 +149,7 @@ echo "   File:    $DMG_FINAL"
 echo "   Size:    $FILE_SIZE"
 echo "   Version: v${VERSION}"
 echo "   ZIP:     $ZIP_FINAL"
+echo "   Update:  $UPDATE_ZIP_FINAL ($(du -sh "$UPDATE_ZIP_FINAL" | awk '{print $1}'), no bundled model — what the in-app updater downloads)"
 echo "   Formula: set url .../v${VERSION}/codebone-macos-arm64.zip and sha256 $(shasum -a 256 "$ZIP_FINAL" | awk '{print $1}')"
 echo ""
 echo "   Upload to GitHub Releases:"

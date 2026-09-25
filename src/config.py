@@ -97,32 +97,15 @@ EXACT_WATCHED_FILENAMES = {
     "Jenkinsfile",
     "Containerfile",
     "LICENSE",
+    ".gitignore",
+    ".npmignore",
+    ".dockerignore",
 }
 
 # Strict hardcoded directories to always ignore
+OWN_DIRS = {".pug", ".codebone"}
+# Credential stores: mapped like everything else, but nothing below these is ever read (service._sniff_file)
 GLOBAL_IGNORED_DIRS = {
-    "node_modules",
-    ".next",
-    "dist",
-    "build",
-    "venv",
-    ".venv",
-    ".git",
-    ".turbo",
-    ".cache",
-    ".pytest_cache",
-    "target",
-    ".idea",
-    ".vscode",
-    "coverage",
-    ".mypy_cache",
-    ".codebone",
-    ".pug",
-    "__pycache__",
-    ".parcel-cache",
-    ".nuxt",
-    ".output",
-    # Credential stores: nothing below these is ever read
     ".ssh",
     ".aws",
     ".gnupg",
@@ -130,21 +113,14 @@ GLOBAL_IGNORED_DIRS = {
     "secrets",
 }
 
-# Strict lockfiles and OS metadata to always ignore
+# Pure OS-generated metadata, never project content (auto-regenerated, carries no code/architecture signal)
 IGNORED_FILENAMES = {
-    "package-lock.json",
-    "pnpm-lock.yaml",
-    "yarn.lock",
-    "Cargo.lock",
-    "poetry.lock",
-    "composer.lock",
-    "Gemfile.lock",
-    "bun.lockb",
     ".DS_Store",
     "Thumbs.db",
 }
 
-# Non-code, binary, media, models, compiled bytecodes, and database files
+# Legacy: no longer used to exclude files (every extension is mapped now), kept for callers that still
+# import it. See _asset_category in service.py for how these are classified instead of skipped.
 IGNORED_EXTENSIONS = {
     # Images & icons
     ".png", ".jpg", ".jpeg", ".gif", ".ico", ".icns", ".svg", ".webp", ".bmp", ".tiff", ".psd",
@@ -171,7 +147,7 @@ except ImportError:
     _HAS_PATHSPEC = False
 
 # Files above this size are generated/minified/data dumps, not architecture; reading them costs RAM and time.
-MAX_FILE_BYTES = 1_000_000
+MAX_READ_BYTES = 32_000_000
 
 # Credentials never leave the disk: a cloud brain would otherwise receive them as "source code".
 _SECRET_NAMES = {".npmrc", ".netrc", ".pypirc", ".htpasswd", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"}
@@ -201,7 +177,9 @@ def _is_secret_or_junk(name: str) -> bool:
 
 
 def load_gitignore_spec(project_path: Optional[Path]) -> Optional[object]:
-    """Compiles a pathspec GitIgnoreSpec from project's .gitignore if available."""
+    """.gitignore is deliberately NOT applied: the map must cover the whole project, gitignored files included
+    (build output, .env-style names are still dropped by the secret and vendor rules). Kept so callers stay unchanged."""
+    return None
     if not project_path or not _HAS_PATHSPEC:
         return None
     gi = Path(project_path) / ".gitignore"
@@ -233,34 +211,18 @@ def is_watched_file(
     project_path: Optional[Path] = None,
     check_exists: bool = True,
 ) -> bool:
-    """True if the path is a source, config or doc file worth indexing.
+    """True if the path belongs in the project map. Every real project file counts now — source, config,
+    docs, images, lockfiles, compiled output, dependencies — so codebone builds a complete picture of what
+    is actually on disk, secrets and all: a credential-shaped file is a node too, its content just never
+    gets read (Service._path_only). A file too large or binary to analyse as code still gets a node in the
+    map, catalogued instead of sniffed (see _asset_category / Service._catalog_asset).
 
     Cheap name/extension/ignore checks run first; the filesystem is only touched at the end. With
     check_exists=False (used for deletion events) the file does not have to exist any more."""
-    name = path.name
-    if name in IGNORED_FILENAMES or _is_secret_or_junk(name):
-        return False
-    suffix = path.suffix.lower()
-    if suffix in IGNORED_EXTENSIONS:
-        return False
-
+    # Everything is mapped: no extension list, no .gitignore, no ignored folders. The only exclusion is the app's own
+    # data folder (indexing the index would loop). Secret, binary and huge files become path-only nodes, see service.
     rel = _relative_parts(path, project_path)
-    if rel is None:
-        return False
-    dirs = rel[:-1]
-    if any(d in GLOBAL_IGNORED_DIRS for d in dirs):
-        return False
-    if ignore_dirs and any(d in ignore_dirs for d in dirs):
-        return False
-    if gitignore_spec and project_path:
-        try:
-            if gitignore_spec.match_file("/".join(rel)):
-                return False
-        except Exception:
-            pass
-
-    exts = extensions if extensions is not None else set(DEFAULT_WATCHED_EXTENSIONS)
-    if name not in EXACT_WATCHED_FILENAMES and suffix not in exts:
+    if rel is None or any(d in OWN_DIRS for d in rel[:-1]):
         return False
 
     if not check_exists:
@@ -268,12 +230,11 @@ def is_watched_file(
     try:
         st = path.lstat()
         if stat.S_ISLNK(st.st_mode):
-            # Symlink jail: a link may not lead outside the project folder
+            # Symlink jail: a link may not lead outside the project folder. A link to a secret file
+            # is still a node — its content is never read, see service._sniff_file.
             target = path.resolve()
             if project_path and not target.is_relative_to(project_path.resolve()):
                 return False
-            if _is_secret_or_junk(target.name) or target.suffix.lower() in IGNORED_EXTENSIONS:
-                return False  # a harmless-looking link must not smuggle in a secret file
             return target.is_file()
         return stat.S_ISREG(st.st_mode)
     except (OSError, ValueError):
@@ -285,27 +246,30 @@ def list_watched_files(
     extensions: Optional[set[str]] = None,
     ignore_dirs: Optional[set[str]] = None,
     gitignore_spec: Optional[object] = None,
+    unreadable_dirs: Optional[list] = None,
 ) -> list[Path]:
     """All indexable files below project_path. Ignored directories are pruned instead of walked (a node_modules
     tree used to be traversed and stat'ed file by file). Raises OSError if the root itself cannot be listed, so
-    callers can tell "empty project" from "folder unreadable" and never wipe an index because of the latter."""
+    callers can tell "empty project" from "folder unreadable" and never wipe an index because of the latter.
+
+    A subdirectory that can't be listed (permissions, a broken mount) is skipped by os.walk without raising —
+    by default that failure is completely silent, and files under it just vanish from the count with no sign
+    anything went wrong. Pass unreadable_dirs to collect those paths instead of losing them quietly."""
     root = Path(project_path)
     os.listdir(root)
     found: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        rel_dir = os.path.relpath(dirpath, root)
-        prefix = "" if rel_dir == "." else rel_dir + "/"
+
+    def _onerror(exc: OSError):
+        path = getattr(exc, "filename", None) or str(exc)
+        logger.warning("Skipping unreadable directory while scanning %s: %s (%s)", root, path, exc)
+        if unreadable_dirs is not None:
+            unreadable_dirs.append(path)
+
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=_onerror):
         keep = []
         for d in dirnames:
-            if d in GLOBAL_IGNORED_DIRS or (ignore_dirs and d in ignore_dirs):
-                continue
-            if gitignore_spec:
-                try:
-                    if gitignore_spec.match_file(prefix + d + "/"):
-                        continue
-                except Exception:
-                    pass
-            keep.append(d)
+            if d not in OWN_DIRS:
+                keep.append(d)
         dirnames[:] = keep
         for f in filenames:
             p = Path(dirpath, f)
@@ -337,16 +301,22 @@ DEFAULTS = {
     "server_port": 8053,
     "known_models": [{"name": BASE_MODEL_NAME, "path": BASE_MODEL_PATH}],
     "model_path": BASE_MODEL_PATH,
-    "ignore_dirs": list(GLOBAL_IGNORED_DIRS),
+    "ignore_dirs": [],
     "watched_extensions": DEFAULT_WATCHED_EXTENSIONS,
     "brain_provider": "builtin",  # "builtin" | "local_url" | "cloud"
     "brain_local_url": "http://localhost:11434/api/generate",
-    "brain_cloud_vendor": "openai",  # "openai" | "anthropic"
+    "brain_cloud_vendor": "openai",  # "openai" | "anthropic" | "openrouter"
     "brain_cloud_api_key": "",
     "brain_cloud_model": "gpt-6",
     "deep_scan_model_path": None,
     "recent_projects": [],
     "first_run_at": None,
+    "modules": [],
+    "module_selected": None,
+    "module_apps": {},
+    "module_backups": {},
+    "modules_enabled": False,
+    "modules_paused_apps": [],
 }
 
 
@@ -534,12 +504,7 @@ class Config:
         self.save()
 
     def get_ignore_dirs(self, project_path: Optional[Path] = None) -> set[str]:
-        """Directory names that are never indexed. .gitignore rules are applied separately through load_gitignore_spec."""
-        base_ignores = set(self.data.get("ignore_dirs", []))
-        # Ensure standard dependencies, caches, and build targets are always protected
-        base_ignores.update({
-            ".git", "node_modules", ".venv", "venv", "__pycache__", "build",
-            "dist", ".codebone", ".pug", ".next", ".turbo", "target", ".cache", ".idea",
-            ".vscode", "coverage", ".pytest_cache", ".mypy_cache"
-        })
-        return base_ignores
+        """Directory names that are never indexed. .gitignore rules are applied separately through
+        load_gitignore_spec. Nothing is excluded any more — saved ignore lists from older versions are
+        ignored too — except codebone's own data folder, which would otherwise index its own index."""
+        return {".codebone", ".pug"}

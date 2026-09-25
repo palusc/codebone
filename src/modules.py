@@ -15,6 +15,8 @@ import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from .bridge_common import bridge_path
+
 KEYCHAIN_SERVICE = "codebone-module"
 # Settings this module owns while a module is on. apiKeyHelper is also what marks the change as ours.
 ENV_KEYS = ("ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL")
@@ -23,6 +25,8 @@ OWNED_KEYS = ENV_KEYS + ("apiKeyHelper",)
 PRESETS = [
     {"name": "MiMo V2.6 Pro (Xiaomi)", "model": "mimo-v2.6-pro",
      "anthropic_url": "https://api.xiaomimimo.com/anthropic", "openai_url": "https://api.xiaomimimo.com/v1"},
+    {"name": "OpenRouter", "model": "openai/gpt-4o-mini",
+     "openai_url": "https://openrouter.ai/api/v1"},
 ]
 
 # app id -> (menu name, API format the app needs)
@@ -89,16 +93,25 @@ def _is_ours(data: dict) -> bool:
     return KEYCHAIN_SERVICE in str(data.get("apiKeyHelper", ""))
 
 
-def _url(module: dict, fmt: str) -> Optional[str]:
-    return module.get(f"{fmt}_url") or (module.get("base_url") if fmt == "anthropic" else None)
+def _url(module: dict, fmt: str, port: Optional[int] = None) -> Optional[str]:
+    direct = module.get(f"{fmt}_url") or (module.get("base_url") if fmt == "anthropic" else None)
+    if direct:
+        return direct
+    # No Anthropic-format URL of its own (e.g. OpenRouter): route Claude Code through the local
+    # translation bridge instead, which speaks Anthropic on one side and this module's OpenAI-format
+    # URL on the other. Needs a live codebone server, so it's unavailable until one is known.
+    if fmt == "anthropic" and module.get("openai_url") and port:
+        return f"http://127.0.0.1:{port}{bridge_path(module['openai_url'], module['model'])}"
+    return None
 
 
-def supports(module: dict, app_id: str) -> bool:
-    return bool(_url(module, APPS[app_id][1]))
+def supports(module: dict, app_id: str, port: Optional[int] = None) -> bool:
+    return bool(_url(module, APPS[app_id][1], port))
 
 
 # ── Claude Code ──────────────────────────────────────────────────────────────
-def apply_claude(module: dict, previous: Optional[dict] = None, home: Optional[Path] = None) -> dict:
+def apply_claude(module: dict, previous: Optional[dict] = None, home: Optional[Path] = None,
+                 port: Optional[int] = None) -> dict:
     """Route Claude Code through `module`. Returns the backup (previous values of every key touched)."""
     path = settings_path(home)
     data = _read(path)
@@ -107,7 +120,7 @@ def apply_claude(module: dict, previous: Optional[dict] = None, home: Optional[P
         previous = {k: env.get(k) for k in ENV_KEYS}
         previous["apiKeyHelper"] = data.get("apiKeyHelper")
     env = dict(env)
-    env["ANTHROPIC_BASE_URL"] = _url(module, "anthropic")
+    env["ANTHROPIC_BASE_URL"] = _url(module, "anthropic", port)
     env["ANTHROPIC_MODEL"] = module["model"]
     env["ANTHROPIC_SMALL_FAST_MODEL"] = module["model"]
     data["env"] = env
@@ -258,11 +271,15 @@ def add_module(config, name: str, model: str, key: str, anthropic_url: str = "",
     return module
 
 
+def _port(config) -> Optional[int]:
+    return config.get("active_port") or config.get("server_port", 8053)
+
+
 def _apply(config, app_id: str, module: dict, home, keychain) -> None:
     backups = dict(config.get("module_backups") or {})
     previous = backups.get(app_id) if app_id in enabled_apps(config) else None
     if app_id == "claude-code":
-        backups[app_id] = apply_claude(module, previous, home)
+        backups[app_id] = apply_claude(module, previous, home, _port(config))
     else:
         key = (keychain or Keychain()).get(module["id"])
         if not key:
@@ -279,8 +296,11 @@ def set_app_enabled(config, app_id: str, on: bool, home: Optional[Path] = None,
     apps = dict(config.get("module_apps") or {})
     backups = dict(config.get("module_backups") or {})
     if not on:
-        if apps.get(app_id):
-            (restore_settings if app_id == "claude-code" else restore_opencode)(backups.get(app_id), home)
+        # Always attempt the restore, even if our own bookkeeping says this app is already off:
+        # a crash, a config desync, or a manual edit can leave settings.json pointing at a module
+        # while codebone believes it already put things back. Restoring is a no-op when the
+        # settings file is not ours (restore_settings/restore_opencode check that themselves).
+        (restore_settings if app_id == "claude-code" else restore_opencode)(backups.get(app_id), home)
         apps[app_id] = False
         backups.pop(app_id, None)
         config.set("module_backups", backups)
@@ -289,7 +309,7 @@ def set_app_enabled(config, app_id: str, on: bool, home: Optional[Path] = None,
     module = get_module(config, config.get("module_selected"))
     if not module:
         raise ValueError("Add and select a module first.")
-    if not supports(module, app_id):
+    if not supports(module, app_id, _port(config)):
         raise ValueError(f"{module['name']} has no {FORMAT_NAMES[APPS[app_id][1]]}-format URL, which {APPS[app_id][0]} needs.")
     _apply(config, app_id, module, home, keychain)
     apps[app_id] = True
@@ -304,7 +324,7 @@ def select_module(config, module_id: str, home: Optional[Path] = None, keychain:
         raise ValueError("Unknown module")
     config.set("module_selected", module_id)
     for app_id in enabled_apps(config):
-        set_app_enabled(config, app_id, supports(module, app_id), home=home, keychain=keychain)
+        set_app_enabled(config, app_id, supports(module, app_id, _port(config)), home=home, keychain=keychain)
 
 
 def remove_module(config, module_id: str, home: Optional[Path] = None, keychain: Optional[Keychain] = None) -> None:
@@ -314,6 +334,82 @@ def remove_module(config, module_id: str, home: Optional[Path] = None, keychain:
         config.set("module_selected", None)
     (keychain or Keychain()).delete(module_id)
     config.set("modules", [m for m in list_modules(config) if m["id"] != module_id])
+
+
+# ── master switch & recovery ───────────────────────────────────────────────────
+def force_restore_all(config, home: Optional[Path] = None) -> None:
+    """Unconditional recovery: strip every setting codebone's modules could have written, for every app,
+    whether or not our own bookkeeping (module_apps / module_backups) still agrees that anything is on.
+    This is the fix for a coding app stuck on a module's API (e.g. showing API errors) after codebone's
+    normal off-switch failed to catch it — it never trusts local state, only what's actually on disk."""
+    path = settings_path(home)
+    if path.exists():
+        try:
+            data = _read(path)
+            if _is_ours(data):
+                env = dict(data.get("env")) if isinstance(data.get("env"), dict) else {}
+                for k in ENV_KEYS:
+                    env.pop(k, None)
+                if env:
+                    data["env"] = env
+                else:
+                    data.pop("env", None)
+                data.pop("apiKeyHelper", None)
+                if data:
+                    _write(path, data)
+                else:
+                    path.unlink()
+        except SettingsUnreadable:
+            pass
+
+    op_path = opencode_path(home)
+    if op_path.exists():
+        try:
+            data = _read(op_path)
+            if _opencode_ours(data):
+                prov = dict(data.get("provider") or {})
+                entry = prov.pop(OPENCODE_PROVIDER, None)
+                if isinstance(entry, dict):
+                    kf = entry.get("options", {}).get("apiKey", "")
+                    target = kf[len("{file:"):-1] if kf.startswith("{file:") and kf.endswith("}") else ""
+                    if target and "codebone/keys" in target:
+                        Path(target).unlink(missing_ok=True)
+                if prov:
+                    data["provider"] = prov
+                else:
+                    data.pop("provider", None)
+                if str(data.get("model", "")).startswith(f"{OPENCODE_PROVIDER}/"):
+                    data.pop("model", None)
+                if data:
+                    _write(op_path, data)
+                else:
+                    op_path.unlink()
+        except SettingsUnreadable:
+            pass
+
+    config.set("module_apps", {})
+    config.set("module_backups", {})
+    config.set("modules_enabled", False)
+    config.set("modules_paused_apps", [])
+
+
+def set_modules_master(config, on: bool, home: Optional[Path] = None, keychain: Optional[Keychain] = None) -> None:
+    """The single on/off switch for Modules. Off = every app goes back to its normal setup and stays there;
+    codebone remembers which apps were routed so turning it back on restores exactly that."""
+    if not on:
+        active = enabled_apps(config)
+        for app_id in active:
+            set_app_enabled(config, app_id, False, home=home, keychain=keychain)
+        config.set("modules_paused_apps", active)
+        config.set("modules_enabled", False)
+        return
+    config.set("modules_enabled", True)
+    for app_id in config.get("modules_paused_apps") or []:
+        try:
+            set_app_enabled(config, app_id, True, home=home, keychain=keychain)
+        except (ValueError, SettingsUnreadable):
+            pass
+    config.set("modules_paused_apps", [])
 
 
 # ── connection test ──────────────────────────────────────────────────────────
@@ -334,7 +430,10 @@ def test_connection(base_url: str, model: str, key: str, timeout: float = 20.0, 
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return (200 <= resp.status < 300), f"HTTP {resp.status}"
     except urllib.error.HTTPError as exc:
-        text = exc.read()[:160].decode("utf-8", "replace")
+        try:
+            text = exc.read()[:160].decode("utf-8", "replace")
+        except OSError:  # server may reset the connection while the error body is read
+            text = ""
         if exc.code in (401, 403):
             return False, "The endpoint rejected the API key."
         return False, f"HTTP {exc.code}: {text}"

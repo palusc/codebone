@@ -1035,34 +1035,44 @@ function buildGraph(graph, fit) {
   const previous = nodeById;
   const files = graph.files || {};
   const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
-  // Object.create(null): a domain called "constructor" or "toString" must be an ordinary key
-  const domainFiles = Object.create(null), tables = new Set(), routes = new Set(), events = new Set();
+  const tables = new Set(), routes = new Set(), events = new Set();
   for (const path of graph.nodes) {
     const f = Object.prototype.hasOwnProperty.call(files, path) ? files[path] : {};
-    (f.domains || []).forEach(d => (domainFiles[d] = domainFiles[d] || []).push(path));
     (f.tables || []).forEach(t => tables.add(t));
     (f.routes || []).forEach(r => routes.add(r));
     (f.events || []).forEach(e => events.add(e));
   }
 
+  // Hub nodes come from server-side modularity clustering over the shared-entity graph
+  // (Storage.communities()), not a fixed bucket per domain keyword: files land in the same
+  // cluster because the graph actually connects them, directly or through a chain of shared
+  // tables/routes/events/domains. A community of exactly one file is just a regular node —
+  // no hub for something with nothing to be a hub of.
+  const communities = (graph.communities || []).filter(c => c.files.length > 1);
+
   const map = Object.create(null);
-  const domains = Object.keys(domainFiles).sort();
-  domains.forEach((d, i) => {
-    const id = 'domain:' + d, old = previous[id];
-    const angle = (2 * Math.PI * i) / (domains.length || 1), r = Math.min(cx, cy) * 0.35;
+  // Start on a jittered grid, not a circle: a circle packs every node within a few pixels of its
+  // neighbours on large projects, which makes the repulsion pass O(N^2) and blows the layout up.
+  const gridPos = (i, n) => {
+    const cols = Math.max(1, Math.ceil(Math.sqrt(n))), rows = Math.ceil(n / cols), sp = 60;
+    return {
+      x: cx + ((i % cols) - (cols - 1) / 2) * sp + (Math.random() - 0.5) * 24,
+      y: cy + (Math.floor(i / cols) - (rows - 1) / 2) * sp + (Math.random() - 0.5) * 24,
+    };
+  };
+  communities.forEach((c, i) => {
+    const id = 'domain:' + c.id, old = previous[id], p = gridPos(i, communities.length);
     map[id] = {
-      id, label: d, type: 'domain', radius: COLOR_MAP.domain.radius, vx: 0, vy: 0,
-      x: old ? old.x : cx + Math.cos(angle) * r, y: old ? old.y : cy + Math.sin(angle) * r,
-      data: { domains: [d], summary: 'Domain spanning ' + domainFiles[d].length + ' modules.' },
+      id, label: c.label, type: 'domain', radius: COLOR_MAP.domain.radius, vx: 0, vy: 0,
+      x: old ? old.x : p.x, y: old ? old.y : p.y,
+      data: { domains: [c.label], summary: 'Cluster of ' + c.files.length + ' files around ' + c.label + '.' },
     };
   });
   graph.nodes.forEach((path, i) => {
-    const id = 'file:' + path, old = previous[id];
-    const angle = (2 * Math.PI * i) / (graph.nodes.length || 1), r = Math.min(cx, cy) * 0.65;
+    const id = 'file:' + path, old = previous[id], p = gridPos(i, graph.nodes.length);
     map[id] = {
       id, label: path.split('/').pop(), path, type: 'file', radius: COLOR_MAP.file.radius, vx: 0, vy: 0,
-      x: old ? old.x : cx + Math.cos(angle) * r + (Math.random() - 0.5) * 60,
-      y: old ? old.y : cy + Math.sin(angle) * r + (Math.random() - 0.5) * 60,
+      x: old ? old.x : p.x, y: old ? old.y : p.y,
       data: Object.prototype.hasOwnProperty.call(files, path) ? files[path] : {},
     };
   });
@@ -1075,12 +1085,12 @@ function buildGraph(graph, fit) {
     if (a && b) list.push({ a, b, from, to, type, entity });
   };
   (graph.edges || []).forEach(e => push('file:' + e.from, 'file:' + e.to, e.type, e.entity));
-  domains.forEach(d => domainFiles[d].forEach(p => push('domain:' + d, 'file:' + p, 'domain', d)));
+  communities.forEach(c => c.files.forEach(p => push('domain:' + c.id, 'file:' + p, 'domain', c.label)));
   edges = list;
 
   $('count-all').textContent = nodes.length;
   $('count-files').textContent = graph.nodes.length;
-  $('count-domains').textContent = domains.length;
+  $('count-domains').textContent = communities.length;
   $('count-tables').textContent = tables.size;
   $('count-routes').textContent = routes.size;
   $('count-events').textContent = events.size;
@@ -1136,7 +1146,13 @@ function runForceLayout(ticks) {
       a.vx += (dx / dist) * f; a.vy += (dy / dist) * f;
       b.vx -= (dx / dist) * f; b.vy -= (dy / dist) * f;
     }
-    for (const n of nodes) { n.x += n.vx; n.y += n.vy; }
+    for (const n of nodes) {
+      // Cap per-tick speed: the 1/d² repulsion is unbounded for overlapping nodes, and without
+      // this a dense start integrates into astronomically large coordinates (nothing renders).
+      const sp = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
+      if (sp > 50) { n.vx *= 50 / sp; n.vy *= 50 / sp; }
+      n.x += n.vx; n.y += n.vy;
+    }
   }
 }
 
@@ -1148,7 +1164,7 @@ function nodeMatches(n) {
   }
   if (!searchQuery) return true;
   const d = n.data || {};
-  const hay = [n.label, n.path || '', d.summary || '', (d.tables || []).join(' '), (d.routes || []).join(' '), (d.events || []).join(' ')].join(' ').toLowerCase();
+  const hay = [n.label, n.path || '', d.summary || '', d.content || '', (d.tables || []).join(' '), (d.routes || []).join(' '), (d.events || []).join(' ')].join(' ').toLowerCase();
   return hay.includes(searchQuery);
 }
 
@@ -1172,12 +1188,20 @@ function draw() {
     ctx.lineTo(b.x, b.y);
     if (e.type === 'domain') {
       ctx.setLineDash([4, 4]);
-      ctx.strokeStyle = hot ? 'rgba(139, 92, 246, 0.85)' : 'rgba(139, 92, 246, 0.18)';
-      ctx.lineWidth = hot ? 2 : 1;
+      ctx.strokeStyle = hot ? 'rgba(167, 139, 250, 0.95)' : 'rgba(167, 139, 250, 0.55)';
+      ctx.lineWidth = hot ? 2.2 : 1.4;
+    } else if (e.type === 'import') {
+      ctx.setLineDash([2, 3]);
+      ctx.strokeStyle = hot ? 'rgba(203, 213, 225, 0.95)' : 'rgba(148, 163, 184, 0.4)';
+      ctx.lineWidth = hot ? 1.8 : 1.1;
+    } else if (e.type === 'call') {
+      ctx.setLineDash([]);
+      ctx.strokeStyle = hot ? 'rgba(74, 222, 128, 0.95)' : 'rgba(74, 222, 128, 0.55)';
+      ctx.lineWidth = hot ? 2 : 1.4;
     } else {
       ctx.setLineDash([]);
-      ctx.strokeStyle = hot ? 'rgba(56, 189, 248, 0.8)' : 'rgba(100, 116, 139, 0.22)';
-      ctx.lineWidth = hot ? 2 : 1.2;
+      ctx.strokeStyle = hot ? 'rgba(56, 189, 248, 0.8)' : 'rgba(148, 163, 184, 0.5)';
+      ctx.lineWidth = hot ? 2 : 1.4;
     }
     ctx.stroke();
   }
@@ -1293,7 +1317,7 @@ function updateTooltip(sx, sy, node) {
   type.style.background = cfg.aura;
   type.style.color = cfg.stroke;
   $('tt-title').textContent = node.label;
-  const summary = (node.data && node.data.summary) || 'No summary available.';
+  const summary = (node.data && (node.data.summary || node.data.content)) || 'No summary available.';
   $('tt-summary').textContent = summary.length > 90 ? summary.slice(0, 88) + '…' : summary;
   tooltipEl.style.left = Math.min(window.innerWidth - 300, sx + 14) + 'px';
   tooltipEl.style.top = Math.min(window.innerHeight - 100, sy + 14) + 'px';
@@ -1318,7 +1342,7 @@ function selectNode(n, keepView) {
   pill.textContent = n.type;
   pill.style.background = cfg.aura;
   pill.style.color = cfg.stroke;
-  $('sb-summary').textContent = (n.data && n.data.summary) || 'No architectural summary indexed for this module.';
+  $('sb-summary').textContent = (n.data && (n.data.summary || n.data.content)) || 'No architectural summary indexed for this module.';
 
   const chips = $('sb-entities');
   chips.replaceChildren();

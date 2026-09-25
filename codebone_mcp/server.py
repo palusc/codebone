@@ -120,8 +120,8 @@ def codebone_context(format: str = "markdown", domain: str = "", file: str = "",
 
 @mcp.tool()
 def codebone_graph(file: str = "") -> str:
-    """Files linked through shared tables, routes or events (connections imports do not show). With file="x":
-    the links of that file; without: the most connected files."""
+    """Files linked through shared tables, routes or events, plus file imports and fetch->API calls.
+    With file="x": the links of that file; without: the most connected files."""
     return _get("/codebone/links", {"file": file} if file else None)
 
 

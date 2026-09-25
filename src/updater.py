@@ -25,6 +25,38 @@ from . import __version__
 CURRENT_VERSION = __version__  # single source of truth: src/__init__.py
 
 
+def clean_release_notes(text: str) -> str:
+    """Plain-text version of a release body for a non-Markdown alert dialog: drops headers' '#', turns
+    '-'/'*' bullets into '•', strips bold/link markup and GitHub's own auto-generated boilerplate
+    ('## What's Changed', 'Full Changelog: ...', '* ... by @user in <url>')."""
+    if not text:
+        return ""
+    lines = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            lines.append("")
+            continue
+        if re.match(r"^\*\*full changelog\*\*", line, re.IGNORECASE) or line.lower().startswith("full changelog"):
+            continue
+        if re.fullmatch(r"[-*_]{3,}", line):  # markdown horizontal rule
+            continue
+        line = re.sub(r"^#{1,6}\s*", "", line)
+        line = re.sub(r"^[-*]\s+", "• ", line)
+        line = re.sub(r"\bby @[\w-]+ in https://\S+", "", line)
+        line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)
+        line = re.sub(r"`([^`]+)`", r"\1", line)
+        line = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", line)
+        line = line.rstrip()
+        if line or lines and lines[-1] != "":
+            lines.append(line)
+    # collapse runs of blank lines and trailing separators ("---")
+    cleaned = "\n".join(lines).strip()
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r"\n?-{3,}\s*$", "", cleaned).strip()
+    return cleaned
+
+
 def parse_version(v_str: str) -> Tuple[int, ...]:
     """Parses a version string like 'v1.2.0' or '1.2.3-beta' into an integer tuple for comparison."""
     clean = re.sub(r"^[vV]", "", (v_str or "").strip())
@@ -82,21 +114,35 @@ def check_for_updates(current_version: str = CURRENT_VERSION, timeout: int = 8) 
 
     update_available = latest_tuple > curr_tuple
 
-    # Find the ARM64 ZIP asset
+    # Find the update ZIP asset. "-update.zip" is a lightweight variant with the bundled base model
+    # stripped out (an already-installed copy already has a valid, checksummed copy of it on disk —
+    # see src/model_fetch.py — so re-downloading ~490 MB of unchanged model for a one-line code fix
+    # is pure waste); it's preferred whenever a release has one, with the full "arm64.zip" as a
+    # fallback for older releases published before this existed.
     download_url = None
     asset_size = 0
     checksum_url = None
-    for asset in data.get("assets", []):
+    assets = data.get("assets", [])
+    for asset in assets:
         name = asset.get("name", "").lower()
-        if "arm64" in name and name.endswith(".zip"):
+        if "arm64" in name and name.endswith("-update.zip"):
             download_url = asset.get("browser_download_url")
             asset_size = asset.get("size", 0)
-            sums = [a.get("browser_download_url") for a in data.get("assets", []) if a.get("name", "").lower() == name + ".sha256"]
+            sums = [a.get("browser_download_url") for a in assets if a.get("name", "").lower() == name + ".sha256"]
             checksum_url = sums[0] if sums else None
             break
-        elif name.endswith(".zip") and not download_url:
-            download_url = asset.get("browser_download_url")
-            asset_size = asset.get("size", 0)
+    if not download_url:
+        for asset in assets:
+            name = asset.get("name", "").lower()
+            if "arm64" in name and name.endswith(".zip"):
+                download_url = asset.get("browser_download_url")
+                asset_size = asset.get("size", 0)
+                sums = [a.get("browser_download_url") for a in assets if a.get("name", "").lower() == name + ".sha256"]
+                checksum_url = sums[0] if sums else None
+                break
+            elif name.endswith(".zip") and not download_url:
+                download_url = asset.get("browser_download_url")
+                asset_size = asset.get("size", 0)
 
     # Fallback to DMG if zip is not present
     if not download_url:
@@ -112,7 +158,7 @@ def check_for_updates(current_version: str = CURRENT_VERSION, timeout: int = 8) 
         "latest_version": latest_ver_str or current_version,
         "current_version": current_version,
         "release_name": data.get("name", f"codebone v{latest_ver_str}"),
-        "release_notes": data.get("body", ""),
+        "release_notes": clean_release_notes(data.get("body", "")),
         "download_url": download_url,
         "checksum_url": checksum_url,
         "asset_size": asset_size,

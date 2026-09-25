@@ -15,7 +15,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
-from . import context_format
+from . import anthropic_bridge, context_format
 from .config import find_free_port
 from .feedback import list_recent_feedback, record_feedback
 from .graph_ui import build_live_graph_html
@@ -222,7 +222,8 @@ def create_app(service: CodeBoneService, allowed_hosts: Optional[set] = None) ->
             return Response(content=msg, media_type="text/plain")
 
         storage = service.storage
-        files, index, name = storage.all_files(), storage.entity_index(), project_name()
+        files, index = storage.view()
+        name = project_name()
         domain, file, query = domain.strip(), file.strip(), query.strip()
         filtered = bool(domain or file or query)
 
@@ -239,19 +240,27 @@ def create_app(service: CodeBoneService, allowed_hosts: Optional[set] = None) ->
         if not service.config.is_configured:
             return Response(content="codebone is not configured yet.", media_type="text/plain")
         storage = service.storage
-        text = context_format.links(project_name(), storage.all_files(), storage.entity_index(), file.strip())
+        files, index = storage.view()
+        text = context_format.links(project_name(), files, index, file.strip(), facts=storage.source_facts())
         return Response(content=text, media_type="text/markdown; charset=utf-8")
 
     @app.get("/codebone/graph")
     @app.get("/pug/graph")
     def graph():
         storage = service.storage
-        all_files = storage.all_files()
+        all_files = storage.view()[0]
+        communities = storage.communities()
         return {
             "revision": storage.revision,
             "nodes": [f["path"] for f in all_files],
             "files": {f["path"]: f for f in all_files},
             "edges": storage.graph_edges(),
+            # Real graph structure (modularity clustering over shared tables/routes/events/domains),
+            # not a fixed bucket per domain keyword — see Storage.communities().
+            "communities": [
+                {"id": cid, "label": label, "files": communities[cid]}
+                for cid, label in storage.community_labels(communities).items()
+            ],
         }
 
     @app.get("/codebone/graph/ui", response_class=Response)
@@ -351,7 +360,7 @@ def create_app(service: CodeBoneService, allowed_hosts: Optional[set] = None) ->
             "project": str(service.config.project_path) if service.config.project_path else "none",
             "brain_provider": service.config.get("brain_provider"),
             "file_count": service.storage.file_count() if service.config.is_configured else 0,
-            "connection_count": len(service.storage.graph_edges()) if service.config.is_configured else 0,
+            "connection_count": len(service.storage.graph_edges(include_domains=True)) if service.config.is_configured else 0,
         }
         return record_feedback(
             feedback_type=f_type,
@@ -376,6 +385,8 @@ def create_app(service: CodeBoneService, allowed_hosts: Optional[set] = None) ->
         if service.config.is_configured:
             threading.Thread(target=service.rescan_all, daemon=True, name="codebone-api-reset-rescan").start()
         return {"status": "reset", "message": "Knowledge graph reset and re-indexing initiated."}
+
+    anthropic_bridge.register(app, service.config)
 
     return app
 

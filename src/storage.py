@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .imports import source_facts as _source_facts
 from .prompts import _clean_entity_list, parse_analysis, sanitize_text
 
 logger = logging.getLogger("codebone.storage")
@@ -131,6 +132,7 @@ class Storage:
                 (key, value),
             )
             self._conn.commit()
+            self._touch()  # project_path gates the derived views; a cached empty one must not outlive the bind
 
     # ── writes ───────────────────────────────────────────────────────────
     def _upsert(self, path, tables, routes, events, domains, summary, updated_at, mtime, content_hash, source):
@@ -323,12 +325,64 @@ class Storage:
         return self._build_index([f for f in self.all_files() if f["path"] in allowed_paths])
 
     def graph_edges(self, index: Optional[dict] = None, include_domains: bool = False) -> List[dict]:
-        """Files are logically connected if they share a DB table, API route or event (and optionally a domain).
-        Pairwise domain edges are opt-in: the live graph already draws domain hub nodes, so they are noise (and
-        quadratic). Links per entity are windowed and the total is capped, see MAX_EDGES."""
+        """Files are logically connected if they share a DB table, API route or event (and optionally a domain),
+        plus the import and fetch->route edges derived from the sources at read time. Pairwise domain edges are
+        opt-in: the live graph already draws domain hub nodes, so they are noise (and quadratic). Links per
+        entity are windowed and the total is capped, see MAX_EDGES."""
         if index is None:
-            return self._cached(("edges", include_domains), lambda: self._compute_edges(self.entity_index(), include_domains))
+            def build():
+                facts = self.source_facts()
+                return (self._compute_edges(self.view()[1], include_domains)
+                        + facts.get("imports", []) + facts.get("calls", []))
+            return self._cached(("edges", include_domains), build)
         return self._compute_edges(index, include_domains)
+
+    def source_facts(self) -> dict:
+        """Import/call edges, derived tables/routes, roles and content records, read from the project
+        files under project_path. {} without a root, so entity-less fixtures keep yielding no edges."""
+        root = self.get_meta("project_path")
+        if not root:
+            return {}
+
+        def build():
+            files = self.all_files()
+            empty = {f["path"] for f in files if not (f.get("summary") or "").strip()}
+            return _source_facts(root, [f["path"] for f in files], empty)
+        return self._cached("facts", build)
+
+    def view(self) -> tuple:
+        """(files, index) with the read-time facts folded into each row: derived tables/routes unioned
+        with the stored ones, plus calls/content/role. Treat the rows as read-only — they are a view,
+        never written back."""
+        return self._cached("view", self._build_view)
+
+    def _build_view(self) -> tuple:
+        facts = self.source_facts()
+        if not facts:
+            files = self.all_files()
+            return files, self._build_index(files)
+        calls_by: Dict[str, list] = {}
+        for e in facts["calls"]:
+            calls_by.setdefault(e["from"], []).append([e["entity"], e["to"]])
+        files = [self._annotate(f, facts, calls_by) for f in self.all_files()]
+        return files, self._build_index(files)
+
+    @staticmethod
+    def _annotate(row: dict, facts: dict, calls_by: dict) -> dict:
+        p = row["path"]
+        out = dict(row)
+        derived = facts["tables"].get(p)
+        if derived:
+            # stored DDL entities for .sql are the known-corrupt ones ('public' phantom); the
+            # schema-aware read-time list replaces them instead of unioning
+            out["tables"] = list(derived) if p.endswith(".sql") else list(dict.fromkeys(row["tables"] + derived))
+        routes = facts["routes"].get(p)
+        if routes:
+            out["routes"] = list(dict.fromkeys(row["routes"] + routes))
+        out["calls"] = calls_by.get(p, [])
+        out["content"] = facts["content"].get(p, "")
+        out["role"] = facts["roles"].get(p, "")
+        return out
 
     @staticmethod
     def _compute_edges(index: dict, include_domains: bool) -> List[dict]:
@@ -346,6 +400,57 @@ class Storage:
                             return edges
                         edges.append({"from": unique[i], "to": unique[j], "type": category, "entity": entity_name})
         return edges
+
+    def communities(self) -> Dict[int, List[str]]:
+        """Groups files by running modularity-based community detection (Louvain) over the
+        table/route/event/domain co-occurrence graph, instead of one fixed bucket per domain
+        keyword: two files land in the same cluster because the graph actually connects them
+        (directly or through a chain of shared entities), not because a regex matched the same
+        word in both paths. A project with no edges yet gets one singleton community per file.
+        Community 0 is always the largest, and IDs are stable for a given graph (Louvain's own
+        seed is fixed), so this is safe to call on every request."""
+        return self._cached("communities", self._compute_communities)
+
+    def _compute_communities(self) -> Dict[int, List[str]]:
+        import networkx as nx
+
+        all_paths = sorted(f["path"] for f in self.all_files())
+        if not all_paths:
+            return {}
+        G = nx.Graph()
+        G.add_nodes_from(all_paths)
+        for e in self.graph_edges(include_domains=True):
+            if G.has_edge(e["from"], e["to"]):
+                G[e["from"]][e["to"]]["weight"] += 1
+            else:
+                G.add_edge(e["from"], e["to"], weight=1)
+        if G.number_of_edges() == 0:
+            return {i: [p] for i, p in enumerate(all_paths)}
+        raw = nx.community.louvain_communities(G, weight="weight", seed=42)
+        grouped = [sorted(c) for c in raw]
+        grouped.sort(key=lambda nodes: (-len(nodes), nodes))
+        return {i: nodes for i, nodes in enumerate(grouped)}
+
+    def community_labels(self, communities: Optional[Dict[int, List[str]]] = None) -> Dict[int, str]:
+        """Names each community after its highest-degree member (the structural hub it's built
+        around) instead of a bare number, e.g. "server.py" rather than "Community 3". A cataloged
+        asset (image, compiled binary, ...) is only picked as the hub when no analysed file in the
+        community has an edge at all — a naming placeholder for the cluster, not a competitor for
+        it. Ties break by path for determinism."""
+        communities = communities if communities is not None else self.communities()
+        degree: Dict[str, int] = {}
+        for e in self.graph_edges(include_domains=True):
+            degree[e["from"]] = degree.get(e["from"], 0) + 1
+            degree[e["to"]] = degree.get(e["to"], 0) + 1
+        is_asset = {f["path"]: f.get("source") == "asset" for f in self.all_files()}
+        labels: Dict[int, str] = {}
+        for cid, members in communities.items():
+            if not members:
+                labels[cid] = f"Community {cid}"
+                continue
+            hub = min(members, key=lambda p: (is_asset.get(p, False), -degree.get(p, 0), p))
+            labels[cid] = Path(hub).name
+        return labels
 
     def _row_to_dict(self, row) -> dict:
         def _parse(val):

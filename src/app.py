@@ -452,6 +452,24 @@ class HeaderActionDelegate(NSObject):
             self.app.view_live_graph(None)
 
 
+class ModulesSwitchDelegate(NSObject):
+    """Action delegate for the native switch on the Modules row (Tailscale-style: the switch itself
+    is the on/off control, no need to open a submenu to flip it)."""
+
+    def initWithApp_(self, app):
+        self = objc.super(ModulesSwitchDelegate, self).init()
+        if self is None:
+            return None
+        self.app = app
+        return self
+
+    @objc.IBAction
+    def switchToggled_(self, sender):
+        if not self.app:
+            return
+        self.app.set_modules_master(sender.state() == NSControlStateValueOn)
+
+
 class CodeBoneApp(rumps.App):
     def __init__(self):
         try:
@@ -499,8 +517,21 @@ class CodeBoneApp(rumps.App):
         self.recent_projects_menu = rumps.MenuItem("Recent Projects")
         _set_symbol_icon(self.recent_projects_menu, "clock.arrow.circlepath")
 
-        # Model modules: API endpoints Claude Code can be routed through (for coding, not for indexing)
-        self.modules_menu = rumps.MenuItem("Modules")
+        # Model modules: API endpoints Claude Code can be routed through (for coding, not for indexing).
+        # The on/off switch lives on its own row (self.modules_switch_item); this submenu holds the
+        # rest of the configuration (module list, per-app routing, quick links, recovery).
+        (
+            self.modules_switch_row,
+            self.modules_switch_delegate,
+            self.modules_switch,
+        ) = self._build_modules_switch_row()
+        self.modules_switch_item = rumps.MenuItem("Modules", callback=None)
+        try:
+            self.modules_switch_item._menuitem.setView_(self.modules_switch_row)
+        except Exception as exc:
+            logger.warning("Could not set custom Modules switch view: %s", exc)
+
+        self.modules_menu = rumps.MenuItem("Modules Settings")
         _set_symbol_icon(self.modules_menu, "square.stack.3d.up")
 
         # Model Selection Submenu (Dynamic active model list)
@@ -546,19 +577,37 @@ class CodeBoneApp(rumps.App):
 
         self.uninstall_item = rumps.MenuItem("Uninstall codebone...", callback=self.confirm_uninstall)
         _set_symbol_icon(self.uninstall_item, "trash")
-        self.settings_menu.update([
-            self.brain_menu,
+
+        # Settings is grouped into sub-sections so it's clear at a glance where a given
+        # setting lives, instead of one long flat list.
+        self.project_settings_menu = rumps.MenuItem("Project")
+        _set_symbol_icon(self.project_settings_menu, "folder.badge.gearshape")
+        self.project_settings_menu.update([
             self.adopt_scan_item,
             self.copy_curl_item,
             None,
             self.open_repo_item,
             self.view_logs_item,
             self.full_disk_access_item,
-            None,
-            self.check_updates_item,
+        ])
+
+        self.scan_data_menu = rumps.MenuItem("Scan Data")
+        _set_symbol_icon(self.scan_data_menu, "externaldrive")
+        self.scan_data_menu.update([
             self.export_scan_item,
             self.import_scan_item,
+            None,
             self.reset_map_item,
+        ])
+
+        self.settings_menu.update([
+            self.mcp_setup_item,
+            self.brain_menu,
+            None,
+            self.project_settings_menu,
+            self.scan_data_menu,
+            None,
+            self.check_updates_item,
             None,
             self.uninstall_item,
         ])
@@ -571,11 +620,11 @@ class CodeBoneApp(rumps.App):
 
         self.menu = [
             self.header_item,
-            self.mcp_setup_item,
-            None,
             self.rescan_item,
             self.select_project_item,
             self.recent_projects_menu,
+            None,
+            self.modules_switch_item,
             self.modules_menu,
             None,
             self.settings_menu,
@@ -671,7 +720,7 @@ class CodeBoneApp(rumps.App):
 
         # 5b. Card stats line (vertically centered, no extra subtitle below)
         init_files = self.service.storage.file_count() if self.config.is_configured else 0
-        init_edges = len(self.service.storage.graph_edges()) if self.config.is_configured else 0
+        init_edges = len(self.service.storage.graph_edges(include_domains=True)) if self.config.is_configured else 0
         stats_lbl = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(34, 7), NSSize(204, 18)))
         stats_lbl.setStringValue_(f"{init_files} Nodes  ·  {init_edges} Connections" if self.config.is_configured else "0 Nodes  ·  0 Connections")
         stats_lbl.setFont_(NSFont.systemFontOfSize_(12.0))
@@ -696,6 +745,31 @@ class CodeBoneApp(rumps.App):
 
         container.addSubview_(card)
         return container, delegate, folder_btn, status_dot, stats_lbl
+
+    def _build_modules_switch_row(self):
+        """A menu row that IS the on/off control for Modules, native-switch style (à la Tailscale's
+        toggle rows) instead of a checkmark buried inside a submenu."""
+        w, h = 276.0, 30.0
+        container = NSView.alloc().initWithFrame_(NSRect(NSPoint(0, 0), NSSize(w, h)))
+        delegate = ModulesSwitchDelegate.alloc().initWithApp_(self)
+
+        label = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(18, 6), NSSize(180, 18)))
+        label.setStringValue_("Modules")
+        label.setFont_(NSFont.systemFontOfSize_(13.5))
+        label.setTextColor_(NSColor.labelColor())
+        label.setBezeled_(False)
+        label.setDrawsBackground_(False)
+        label.setEditable_(False)
+        label.setSelectable_(False)
+        container.addSubview_(label)
+
+        switch = NSSwitch.alloc().initWithFrame_(NSRect(NSPoint(w - 52, 4), NSSize(38, 22)))
+        switch.setState_(NSControlStateValueOn if bool(self.config.get("modules_enabled")) else NSControlStateValueOff)
+        switch.setTarget_(delegate)
+        switch.setAction_(objc.selector(delegate.switchToggled_, signature=b"v@:@"))
+        container.addSubview_(switch)
+
+        return container, delegate, switch
 
     def show_about(self, _):
         """Displays comprehensive project and architecture overview."""
@@ -848,12 +922,18 @@ class CodeBoneApp(rumps.App):
                     self._on_main(self._push_stats)
 
                 total, sniffed, skipped = self.service.rescan_all(on_progress=_on_prog, wait=True)
-                conn_count = len(self.service.storage.graph_edges())
-                rumps.notification(
-                    "codebone",
-                    "Scan Complete",
-                    f"Mapped {total} files & {conn_count} connections ({sniffed} updated, {skipped} cached).",
-                )
+                conn_count = len(self.service.storage.graph_edges(include_domains=True))
+                if self.service.last_error:
+                    # A scan can "succeed" (return normally) while having silently skipped part of the
+                    # project (an unreadable subfolder, permissions) — surface that instead of reporting
+                    # a clean count that doesn't match what's actually on disk.
+                    rumps.notification("codebone", "Scan Finished with Issues", self.service.last_error)
+                else:
+                    rumps.notification(
+                        "codebone",
+                        "Scan Complete",
+                        f"Mapped {total} files & {conn_count} connections ({sniffed} updated, {skipped} cached).",
+                    )
             except Exception as exc:
                 logger.exception("Rescan failed")
                 rumps.notification("codebone", "Rescan Failed", str(exc))
@@ -934,6 +1014,8 @@ class CodeBoneApp(rumps.App):
 
         # Settings submenu items
         _set_symbol_icon(self.brain_menu, "brain")
+        _set_symbol_icon(self.project_settings_menu, "folder.badge.gearshape")
+        _set_symbol_icon(self.scan_data_menu, "externaldrive")
         _set_symbol_icon(self.adopt_scan_item, "link")
         _set_symbol_icon(self.copy_curl_item, "doc.on.clipboard")
         _set_symbol_icon(self.open_repo_item, "folder")
@@ -959,6 +1041,7 @@ class CodeBoneApp(rumps.App):
         self._update_recent_projects_menu()
         self._update_brain_checks()
         self._update_modules_menu()
+        self._sync_modules_switch()
         self._push_stats()
 
     @staticmethod
@@ -1101,17 +1184,21 @@ class CodeBoneApp(rumps.App):
             self.modules_menu.clear()
         library = modules.list_modules(self.config)
         selected = modules.get_module(self.config, self.config.get("module_selected"))
+        master_on = bool(self.config.get("modules_enabled"))
         active = set(modules.enabled_apps(self.config))
 
         for m in library:  # which model
-            item = rumps.MenuItem(m["name"], callback=lambda _, mid=m["id"]: self.pick_module(mid))
+            item = rumps.MenuItem(m["name"], callback=(lambda _, mid=m["id"]: self.pick_module(mid)) if master_on else None)
             item.state = bool(selected and selected["id"] == m["id"])
             self.modules_menu.add(item)
         if library:
             self.modules_menu.add(None)
             for app_id, (label, fmt) in modules.APPS.items():  # which apps use it
                 needs = "" if (selected is None or modules.supports(selected, app_id)) else f"  (needs {modules.FORMAT_NAMES[fmt]} URL)"
-                item = rumps.MenuItem(f"Use for {label}{needs}", callback=lambda _, a=app_id: self.toggle_module_app(a))
+                item = rumps.MenuItem(
+                    f"Use for {label}{needs}",
+                    callback=(lambda _, a=app_id: self.toggle_module_app(a)) if master_on else None,
+                )
                 item.state = app_id in active
                 self.modules_menu.add(item)
             copy_menu = rumps.MenuItem("Copy for Other Apps")
@@ -1130,6 +1217,71 @@ class CodeBoneApp(rumps.App):
                 remove_menu.add(rumps.MenuItem(m["name"], callback=lambda _, mid=m["id"], n=m["name"]: self.remove_module_dialog(mid, n)))
             self.modules_menu.add(remove_menu)
 
+        self.modules_menu.add(None)
+        links_menu = rumps.MenuItem("Quick Links")
+        _set_symbol_icon(links_menu, "link")
+        links_menu.add(rumps.MenuItem("OpenRouter Dashboard...", callback=lambda _: self.open_url("https://openrouter.ai/dashboard")))
+        links_menu.add(rumps.MenuItem("OpenRouter API Keys...", callback=lambda _: self.open_url("https://openrouter.ai/keys")))
+        links_menu.add(rumps.MenuItem("Modules Help...", callback=lambda _: self.open_url("https://openrouter.ai/docs")))
+        self.modules_menu.add(links_menu)
+
+        self.modules_menu.add(rumps.MenuItem("Fix Stuck Connection (Reset to Normal)", callback=self.reset_modules_to_normal))
+
+    def open_url(self, url: str):
+        try:
+            subprocess.Popen(["open", url])
+        except Exception as exc:
+            logger.error("Failed to open URL %s: %s", url, exc)
+
+    def set_modules_master(self, turning_on: bool):
+        """The switch row's on/off action: on = previously active apps route through their module
+        again, off = every app goes straight back to normal and nothing is routed."""
+        from . import modules
+
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        try:
+            modules.set_modules_master(self.config, turning_on)
+        except modules.SettingsUnreadable as exc:
+            rumps.alert("Modules", f"Settings file could not be read, so nothing was changed:\n{exc}")
+            self._sync_modules_switch()
+            return
+        if turning_on:
+            rumps.notification("codebone", "Modules enabled", "Previously active apps are routed through their module again.")
+            selected = modules.get_module(self.config, self.config.get("module_selected"))
+            if selected:
+                for app_id in modules.enabled_apps(self.config):
+                    self._verify_module_or_revert(app_id, selected)
+        else:
+            rumps.notification("codebone", "Modules disabled", "Every app is back on its normal setup.")
+        self._update_modules_menu()
+        self._sync_modules_switch()
+
+    def _sync_modules_switch(self):
+        """Keeps the switch row's visible state matching config, including when something other than
+        a direct click on the switch changed it (a per-app connection getting auto-reverted, Fix
+        Stuck Connection, etc.)."""
+        if getattr(self, "modules_switch", None) is not None:
+            self.modules_switch.setState_(
+                NSControlStateValueOn if bool(self.config.get("modules_enabled")) else NSControlStateValueOff
+            )
+
+    def reset_modules_to_normal(self, _):
+        from . import modules
+
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        if rumps.alert(
+            "Fix Stuck Connection",
+            "This puts Claude Code and opencode back on their normal setup, whatever codebone currently "
+            "thinks their state is. Use this if a module's API key stopped working and switching it off "
+            "didn't fix it.",
+            ok="Reset to Normal", cancel="Cancel",
+        ) != 1:
+            return
+        modules.force_restore_all(self.config)
+        rumps.notification("codebone", "Modules reset", "Claude Code and opencode are back on their normal setup.")
+        self._update_modules_menu()
+        self._sync_modules_switch()
+
     def toggle_module_app(self, app_id: str):
         from . import modules
 
@@ -1146,9 +1298,45 @@ class CodeBoneApp(rumps.App):
             return
         if module:
             rumps.notification("codebone", f"{label} now uses {module['name']}", "New sessions pick this up; running ones keep their model.")
+            self._verify_module_or_revert(app_id, module)
         else:
             rumps.notification("codebone", f"{label} is back on its normal model", "New sessions use your usual setup again.")
         self._update_modules_menu()
+
+    def _verify_module_or_revert(self, app_id: str, module: dict):
+        """After switching an app onto a module, confirms the endpoint actually answers. If it doesn't, the app
+        is switched straight back to normal instead of being left pointed at a dead API."""
+        from . import modules
+
+        label = modules.APPS[app_id][0]
+        fmt = modules.APPS[app_id][1]
+        url = modules._url(module, fmt, self.server.port if getattr(self, "server", None) else None)
+        key = modules.Keychain().get(module["id"])
+        if not url or not key:
+            return
+
+        def _run():
+            try:
+                ok, msg = modules.test_connection(url, module["model"], key, fmt=fmt)
+            except Exception as exc:
+                ok, msg = False, str(exc)
+            if ok:
+                return
+
+            def _revert():
+                try:
+                    modules.set_app_enabled(self.config, app_id, False)
+                except (modules.SettingsUnreadable, ValueError):
+                    pass
+                rumps.notification(
+                    "codebone", f"{label} switched back to normal",
+                    f"{module['name']} did not respond ({msg}); reverted so {label} keeps working.",
+                )
+                self._update_modules_menu()
+
+            self._on_main(_revert)
+
+        threading.Thread(target=_run, daemon=True, name="codebone-module-verify").start()
 
     def copy_module_value(self, what: str, getter):
         value = getter()
@@ -1171,20 +1359,26 @@ class CodeBoneApp(rumps.App):
         from . import modules
 
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-        preset = modules.PRESETS[0]
-        choice = rumps.alert(
-            title="Add Module",
-            message=(f"A module is a model API your coding apps can use instead of their default.\n\n"
-                     f"Preset: {preset['name']}\nModel: {preset['model']}\n\n"
-                     "Custom needs a base URL in Anthropic format (for Claude Code) and/or OpenAI format (for opencode)."),
-            ok=preset["name"], cancel="Cancel", other="Custom...",
-        )
-        if choice == 0:
-            return
-        if choice == 1:
-            name, model = preset["name"], preset["model"]
-            anthropic_url, openai_url = preset["anthropic_url"], preset["openai_url"]
-        else:
+        name = model = anthropic_url = openai_url = None
+        for i, preset in enumerate(modules.PRESETS):
+            last = i == len(modules.PRESETS) - 1
+            choice = rumps.alert(
+                title="Add Module",
+                message=(f"A module is a model API your coding apps can use instead of their default.\n\n"
+                         f"Preset: {preset['name']}\nModel: {preset['model']}\n\n"
+                         "Custom needs a base URL in Anthropic format (for Claude Code) and/or OpenAI format (for opencode)."),
+                ok=preset["name"], cancel="Cancel", other=("Custom..." if last else "Other provider..."),
+            )
+            if choice == 0:
+                return
+            if choice == 1:
+                name, model = preset["name"], preset["model"]
+                anthropic_url = preset.get("anthropic_url", "")
+                openai_url = preset.get("openai_url", "")
+                break
+            if last:
+                name = ""  # falls through to the custom-entry form below
+        if name is None or name == "":
             fields = []
             for label, default in (("Name (shown in the menu)", ""), ("Model ID", ""),
                                    ("Anthropic-format base URL (optional, https://...)", ""),
@@ -1214,12 +1408,28 @@ class CodeBoneApp(rumps.App):
         from . import modules
 
         def _run():
-            for fmt in ("anthropic", "openai"):
-                url = modules._url(module, fmt)
-                if not url:
-                    continue
-                ok, msg = modules.test_connection(url, module["model"], key, fmt=fmt)
-                rumps.notification("codebone", f"{module['name']} ({fmt} format): " + ("works" if ok else "failed"), msg)
+            results = []
+            try:
+                for fmt in ("anthropic", "openai"):
+                    url = modules._url(module, fmt, self.server.port if getattr(self, "server", None) else None)
+                    if not url:
+                        continue
+                    ok, msg = modules.test_connection(url, module["model"], key, fmt=fmt)
+                    results.append((fmt, ok, msg))
+            except Exception as exc:  # a dead notification center must never make this look like nothing happened
+                results.append(("error", False, str(exc)))
+
+            def _show():
+                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+                if not results:
+                    rumps.alert("Test Connection", f"{module['name']} has no Anthropic- or OpenAI-format URL to test.")
+                    return
+                lines = [f"{modules.FORMAT_NAMES.get(fmt, fmt)}: {'OK' if ok else 'failed'} — {msg}" for fmt, ok, msg in results]
+                rumps.alert("Test Connection", f"{module['name']}\n\n" + "\n".join(lines))
+                for fmt, ok, msg in results:
+                    rumps.notification("codebone", f"{module['name']} ({fmt} format): " + ("works" if ok else "failed"), msg)
+
+            self._on_main(_show)
 
         threading.Thread(target=_run, daemon=True, name="codebone-module-test").start()
 
@@ -1326,7 +1536,7 @@ class CodeBoneApp(rumps.App):
                     renamed = rep.get("renamed_count", 0)
                     modified = rep.get("modified_count", 0)
                     added = rep.get("added_count", 0)
-                    conn_count = len(self.service.storage.graph_edges())
+                    conn_count = len(self.service.storage.graph_edges(include_domains=True))
                     rumps.notification(
                         "codebone — Baseline Reused",
                         f"{matching.get('project_name')}",
@@ -1356,7 +1566,7 @@ class CodeBoneApp(rumps.App):
 
                     total_scanned, sniffed, skipped = self.service.rescan_all(on_progress=_on_prog, wait=True)
                     dur = max(1, round(time.time() - t0))
-                    conn_count = len(self.service.storage.graph_edges())
+                    conn_count = len(self.service.storage.graph_edges(include_domains=True))
                     rumps.notification(
                         f"codebone — Indexing Complete",
                         f"{p.name} ready ({total_scanned} files)",
@@ -1521,7 +1731,7 @@ class CodeBoneApp(rumps.App):
                 "project": str(self.config.project_path) if self.config.project_path else "none",
                 "brain_provider": self.config.get("brain_provider"),
                 "file_count": self.service.storage.file_count() if self.config.is_configured else 0,
-                "connection_count": len(self.service.storage.graph_edges()) if self.config.is_configured else 0,
+                "connection_count": len(self.service.storage.graph_edges(include_domains=True)) if self.config.is_configured else 0,
             }
             first_line = user_text.splitlines()[0][:60]
             f_type = "bug" if any(w in user_text.lower() for w in ("bug", "crash", "error", "fail", "broken", "issue")) else "feedback"
@@ -1656,7 +1866,7 @@ class CodeBoneApp(rumps.App):
         current_vendor = self.config.get("brain_cloud_vendor", "openai")
         current_key = self.config.get("brain_cloud_api_key", "")
         window = rumps.Window(
-            message="Enter your API key:\nFormat: 'openai:sk-...' or 'anthropic:sk-ant-...'",
+            message="Enter your API key:\nFormat: 'openai:sk-...', 'anthropic:sk-ant-...' or 'openrouter:sk-or-...'",
             title="Cloud BYOK",
             default_text=f"{current_vendor}:{current_key}" if current_key else "openai:",
             ok="Save",

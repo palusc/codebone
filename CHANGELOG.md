@@ -5,6 +5,89 @@ All notable changes to codebone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-09-25
+
+### Added
+- **The map deepens at query time — no rescan needed.** Project sources are re-read when context is requested, not only when the index is built (`src/imports.py: source_facts`): import edges, `fetch('/api/...')` call edges to route handlers, SQL DDL and Supabase `.from('table')` references, file roles (`route POST /api/subs`, `page /subs`) and a one-line content record for files whose stored summary is empty are folded into the rows at read time. Existing indexes pick this up on the next query; the enriched rows are a view and never written back.
+- **Call chains in context and links.** Search results and `/codebone/links` now show `Calls: /api/subs -> app/api/subs/route.ts (tables: customers)` — the route-to-handler-to-table path a summary never captures — and the graph draws call edges solid green, import edges dashed grey.
+
+### Changed
+- **Files without a summary are no longer invisible.** Markdown, JSON, YAML, shell and HTML files get a sanitised one-line content note (`README.md: Markdown: Fixture Project`); credential-shaped and binary files are labelled from their extension only and never parsed.
+
+### Fixed
+- Linking a project after startup could keep serving the cached empty view: setting `project_path` now invalidates it.
+- Test Connection crashed instead of reporting an error when the endpoint reset the connection while returning its error body.
+- A manual version bump (minor/major) is no longer overwritten by the release job: it ships the version already in `src/__init__.py` when that is ahead of the last tag, and only auto-increments the patch when nothing was bumped by hand.
+
+## [1.3.9] - 2026-09-24
+
+### Changed
+- **The map now covers literally everything, gitignore included.** `.gitignore`/`.npmignore`/`.dockerignore` rules are no longer applied — build output, caches, `.git` internals and gitignored files are mapped like any other file, and secret-shaped files (`.env`, keys, `credentials*`) are nodes too. Their content is still never read: secrets land as path-only nodes (`_path_only`), files above the 32 MB read cap and binaries are catalogued by category and size instead (`_catalog_asset`).
+- Graph lines are more visible.
+
+### Added
+- **Import edges**: files are connected through their Python and JS/TS imports (`src/imports.py`), not only through shared tables, routes and events.
+
+## [1.3.8] - 2026-09-24
+
+### Added
+- **Local Anthropic↔OpenAI translation bridge for Modules.** Claude Code speaks the Anthropic Messages API, so pointing it straight at an OpenAI-only endpoint (e.g. an OpenRouter module) never worked. Requests now run through a local bridge that translates messages, tools and streaming responses between the two shapes; the module's API key is only forwarded, never stored.
+
+## [1.3.7] - 2026-09-24
+
+### Added
+- **OpenRouter support** for Cloud BYOK (new `openrouter` vendor) and Modules (OpenAI-format preset); the Add Module dialog now cycles through all presets.
+
+## [1.3.6] - 2026-09-24
+
+### Changed
+- **The live graph's clusters are now computed from real graph structure instead of a fixed bucket per domain keyword.** `Storage.communities()` runs modularity-based community detection (Louvain, via `networkx`) over the same table/route/event/domain co-occurrence graph the connection count uses — two files land in the same cluster because the graph actually connects them, directly or through a chain of shared entities, not because a regex matched the same word in both paths. Each cluster is labeled after its highest-degree member (its structural hub) instead of a domain name; a lone unconnected file is just a node, not a one-file "cluster." Adds `networkx` as a dependency (pure Python, no extra system packages).
+
+## [1.3.5] - 2026-09-24
+
+### Changed
+- **codebone now maps every real file in a project, not just a curated extension whitelist.** Lockfiles, images, fonts, archives, compiled binaries, build output, `node_modules`, `.venv`, `dist`/`build`, and other previously-excluded directories are all included now, so the map matches what's actually on disk instead of an approximation. A file too large or binary to analyse as code still gets a node — catalogued by category and size (`_catalog_asset`) — instead of vanishing entirely. Only credential-shaped files/names (`.env`, keys, `id_rsa`, ...), `.git`'s internal object store, and codebone's own data directory stay excluded; those are a security/self-reference boundary, not a curation choice.
+
+### Fixed
+- **In-app updates downloaded the ~490 MB bundled base model on every release**, even for a one-line code fix, although an already-installed copy always has a valid, checksummed copy of that exact model on disk already (`src/model_fetch.py` checks that before ever looking at the app bundle or the network). The release build now also publishes a lightweight `*-update.zip` with the bundled model stripped out and re-signed; the in-app updater prefers it automatically, falling back to the full ZIP for older releases that don't have one yet. Update downloads should now be tens of MB instead of ~500 MB.
+- **A scan could silently skip part of a project** (a subfolder without read access, a broken mount) and still report "Scan Complete" with no indication anything was wrong — `os.walk` swallows that kind of error by default. Unreadable subfolders are now collected and surfaced in the scan notification instead of disappearing into a lower-than-expected file/connection count with no explanation.
+- **The Nodes/Connections count under-reported real connectivity**: it only counted files sharing an exact DB table/API route/event name, while the live graph itself also groups files by shared domain (Testing, Documentation, ...) — a signal that's often the only one populated for a given project. Every place that surfaces a connection count now includes domain-shared edges too.
+
+## [1.3.4] - 2026-09-24
+
+### Changed
+- **Settings restructured**: Model moved out of the main menu's top level into Settings, grouped into a "Project" submenu (Adopt/Link Scan, Copy Context, Open in Finder, View Logs, Disk Access) and a "Scan Data" submenu (Export/Import Scan, Reset Knowledge Map), so it's clear where a given setting lives instead of one flat list.
+
+### Fixed
+- Two releases queued back-to-back (two PRs merged close together) could fail: the second release job's checkout stayed pinned to the commit that triggered it, so pushing its version bump after the first job's own release commit had landed was rejected as non-fast-forward. The release workflow now resyncs to the real tip of `main` before bumping.
+- The release-notes fallback read `HEAD`'s commit message, but by that point in the job `HEAD` is already the bot's own one-line `chore(release): ...` commit — that's why v1.3.3 shipped with an empty release body. It now reads the commit that actually triggered the run instead.
+
+## [1.3.3] - 2026-09-24
+
+### Added
+- **Modules** now has its own switch row in the main menu (native macOS switch, Tailscale-style) instead of a checkbox inside a submenu — it's the on/off control itself, no need to open a submenu to flip it. The rest of Modules' configuration (module list, per-app routing, Copy for Other Apps, Add Module, Test Connection, Remove Module, Quick Links, Fix Stuck Connection) moved to a "Modules Settings" submenu right underneath it.
+
+### Changed
+- `package.json` and the README version badge are now kept in sync with every release automatically (they had drifted since 1.3.0).
+- Release notes shown in the in-app updater are now sourced from this changelog instead of GitHub's raw auto-generated notes, and rendered as clean plain text.
+
+## [1.3.2] - 2026-09-24
+
+### Fixed
+- **Modules getting stuck routing Claude Code or opencode through a dead API.** The off-switch used to skip restoring the app's normal settings whenever codebone's own bookkeeping believed the app was already off; it now always attempts the restore. Added a **"Fix Stuck Connection (Reset to Normal)"** action in the Modules menu that unconditionally puts both apps back on their normal setup, independent of that local state. Switching an app onto a module now also verifies the endpoint actually answers and automatically reverts it if it doesn't.
+
+### Added
+- A master **Modules on/off switch**: off puts every app back on its normal setup and remembers which were active so turning it back on restores them.
+- A **Quick Links** submenu under Modules (OpenRouter dashboard, API keys, docs).
+
+### Changed
+- Restructured the main menu: Scan Project Now / Select Project Folder / Recent Project, then Model / Modules, then Settings (with "Connect AI Assistants (MCP)..." moved in).
+
+## [1.3.1] - 2026-09-24
+
+### Fixed
+- Relaunching codebone while it was already running used to exit silently with nothing on screen; it now notifies you and brings the running instance's menu forward instead.
+
 ## [1.3.0] - 2026-09-24
 
 ### Added

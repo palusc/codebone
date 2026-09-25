@@ -73,3 +73,11 @@ def test_context_overview_query_and_links(client):
 def test_rescan_and_reset_do_not_pile_up_threads(client):
     first = client.post("/codebone/rescan").json()
     assert first["status"] in ("started", "running")
+
+
+def test_adopt_route_accepts_scan_path_key(client):
+    # the MCP client sends paths under scan_path; the route must take that key (404 from get_scan,
+    # not 400 "Missing" or the scan_id traversal guard) — the stubbed MCP test only checks the payload
+    r = client.post("/codebone/scans/adopt", json={"scan_path": "/nonexistent/snap.sqlite3"})
+    assert r.status_code == 404
+    assert "Missing" not in r.text and "traversal" not in r.text

@@ -76,7 +76,12 @@ def _request(method: str, path: str, params: dict | None = None, payload: dict |
             base = alt_base
             resp = call(f"{base}{path}", **kwargs)
         if resp.status_code == 404 and path.startswith("/codebone/"):
-            resp = call(f"{base}{path.replace('/codebone/', '/pug/', 1)}", **kwargs)  # older app versions
+            try:
+                route_missing = resp.json().get("detail") == "Not Found"  # old app lacks the alias
+            except Exception:
+                route_missing = False
+            if route_missing:  # a handler-raised 404 (adopt: scan not found) is a real answer
+                resp = call(f"{base}{path.replace('/codebone/', '/pug/', 1)}", **kwargs)
         resp.raise_for_status()
     except CodeBoneNotRunning as exc:
         return f"codebone is not reachable: {exc}"
@@ -141,7 +146,9 @@ def codebone_list_scans() -> str:
 def codebone_adopt_scan(scan_id_or_path: str, project_path: str | None = None) -> str:
     """Reuse an existing scan for a renamed, moved or branched project folder (matched by SHA-256, only changed
     files are re-analysed)."""
-    payload = {"scan_id": scan_id_or_path}
+    # the server rejects "/" inside scan_id (traversal guard): a path must travel under scan_path
+    key = "scan_path" if ("/" in scan_id_or_path or "\\" in scan_id_or_path or scan_id_or_path.startswith("~")) else "scan_id"
+    payload = {key: scan_id_or_path}
     if project_path:
         payload["project_path"] = project_path
     return _post("/codebone/scans/adopt", payload)

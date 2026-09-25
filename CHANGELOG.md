@@ -5,6 +5,15 @@ All notable changes to codebone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-09-26
+
+### Changed
+- **`cb(query=...)` is a ranked word and meaning search.** Symbol names, comments, code lines, file names and summaries all count; the best 8 come back with a score and the matching lines (`L79: ...`). A symbol name in the query also lists where it is defined and every other file:line that references it. Same-named files in several places (a logo in three apps) collapse into one entry.
+- **`domain` and `file` no longer hide hits when a query is given.** They boost, and the result says how many hits are inside the domain and how many elsewhere. With no query, a domain that matches nothing lists the domains that exist.
+- **Image, font and other asset files are hidden** unless `assets=true`; a note says how many more matched.
+- **One MCP tool for lookup.** `cb` now includes imports / imported by for each hit; `codebone_context` and `codebone_graph` are removed from the MCP server (the HTTP endpoints stay).
+- **Index freshness is shown** on every result: time since the last update and how many files changed on disk since.
+
 ## [1.5.0] - 2026-09-26
 
 ### Changed

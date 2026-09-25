@@ -1,3 +1,4 @@
+from src import codesearch
 from src import context_format as cf
 from src.storage import Storage
 
@@ -40,3 +41,25 @@ def test_trivial_files_are_counted_not_listed():
                         "domains": [], "source": "model"}]
     text = cf.overview("p", files, index_of(files))
     assert "__init__" not in text and "1 files without notable content omitted" in text
+
+
+def test_word_search_symbols_assets_grouping_and_domain_boost(tmp_path):
+    (tmp_path / "ui").mkdir()
+    (tmp_path / "ui" / "Sidebar.tsx").write_text(
+        "import { AskmentIcon } from './Icon'\nexport const Sidebar = () => <AskmentIcon color={dark}/>\n")
+    (tmp_path / "ui" / "Icon.tsx").write_text("// logo mark\nexport function AskmentIcon() { return null }\n")
+    files = [
+        {"path": "ui/Sidebar.tsx", "summary": "Navigation", "tables": [], "routes": [], "events": [], "domains": ["User Interface"], "source": "model"},
+        {"path": "ui/Icon.tsx", "summary": "Icon", "tables": [], "routes": [], "events": [], "domains": ["User Interface"], "source": "model"},
+        *({"path": f"apps/{a}/public/logo.png", "summary": "image file (19.4 KB)", "tables": [], "routes": [], "events": [],
+           "domains": ["Assets"], "source": "asset"} for a in ("a", "b", "c")),
+    ]
+    idx = index_of(files)
+    texts = codesearch.read_texts(str(tmp_path), files)
+    out = cf.search("p", files, idx, domain="Landing", query="AskmentIcon", texts=texts)
+    assert "defined at ui/Icon.tsx:2" in out and "ui/Sidebar.tsx:2" in out  # other domain still ranks, symbol refs listed
+    assert 'Domain "Landing": 0 hits in it, 2 elsewhere' in out and "(score" in out and "L2:" in out
+    assert "logo.png" not in cf.search("p", files, idx, query="logo", texts=texts)
+    assert "asset files also match" in cf.search("p", files, idx, query="logo", texts=texts)
+    shown = cf.search("p", files, idx, query="logo", texts=texts, assets=True)
+    assert shown.count("### apps") == 1 and "Same file in 2 more places" in shown

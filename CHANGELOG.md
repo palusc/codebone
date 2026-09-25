@@ -5,6 +5,20 @@ All notable changes to codebone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-09-25
+
+### Added
+- **The map deepens at query time — no rescan needed.** Project sources are re-read when context is requested, not only when the index is built (`src/imports.py: source_facts`): import edges, `fetch('/api/...')` call edges to route handlers, SQL DDL and Supabase `.from('table')` references, file roles (`route POST /api/subs`, `page /subs`) and a one-line content record for files whose stored summary is empty are folded into the rows at read time. Existing indexes pick this up on the next query; the enriched rows are a view and never written back.
+- **Call chains in context and links.** Search results and `/codebone/links` now show `Calls: /api/subs -> app/api/subs/route.ts (tables: customers)` — the route-to-handler-to-table path a summary never captures — and the graph draws call edges solid green, import edges dashed grey.
+
+### Changed
+- **Files without a summary are no longer invisible.** Markdown, JSON, YAML, shell and HTML files get a sanitised one-line content note (`README.md: Markdown: Fixture Project`); credential-shaped and binary files are labelled from their extension only and never parsed.
+
+### Fixed
+- Linking a project after startup could keep serving the cached empty view: setting `project_path` now invalidates it.
+- Test Connection crashed instead of reporting an error when the endpoint reset the connection while returning its error body.
+- A manual version bump (minor/major) is no longer overwritten by the release job: it ships the version already in `src/__init__.py` when that is ahead of the last tag, and only auto-increments the patch when nothing was bumped by hand.
+
 ## [1.3.9] - 2026-09-24
 
 ### Changed

@@ -15,6 +15,7 @@ from .config import (
     MAX_READ_BYTES,
     _is_secret_or_junk,
     Config,
+    is_pruned_rel,
     is_watched_file,
     list_watched_files,
     load_gitignore_spec,
@@ -455,8 +456,10 @@ class CodeBoneService:
                     skipped += 1
 
             if not aborted:
+                # Files under a pruned tree (node_modules, .git, ...) still exist on disk but no longer belong
+                # in the index — drop them; everything else is only removed when it is really gone.
                 deleted_paths = [p for p in existing_mtimes
-                                 if p not in active_rel and not (project_path / p).exists()]  # not recreated meanwhile
+                                 if p not in active_rel and (is_pruned_rel(p) or not (project_path / p).exists())]
                 if deleted_paths and total == 0:
                     logger.warning("Project lists as empty but %d files are indexed; keeping the index", len(deleted_paths))
                 elif deleted_paths:

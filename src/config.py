@@ -104,6 +104,18 @@ EXACT_WATCHED_FILENAMES = {
 
 # Strict hardcoded directories to always ignore
 OWN_DIRS = {".pug", ".codebone"}
+# Dependency, VCS and build-output trees: vendored or regenerated, never project content. Pruned from the walk
+# itself — an 800-file repo with node_modules and .git otherwise scans as 150k+ files (read, hashed, some even
+# sent to the brain), which is what made a scan slow and the Mac hot.
+PRUNED_DIRS = OWN_DIRS | {
+    "node_modules", ".git", ".svn", ".hg", "vendor",
+    "__pycache__", ".venv", "venv", ".tox", ".nox",
+    ".pytest_cache", ".mypy_cache", ".ruff_cache", ".dmypy_cache",
+    "dist", "build", "out", "target", "coverage", "htmlcov",
+    ".next", ".nuxt", ".output", ".svelte-kit", ".turbo", ".cache", ".parcel-cache",
+    "Pods", "DerivedData", ".gradle", ".dart_tool",
+    ".eggs",
+}
 # Credential stores: mapped like everything else, but nothing below these is ever read (service._sniff_file)
 GLOBAL_IGNORED_DIRS = {
     ".ssh",
@@ -211,18 +223,20 @@ def is_watched_file(
     project_path: Optional[Path] = None,
     check_exists: bool = True,
 ) -> bool:
-    """True if the path belongs in the project map. Every real project file counts now — source, config,
-    docs, images, lockfiles, compiled output, dependencies — so codebone builds a complete picture of what
+    """True if the path belongs in the project map. Every real project file counts — source, config,
+    docs, images, lockfiles, compiled output — so codebone builds a complete picture of what
     is actually on disk, secrets and all: a credential-shaped file is a node too, its content just never
     gets read (Service._path_only). A file too large or binary to analyse as code still gets a node in the
-    map, catalogued instead of sniffed (see _asset_category / Service._catalog_asset).
+    map, catalogued instead of sniffed (see _asset_category / Service._catalog_asset). Dependency, VCS and
+    build trees (node_modules, .git, dist, ...) are the one exception: pruned, see PRUNED_DIRS.
 
     Cheap name/extension/ignore checks run first; the filesystem is only touched at the end. With
     check_exists=False (used for deletion events) the file does not have to exist any more."""
-    # Everything is mapped: no extension list, no .gitignore, no ignored folders. The only exclusion is the app's own
-    # data folder (indexing the index would loop). Secret, binary and huge files become path-only nodes, see service.
+    # Everything is mapped: no extension list, no .gitignore. The only exclusions are the app's own data folder
+    # (indexing the index would loop) and dependency/VCS/build trees (PRUNED_DIRS — vendored, not project content).
+    # Secret, binary and huge files become path-only nodes, see service.
     rel = _relative_parts(path, project_path)
-    if rel is None or any(d in OWN_DIRS for d in rel[:-1]):
+    if rel is None or any(d in PRUNED_DIRS for d in rel[:-1]):
         return False
 
     if not check_exists:
@@ -266,16 +280,18 @@ def list_watched_files(
             unreadable_dirs.append(path)
 
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=_onerror):
-        keep = []
-        for d in dirnames:
-            if d not in OWN_DIRS:
-                keep.append(d)
-        dirnames[:] = keep
+        dirnames[:] = [d for d in dirnames if d not in PRUNED_DIRS]
         for f in filenames:
             p = Path(dirpath, f)
             if is_watched_file(p, extensions, ignore_dirs, gitignore_spec, root):
                 found.append(p)
     return found
+
+
+def is_pruned_rel(rel: str) -> bool:
+    """True when a project-relative path sits in a pruned tree (node_modules, .git, ...). Rows under one are
+    stale index entries to drop, not files that went missing."""
+    return any(part in PRUNED_DIRS for part in Path(rel).parts)
 
 
 def find_free_port(start_port: int = 8053, max_attempts: int = 50) -> int:

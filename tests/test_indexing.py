@@ -184,6 +184,22 @@ def test_files_outside_the_project_are_never_indexed_and_recreated_files_survive
     assert svc.rescan_all()[1] == 1 and svc.storage.get_file("a.py")
 
 
+def test_rescan_drops_stale_rows_under_dependency_trees_that_still_exist(tmp_path):
+    """Rows written by an older version that mapped node_modules must go away even though the files are
+    still on disk — the walk never lists them any more, so existence alone must not keep them alive."""
+    svc, proj = make(tmp_path)
+    (proj / "keep.py").write_text("def k(): pass\n")
+    dep = proj / "node_modules" / "dep" / "index.js"
+    dep.parent.mkdir(parents=True)
+    dep.write_text("module.exports = {}\n")
+    svc.rescan_all()
+    svc.storage.update_file("node_modules/dep/index.js",
+                            "TABLES: none\nROUTES: none\nEVENTS: none\nDOMAINS: X\nFLOW: legacy row",
+                            mtime=dep.stat().st_mtime, content_hash="old", source="regex")
+    svc.rescan_all()
+    assert [f["path"] for f in svc.storage.all_files()] == ["keep.py"]
+
+
 def test_a_request_made_during_a_scan_gets_its_own_pass(tmp_path):
     import threading
     svc, proj = make(tmp_path)

@@ -5,6 +5,21 @@ All notable changes to codebone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-09-25
+
+### Added
+- **Several project folders at once.** "Projects" replaces the single folder picker: the panel takes a multi-selection, every picked folder joins the workspace, and "Scan Project Now" walks them one after the other. Each folder keeps its own rolling snapshot, so coming back to a project is an adoption instead of a rescan, and the project that was active before the pass is restored from its snapshot at the end. Workspace folders can be dropped again without losing their scan history.
+- **One API Keys menu in Settings.** The Cloud BYOK key and every module's key are listed in one place instead of hiding behind per-module dialogs; a key can be edited straight from there and still lands in the macOS Keychain.
+
+### Changed
+- **Settings is one menu now.** Modules (switch and details), Model, API Keys, MCP, Project and Scan Data live together under "Settings"; "Select Project Folder" and "Recent Projects" merged into "Projects" at the top level.
+- **Modules start routed.** The first time the Modules switch goes on, every app the selected module can serve is enabled — "Use for Claude Code" and "Use for Open Code" default to on. A later off/on cycle still restores exactly what was chosen before.
+- **Copy for Other Apps offers Model ID and API key only.** The Anthropic- and OpenAI-format base URLs are built by codebone itself, so there is nothing left to copy by hand.
+- **Dependency, VCS and build trees are pruned from scans.** `node_modules`, `.git`, virtualenvs, `dist` and friends no longer become index rows (stale rows from an older version are dropped on the next scan), which is what made an 800-file repo scan as 150k+ files.
+
+### Removed
+- **Deep Scan Mode.** The separate large-model re-analysis path is gone from the Model menu, the service and the config.
+
 ## [1.4.1] - 2026-09-25
 
 ### Fixed

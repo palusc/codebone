@@ -5,6 +5,17 @@ All notable changes to codebone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-09-25
+
+### Fixed
+- **The graph page stayed empty on larger projects.** Every node started on a packed circle, so on projects with a few hundred files the unbounded `1/d²` repulsion integrated into coordinates around `1e26` pixels, the fit-view collapsed to nothing and not a single node landed in the viewport. Nodes now start on a jittered grid and the per-tick speed is capped, which also drops the layout cost from quadratic to linear in file count.
+- **Scan adoption from the MCP clients.** Paths travel under `scan_path` (the server rejects `/` inside `scan_id`), and the `/pug/` alias fallback only fires when the route itself is missing — a handler 404 such as "scan not found" is an answer and is no longer POSTed twice.
+- **Template fetches reach their real handler.** `fetch('/api/users/${id}/posts')` keeps its depth (`/api/users/[*]/posts`) instead of collapsing to the static parent, so the call edge lands on the posts route.
+- **DDL and `.sql` tables.** `CREATE TABLE` variants (CTAS `AS SELECT`, `AS (`, `OR REPLACE`, `TEMP`/`UNLOGGED`, `ONLY`, schema-qualified) are recognised, prose stays out, and read-time `.sql` rows scrub the old phantom entries (`public`, SQL keywords as names) while keeping stored names the current regex cannot see.
+- **Test Connection** reports an error instead of crashing when the endpoint resets while returning a truncated error body.
+- **Update Installation Failed** shows the real error again instead of failing on an unbound variable.
+- Route and page entities are sanitised before they reach the index.
+
 ## [1.4.0] - 2026-09-25
 
 ### Added

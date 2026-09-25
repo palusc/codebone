@@ -5,200 +5,108 @@ All notable changes to codebone will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.4.2] - 2026-09-25
-
-### Added
-- **Several project folders at once.** "Projects" replaces the single folder picker: the panel takes a multi-selection, every picked folder joins the workspace, and "Scan Project Now" walks them one after the other. Each folder keeps its own rolling snapshot, so coming back to a project is an adoption instead of a rescan, and the project that was active before the pass is restored from its snapshot at the end. Workspace folders can be dropped again without losing their scan history.
-- **One API Keys menu in Settings.** The Cloud BYOK key and every module's key are listed in one place instead of hiding behind per-module dialogs; a key can be edited straight from there and still lands in the macOS Keychain.
+## [1.5.0] - 2026-09-26
 
 ### Changed
-- **Settings is one menu now.** Modules (switch and details), Model, API Keys, MCP, Project and Scan Data live together under "Settings"; "Select Project Folder" and "Recent Projects" merged into "Projects" at the top level.
-- **Modules start routed.** The first time the Modules switch goes on, every app the selected module can serve is enabled — "Use for Claude Code" and "Use for Open Code" default to on. A later off/on cycle still restores exactly what was chosen before.
-- **Copy for Other Apps offers Model ID and API key only.** The Anthropic- and OpenAI-format base URLs are built by codebone itself, so there is nothing left to copy by hand.
-- **Dependency, VCS and build trees are pruned from scans.** `node_modules`, `.git`, virtualenvs, `dist` and friends no longer become index rows (stale rows from an older version are dropped on the next scan), which is what made an 800-file repo scan as 150k+ files.
+- **The graph no longer fragments on big groups.** Up to 10 files sharing a table, route or event are still drawn pairwise; a larger group collapses into a star through its most-connected member, so every member stays linked at n-1 edges instead of the ~6n the peer window spent, and the global edge cap no longer truncates whatever comes after.
+- **Files nothing connects to are no longer islands.** Docs, config and assets that share no table, route or event with anyone get one directory link to a neighbour in their own folder.
+
+## [1.4.2] - 2026-09-25
+
+Covers the former 1.4.0, 1.4.1 and 1.4.2.
+
+### Added
+- **Several project folders at once.** "Projects" replaces the single folder picker: the panel takes a multi-selection, every picked folder joins the workspace, and "Scan Project Now" walks them one after the other. Each folder keeps its own rolling snapshot, so coming back to a project is an adoption instead of a rescan. Workspace folders can be dropped again without losing their scan history.
+- **One API Keys menu in Settings.** The Cloud BYOK key and every module's key are listed in one place; a key can be edited straight from there and still lands in the macOS Keychain.
+- **The map deepens at query time, no rescan needed.** Sources are re-read when context is requested (`src/imports.py: source_facts`): import edges, `fetch('/api/...')` call edges to route handlers, SQL DDL and Supabase `.from('table')` references, file roles (`route POST /api/subs`, `page /subs`) and a one-line content record for files without a stored summary are folded into the rows at read time. Existing indexes pick this up on the next query.
+- **Call chains in context and links.** Search results and `/codebone/links` show `Calls: /api/subs -> app/api/subs/route.ts (tables: customers)`; the graph draws call edges solid green and import edges dashed grey.
+
+### Changed
+- **Settings is one menu.** Modules, Model, API Keys, MCP, Project and Scan Data live together under "Settings"; "Select Project Folder" and "Recent Projects" merged into "Projects".
+- **Modules start routed.** The first time the Modules switch goes on, every app the module can serve is enabled; a later off/on cycle restores exactly what was chosen before.
+- **Copy for Other Apps offers Model ID and API key only**; the base URLs are built by codebone itself.
+- **Dependency, VCS and build trees are pruned from scans** (`node_modules`, `.git`, virtualenvs, `dist`, ...), which is what made an 800-file repo scan as 150k+ files. Stale rows from older versions are dropped on the next scan.
+- **Files without a summary are no longer invisible.** Markdown, JSON, YAML, shell and HTML files get a sanitised one-line content note; credential-shaped and binary files are labelled from their extension only and never parsed.
+
+### Fixed
+- **The graph page stayed empty on larger projects.** Nodes started on a packed circle, so unbounded `1/d^2` repulsion integrated into coordinates around 1e26 and nothing landed in the viewport. Nodes now start on a jittered grid with a capped per-tick speed, which also makes the layout linear in file count.
+- Scan adoption from the MCP clients (paths travel under `scan_path`; the `/pug/` alias fallback only fires when the route itself is missing), template fetches keep their depth (`/api/users/[*]/posts`), and DDL/`.sql` tables are recognised without phantom entries.
+- Linking a project after startup could keep serving the cached empty view; Test Connection and Update Installation no longer crash on truncated error bodies or an unbound variable.
+- A manual version bump is no longer overwritten by the release job.
 
 ### Removed
 - **Deep Scan Mode.** The separate large-model re-analysis path is gone from the Model menu, the service and the config.
 
-## [1.4.1] - 2026-09-25
-
-### Fixed
-- **The graph page stayed empty on larger projects.** Every node started on a packed circle, so on projects with a few hundred files the unbounded `1/d²` repulsion integrated into coordinates around `1e26` pixels, the fit-view collapsed to nothing and not a single node landed in the viewport. Nodes now start on a jittered grid and the per-tick speed is capped, which also drops the layout cost from quadratic to linear in file count.
-- **Scan adoption from the MCP clients.** Paths travel under `scan_path` (the server rejects `/` inside `scan_id`), and the `/pug/` alias fallback only fires when the route itself is missing — a handler 404 such as "scan not found" is an answer and is no longer POSTed twice.
-- **Template fetches reach their real handler.** `fetch('/api/users/${id}/posts')` keeps its depth (`/api/users/[*]/posts`) instead of collapsing to the static parent, so the call edge lands on the posts route.
-- **DDL and `.sql` tables.** `CREATE TABLE` variants (CTAS `AS SELECT`, `AS (`, `OR REPLACE`, `TEMP`/`UNLOGGED`, `ONLY`, schema-qualified) are recognised, prose stays out, and read-time `.sql` rows scrub the old phantom entries (`public`, SQL keywords as names) while keeping stored names the current regex cannot see.
-- **Test Connection** reports an error instead of crashing when the endpoint resets while returning a truncated error body.
-- **Update Installation Failed** shows the real error again instead of failing on an unbound variable.
-- Route and page entities are sanitised before they reach the index.
-
-## [1.4.0] - 2026-09-25
-
-### Added
-- **The map deepens at query time — no rescan needed.** Project sources are re-read when context is requested, not only when the index is built (`src/imports.py: source_facts`): import edges, `fetch('/api/...')` call edges to route handlers, SQL DDL and Supabase `.from('table')` references, file roles (`route POST /api/subs`, `page /subs`) and a one-line content record for files whose stored summary is empty are folded into the rows at read time. Existing indexes pick this up on the next query; the enriched rows are a view and never written back.
-- **Call chains in context and links.** Search results and `/codebone/links` now show `Calls: /api/subs -> app/api/subs/route.ts (tables: customers)` — the route-to-handler-to-table path a summary never captures — and the graph draws call edges solid green, import edges dashed grey.
-
-### Changed
-- **Files without a summary are no longer invisible.** Markdown, JSON, YAML, shell and HTML files get a sanitised one-line content note (`README.md: Markdown: Fixture Project`); credential-shaped and binary files are labelled from their extension only and never parsed.
-
-### Fixed
-- Linking a project after startup could keep serving the cached empty view: setting `project_path` now invalidates it.
-- Test Connection crashed instead of reporting an error when the endpoint reset the connection while returning its error body.
-- A manual version bump (minor/major) is no longer overwritten by the release job: it ships the version already in `src/__init__.py` when that is ahead of the last tag, and only auto-increments the patch when nothing was bumped by hand.
-
 ## [1.3.9] - 2026-09-24
 
-### Changed
-- **The map now covers literally everything, gitignore included.** `.gitignore`/`.npmignore`/`.dockerignore` rules are no longer applied — build output, caches, `.git` internals and gitignored files are mapped like any other file, and secret-shaped files (`.env`, keys, `credentials*`) are nodes too. Their content is still never read: secrets land as path-only nodes (`_path_only`), files above the 32 MB read cap and binaries are catalogued by category and size instead (`_catalog_asset`).
-- Graph lines are more visible.
+Covers the former 1.3.5 to 1.3.9.
 
 ### Added
+- **The map covers every real file.** Lockfiles, images, fonts, archives, binaries and build output get a node too, catalogued by category and size (`_catalog_asset`) when they are too large or binary to analyse. `.gitignore` rules are no longer applied; only credential-shaped files (`.env`, keys, `credentials*`) stay path-only nodes whose content is never read.
 - **Import edges**: files are connected through their Python and JS/TS imports (`src/imports.py`), not only through shared tables, routes and events.
-
-## [1.3.8] - 2026-09-24
-
-### Added
-- **Local Anthropic↔OpenAI translation bridge for Modules.** Claude Code speaks the Anthropic Messages API, so pointing it straight at an OpenAI-only endpoint (e.g. an OpenRouter module) never worked. Requests now run through a local bridge that translates messages, tools and streaming responses between the two shapes; the module's API key is only forwarded, never stored.
-
-## [1.3.7] - 2026-09-24
-
-### Added
-- **OpenRouter support** for Cloud BYOK (new `openrouter` vendor) and Modules (OpenAI-format preset); the Add Module dialog now cycles through all presets.
-
-## [1.3.6] - 2026-09-24
+- **Local Anthropic to OpenAI translation bridge for Modules.** Claude Code speaks the Anthropic Messages API, so an OpenAI-only endpoint never worked; requests now run through a local bridge that translates messages, tools and streaming responses. The module's API key is only forwarded, never stored.
+- **OpenRouter support** for Cloud BYOK and Modules (OpenAI-format preset).
 
 ### Changed
-- **The live graph's clusters are now computed from real graph structure instead of a fixed bucket per domain keyword.** `Storage.communities()` runs modularity-based community detection (Louvain, via `networkx`) over the same table/route/event/domain co-occurrence graph the connection count uses — two files land in the same cluster because the graph actually connects them, directly or through a chain of shared entities, not because a regex matched the same word in both paths. Each cluster is labeled after its highest-degree member (its structural hub) instead of a domain name; a lone unconnected file is just a node, not a one-file "cluster." Adds `networkx` as a dependency (pure Python, no extra system packages).
-
-## [1.3.5] - 2026-09-24
-
-### Changed
-- **codebone now maps every real file in a project, not just a curated extension whitelist.** Lockfiles, images, fonts, archives, compiled binaries, build output, `node_modules`, `.venv`, `dist`/`build`, and other previously-excluded directories are all included now, so the map matches what's actually on disk instead of an approximation. A file too large or binary to analyse as code still gets a node — catalogued by category and size (`_catalog_asset`) — instead of vanishing entirely. Only credential-shaped files/names (`.env`, keys, `id_rsa`, ...), `.git`'s internal object store, and codebone's own data directory stay excluded; those are a security/self-reference boundary, not a curation choice.
+- **Graph clusters come from real structure.** `Storage.communities()` runs Louvain community detection (via `networkx`) over the table/route/event/domain co-occurrence graph; each cluster is labelled after its highest-degree member. Graph lines are more visible.
+- **Settings restructured** into "Project" (Adopt/Link Scan, Copy Context, Open in Finder, View Logs, Disk Access) and "Scan Data" (Export/Import Scan, Reset Knowledge Map) submenus.
 
 ### Fixed
-- **In-app updates downloaded the ~490 MB bundled base model on every release**, even for a one-line code fix, although an already-installed copy always has a valid, checksummed copy of that exact model on disk already (`src/model_fetch.py` checks that before ever looking at the app bundle or the network). The release build now also publishes a lightweight `*-update.zip` with the bundled model stripped out and re-signed; the in-app updater prefers it automatically, falling back to the full ZIP for older releases that don't have one yet. Update downloads should now be tens of MB instead of ~500 MB.
-- **A scan could silently skip part of a project** (a subfolder without read access, a broken mount) and still report "Scan Complete" with no indication anything was wrong — `os.walk` swallows that kind of error by default. Unreadable subfolders are now collected and surfaced in the scan notification instead of disappearing into a lower-than-expected file/connection count with no explanation.
-- **The Nodes/Connections count under-reported real connectivity**: it only counted files sharing an exact DB table/API route/event name, while the live graph itself also groups files by shared domain (Testing, Documentation, ...) — a signal that's often the only one populated for a given project. Every place that surfaces a connection count now includes domain-shared edges too.
+- **In-app updates no longer download the ~490 MB base model** on every release: the release build also publishes a `*-update.zip` without it, and the updater prefers it.
+- A scan could silently skip unreadable subfolders and still report "Scan Complete"; they are now surfaced in the notification.
+- The Nodes/Connections count under-reported connectivity because it ignored domain-shared edges.
+- Release job: back-to-back releases no longer fail on a non-fast-forward push, and release notes read the triggering commit instead of the bot's own.
 
 ## [1.3.4] - 2026-09-24
 
-### Changed
-- **Settings restructured**: Model moved out of the main menu's top level into Settings, grouped into a "Project" submenu (Adopt/Link Scan, Copy Context, Open in Finder, View Logs, Disk Access) and a "Scan Data" submenu (Export/Import Scan, Reset Knowledge Map), so it's clear where a given setting lives instead of one flat list.
-
-### Fixed
-- Two releases queued back-to-back (two PRs merged close together) could fail: the second release job's checkout stayed pinned to the commit that triggered it, so pushing its version bump after the first job's own release commit had landed was rejected as non-fast-forward. The release workflow now resyncs to the real tip of `main` before bumping.
-- The release-notes fallback read `HEAD`'s commit message, but by that point in the job `HEAD` is already the bot's own one-line `chore(release): ...` commit — that's why v1.3.3 shipped with an empty release body. It now reads the commit that actually triggered the run instead.
-
-## [1.3.3] - 2026-09-24
+Covers the former 1.3.0 to 1.3.4.
 
 ### Added
-- **Modules** now has its own switch row in the main menu (native macOS switch, Tailscale-style) instead of a checkbox inside a submenu — it's the on/off control itself, no need to open a submenu to flip it. The rest of Modules' configuration (module list, per-app routing, Copy for Other Apps, Add Module, Test Connection, Remove Module, Quick Links, Fix Stuck Connection) moved to a "Modules Settings" submenu right underneath it.
+- **Uninstall from inside the app** (Settings > Uninstall codebone...): removes the app, data and models, logs, caches, preferences, login items and codebone's entries in the Claude Code, Claude Desktop, Cursor and Gemini configs, and runs `brew`/`npm uninstall` when those installed it. Project folders are never touched. `./uninstall.sh --dry-run | --yes` is the terminal fallback (`src/uninstall.py`).
+- **Context that navigates.** `cb()` returns layout, domains, key entities and a one-line summary per file (about 1,500 tokens for a 56-file, 125,000-token project); `cb(query="several words")` ranks files by name, entities and summary; `codebone_graph(file=...)` shows linked files.
+- **Modules**: a library of model APIs (preset for MiMo V2.6 Pro, or any Anthropic- or OpenAI-format endpoint) with a switch per app. Claude Code and opencode are configured directly (keys in the macOS Keychain, previous settings restored on off and uninstall), other apps get copy buttons. A master on/off switch remembers which apps were active, "Fix Stuck Connection (Reset to Normal)" restores both apps unconditionally, and switching an app onto a module verifies the endpoint and reverts if it does not answer. Quick Links: OpenRouter dashboard, API keys, docs.
+- Model status (download progress, "no model, using heuristics") in the graph page and `/codebone/status`.
 
 ### Changed
-- `package.json` and the README version badge are now kept in sync with every release automatically (they had drifted since 1.3.0).
-- Release notes shown in the in-app updater are now sourced from this changelog instead of GitHub's raw auto-generated notes, and rendered as clean plain text.
-
-## [1.3.2] - 2026-09-24
-
-### Fixed
-- **Modules getting stuck routing Claude Code or opencode through a dead API.** The off-switch used to skip restoring the app's normal settings whenever codebone's own bookkeeping believed the app was already off; it now always attempts the restore. Added a **"Fix Stuck Connection (Reset to Normal)"** action in the Modules menu that unconditionally puts both apps back on their normal setup, independent of that local state. Switching an app onto a module now also verifies the endpoint actually answers and automatically reverts it if it doesn't.
-
-### Added
-- A master **Modules on/off switch**: off puts every app back on its normal setup and remembers which were active so turning it back on restores them.
-- A **Quick Links** submenu under Modules (OpenRouter dashboard, API keys, docs).
-
-### Changed
-- Restructured the main menu: Scan Project Now / Select Project Folder / Recent Project, then Model / Modules, then Settings (with "Connect AI Assistants (MCP)..." moved in).
-
-## [1.3.1] - 2026-09-24
-
-### Fixed
-- Relaunching codebone while it was already running used to exit silently with nothing on screen; it now notifies you and brings the running instance's menu forward instead.
-
-## [1.3.0] - 2026-09-24
-
-### Added
-- **Uninstall from inside the app** (menu bar > Settings > Uninstall codebone...). One module (`src/uninstall.py`) removes the app, application data and models, logs, caches, preferences, login items, and codebone's entries in the Claude Code, Claude Desktop, Cursor and Gemini configs (other servers and settings are left alone); it also runs `brew uninstall` / `npm uninstall -g` when those installed it. Project folders are never touched. `./uninstall.sh --dry-run | --yes` is the terminal fallback. The separate "Uninstall codebone.app" is gone.
-- **Context that navigates**: `cb()` now returns layout, domains, key entities and a one-line summary per file (about 1,500 tokens for a 56-file project of 125,000 tokens of source); `cb(query="several words")` ranks files by name, entities and summary and lists linked files; `codebone_graph(file=...)` shows which files are connected through shared tables, routes or events. MCP tool descriptions are much shorter.
-- Model status (download progress, "no model, using heuristics") is shown in the graph page and in `/codebone/status`; the graph page refreshes when the index revision changes instead of polling the whole graph.
-
-- **Modules**: a library of model APIs (preset for MiMo V2.6 Pro, or any Anthropic- or OpenAI-format endpoint) with a switch per app: Claude Code and opencode are configured directly (API keys in the macOS Keychain, previous settings restored when switched off and on uninstall), other apps get copy buttons for URL, model ID and key. The connection can be tested from the menu.
-
-### Changed
-- One install recipe (`scripts/build_bundle.sh`) behind the DMG, ZIP/Homebrew and `install.sh`: bundled Python 3.13.15, packages pinned in `requirements.lock`, native launcher, and the pinned base model (exact Hugging Face revision + SHA-256) bundled in the app and linked on first launch.
+- One install recipe (`scripts/build_bundle.sh`) behind the DMG, ZIP/Homebrew and `install.sh`: bundled Python 3.13.15, packages pinned in `requirements.lock`, native launcher, pinned base model (exact Hugging Face revision + SHA-256).
+- Scans are incremental and cooperative: one lock per file, unreadable folders never wipe the index, files over 1 MB, binaries and secret-like files are skipped, deletions and moves reach the index, one rolling snapshot per project.
 - Per-project MCP files (`.cursor`, `.gemini`, `.agents`) are no longer written into indexed folders; global client configs are only touched for installed clients and no longer pin a port.
-- Scans are incremental and cooperative: one lock per file instead of per scan, unreadable folders never wipe the index, files over 1 MB, binaries and secret-like files (`.env`, keys, `credentials*`) are skipped, deletions and moves reach the index, one rolling snapshot per project.
+- Main menu restructured: Modules has its own switch row, Model moved into Settings. Release notes in the updater come from this changelog; `package.json` and the README badge are kept in sync with every release.
 
 ### Fixed
-- **Live Graph never finished loading** on real projects: layout cost was O(edges x nodes) per tick and per frame, and the regex fallback linked nearly every file to every domain. The layout is now spatial-grid based, drawing happens only when something changes, and file names or summaries can no longer inject HTML or script into the page.
-- **Local API hardening**: foreign `Host` headers (DNS rebinding) and cross-origin requests are refused, export never overwrites files, docs pages are gone, feedback and payloads are size-limited.
-- **Switching projects** no longer serves or skips against the previous project's index; a damaged index database is moved aside instead of crashing the app on every start.
-- Model output is grounded in the code (no invented tables, routes or events), prompts fit the context window, and rows written by the regex fallback are re-analysed once the model is available.
-- Menu updates from background threads now hop to the main thread; the idle stats timer no longer recomputes the graph; a second app instance exits instead of sharing the database.
-- The update installer extracts with `ditto` (keeps symlinks), refuses unsafe archive paths and swaps the bundle with rollback.
-- Test runs no longer touch the developer's real configuration or MCP client configs.
+- **Live Graph never finished loading** on real projects: the layout is now spatial-grid based and draws only when something changes; file names and summaries can no longer inject HTML or script into the page.
+- **Local API hardening**: foreign `Host` headers (DNS rebinding) and cross-origin requests are refused, export never overwrites files, feedback and payloads are size-limited.
+- Switching projects no longer serves the previous project's index; a damaged index database is moved aside instead of crashing on every start; a second app instance exits instead of sharing the database; relaunching a running app brings its menu forward instead of exiting silently.
+- Model output is grounded in the code (no invented tables, routes or events); the update installer extracts with `ditto`, refuses unsafe archive paths and swaps the bundle with rollback; test runs no longer touch the developer's real configuration.
 
 ## [1.2.2] - 2026-09-23
 
-### Added
-- **Multi-Client MCP Auto-Registration**: Full out-of-the-box auto-patching for Gemini / Antigravity IDE (`~/.gemini/config/mcp_config.json`, `~/.gemini/antigravity-ide/mcp_config.json`, and `<project>/.agents/mcp_config.json`) alongside Claude Desktop and Cursor.
-- **Initial-Days Visual Setup "Ping"**: Interactive pulsing beacon banner in the Live Graph UI and dedicated menu item in the macOS menu bar popover for the first 7 days, providing one-click direct access to `#mcp-setup`.
-- **Intelligent Bundle Venv & Permissions Resolver**: Auto-creates Application Support venv symlink and ensures execute permissions on bundled python binaries for seamless DMG drag-and-drop installations.
-
-## [1.2.1] - 2026-09-23
+Covers the former 1.2.0 to 1.2.2.
 
 ### Added
-- **In-App Auto-Updater**: Direct one-click update checking, background package download, signature verification, atomic app bundle replacement, and graceful restart via **Settings ➔ Check for Updates...**.
-- **Recent Projects History (Verlauf)**: One-click project switching directly from the main menu, automatically remembering up to 10 previously scanned codebases with active state indicators.
-- **Full Disk Access Guidance & Automation**: Automatic TCC probing to register codebone with macOS System Settings, accompanied by a guided setup dialog and **Reveal in Finder** action for effortless drag-and-drop.
-- **Comprehensive SF Symbol Icons**: Crisp Apple SF Symbol vector icons across the entire menu hierarchy (main menu, settings submenu, and model picker).
+- **In-app auto-updater** (Settings > Check for Updates...): download, signature verification, atomic bundle replacement, restart.
+- **Built-in feedback and bug reporting**: menu bar dialog and a modal in the Live Graph UI, auto-attaching OS, codebone version, provider, metrics and recent logs with credentials redacted; stored locally, with a pre-filled GitHub Issue link.
+- **Multi-client MCP auto-registration** for Gemini / Antigravity IDE alongside Claude Desktop and Cursor, plus dynamic port detection (`8053`, then `8054+`) that updates the client configs.
+- **Recent Projects** in the main menu (last 10), **Full Disk Access guidance** with automatic TCC probing and Reveal in Finder, a first-week setup beacon (`#mcp-setup`), and a bundle venv and permissions resolver for DMG drag-and-drop installs.
+- **Live Graph redesign**: slate-and-iris glassmorphism instead of neon, category filter pills, hover tooltips, an inspector drawer, and Apple SF Symbol icons across the menu.
 
 ### Changed
-- Streamlined release packaging to remove redundant asset duplicates, providing two clear, fast downloads: `codebone-macos-arm64.dmg` and `codebone-macos-arm64.zip`.
-
-## [1.2.0] - 2026-09-23
-
-### Added
-- **Built-in Feedback & Bug Reporting**: Native menu bar dialog (🦴 ➔ **Feedback & Bug Report...**) and glassmorphic modal in the Live Graph UI. Auto-attaches OS version, codebone version, active provider, file/node metrics, and recent logs. Redacts sensitive credentials before saving. Stored locally; generates a pre-filled GitHub Issue link with one click.
-- **Standalone Uninstaller App** (`Uninstall codebone.app`): Dedicated macOS app that terminates background processes, wipes all local databases, cached models, logs, and MCP registrations from Claude Desktop, Cursor, and Gemini, then prepares the main app for the Trash.
-- **Dynamic Port Detection**: Defaults to port `8053` and automatically finds the next free port (`8054+`) if occupied, updating Claude Desktop & Cursor MCP configs transparently.
-- **De-Neonified Live Graph**: Replaced high-contrast neon palette with a balanced slate-and-iris dark glassmorphism design. Added category filter pills, hover tooltips, and a slide-out inspector drawer.
-- **Apple SF Symbols**: Native vector icons across all menu bar items, adapting automatically to dark and light modes.
-
-### Changed
-- Default Cloud BYOK models updated to `claude-sonnet-5` (Anthropic) and `gpt-6` / `gpt-6` (OpenAI).
+- Release packaging is two downloads: `codebone-macos-arm64.dmg` and `.zip`.
+- Default Cloud BYOK models are `claude-sonnet-5` (Anthropic) and `gpt-6` (OpenAI).
 
 ## [1.1.0] - 2026-09-22
 
-### Added
-- **Deep Scan Mode** (🦴 **Settings → Model → Deep Scan Mode (7B)...**): One-off full re-analysis using a larger local GGUF model, then automatically switches back to the fast 0.5B built-in brain.
-- **Live Menu Bar Dashboard**: Real-time embedded view showing repo path, watch status, file/domain/model/route/event counts, and a live sniff toast — replacing static status text.
-
-## [1.0.1] - 2026-09-22
+Covers the former 1.0.0, 1.0.1 and 1.1.0.
 
 ### Added
-- **Live Graph UI** (`GET /codebone/graph/ui`): Interactive dark-mode node-link diagram of the Semantic System Graph. Auto-refreshes, supports pan/zoom/drag, and click-to-inspect sidebar.
-- **Level-of-Detail (LOD) Context Filtering**: Slice context by domain, file path, or entity keyword via `/codebone/context?domain=X&file=Y&query=Z`. Reduces token payload on large repos.
-- **View Logs** menu item: Opens the codebone log file directly in Console.app.
-- **`last_error` field** in `/codebone/status` response for diagnostics.
+- **24/7 silent background engine**: macOS menu bar daemon watching repositories on file save with battery-aware debouncing (0.5 s on AC, 15 s on battery).
+- **Apple Silicon Metal GPU inference** via `llama-cpp-python`; default Qwen 0.5B, sub-1s latency, ~390 MB RAM. Brains: built-in Metal, local Ollama / LM Studio, custom GGUF, cloud BYOK (OpenAI, Anthropic).
+- **Semantic System Graph** of business domains and cross-module relationships, with **Smart Scan Adoption** (SHA-256 fingerprinting for moved or renamed files) and export/import of `.sqlite3` snapshots.
+- **Model Context Protocol** integration for Claude Desktop, Cursor, Gemini and Codex (`codebone_context`, `codebone_status`, `codebone_graph`, `codebone_list_scans`, `codebone_adopt_scan`) on a localhost HTTP API (`127.0.0.1:8053`: `/codebone/context`, `/status`, `/graph`, `/scans`).
+- **Live Graph UI** (`/codebone/graph/ui`): pan, zoom, drag, click-to-inspect. **Level-of-detail context filtering** by domain, file or entity keyword (`?domain=X&file=Y&query=Z`).
+- **Live menu bar dashboard** (repo path, watch status, counts, live toast), View Logs, and a `last_error` field in `/codebone/status`.
+- **Deep Scan Mode** (7B re-analysis; removed again in 1.4.2).
+- **Security**: untrusted source is wrapped in escaped XML tags with anti-jailbreak directives, a symlink jail keeps repositories from escaping the project root, and Full Disk Access pre-flight checks link to System Settings.
 
 ### Fixed
-- **SQLite WAL mode + RLock**: Prevents `database is locked` errors during heavy file-save bursts.
-- **Burst / Batch processing**: Timer-based event aggregation coalesces rapid file events (e.g. `git checkout`) into efficient bulk operations.
-- **Move/Rename detection**: SHA-256 batch reconciliation re-links moved files at zero LLM cost.
-- **`.gitignore` respect**: Auto-parses local `.gitignore` files to skip `node_modules`, `.venv`, and similar directories.
-
-## [1.0.0] - 2026-09-22
-
-### Added
-- **24/7 Silent Background Engine**: macOS menu bar daemon watching repositories on file save (`Cmd + S`) with battery-aware debouncing (0.5 s on AC, 15 s on battery).
-- **Apple Silicon Metal GPU Inference**: GGUF inference via `llama-cpp-python` with Metal GPU acceleration. Default Qwen 0.5B model — sub-1s latency, ~390 MB RAM.
-- **Semantic System Graph**: Identifies business domains and cross-module relationships beyond direct code imports.
-- **Smart Scan Adoption**: SHA-256 fingerprinting for moved/renamed files and selective diff sniffing across folder moves and branches.
-- **Scan Snapshot Management**: Export and import `.sqlite3` snapshots from the menu bar or REST API.
-- **Native macOS Menu Bar App**: Status icon, folder picker, and quick actions.
-- **Model Context Protocol (MCP)**: Integration for Claude Desktop, Cursor, Gemini, and Codex. Tools: `codebone_context`, `codebone_status`, `codebone_graph`, `codebone_list_scans`, `codebone_adopt_scan`.
-- **Localhost HTTP API**: REST endpoints on `127.0.0.1:8053` — `/codebone/context`, `/codebone/status`, `/codebone/graph`, `/codebone/scans`.
-- **Multi-Brain Support**: Built-in Metal GPU, local Ollama / LM Studio, custom GGUF, and cloud BYOK (OpenAI, Anthropic).
-- **Prompt Injection Defense**: Untrusted source code wrapped in escaped XML tags with strict anti-jailbreak system directives.
-- **Symlink Jail / Sandboxing**: Prevents repository symlinks from escaping the project root.
-- **macOS Full Disk Access Helpers**: Pre-flight TCC permission checks with 1-click System Settings shortcut.
+- SQLite WAL mode with an RLock prevents `database is locked` during save bursts; timer-based aggregation coalesces bursts such as `git checkout`; SHA-256 batch reconciliation re-links moved files at zero LLM cost; local `.gitignore` files were respected (no longer the case since 1.3.9).

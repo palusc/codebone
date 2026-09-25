@@ -102,9 +102,10 @@ jobs:
           set -euo pipefail
           version="${{ steps.bump.outputs.version }}"
           # Prefer the version's own CHANGELOG.md section (curated, human-written); fall back to the
-          # merge commit's PR title so a release never ships with no notes at all.
+          # merge commit's PR title so a release never ships with no notes at all. Match the heading
+          # by string prefix — as a regex, "## [1.4.0]" is a bracket expression and never matches.
           section="$(awk -v ver="## [$version]" '
-            $0 ~ "^" ver { found=1; next }
+            index($0, ver) == 1 { found=1; next }
             found && /^## \[/ { exit }
             found { print }
           ' CHANGELOG.md)"
@@ -112,7 +113,8 @@ jobs:
           if [ -z "$(echo "$section" | tr -d '[:space:]')" ]; then
             # By this point HEAD is our own just-created "chore(release): ..." commit, which has no
             # useful body — the commit that actually triggered this run is ${{ github.sha }}.
-            section="$(git log -1 --pretty=%B ${{ github.sha }} | tail -n +3 | sed -e '/./,$!d')"
+            # Start after the subject line only; leading blanks are dropped right below.
+            section="$(git log -1 --pretty=%B ${{ github.sha }} | tail -n +2 | sed -e '/./,$!d')"
           fi
           {
             echo "$section"

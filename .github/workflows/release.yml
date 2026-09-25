@@ -48,13 +48,19 @@ jobs:
           git fetch origin main
           git reset --hard origin/main
 
-      - name: Bump patch version
+      - name: Bump version
         id: bump
         run: |
           set -euo pipefail
           current="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/__init__.py)"
-          IFS='.' read -r major minor patch <<< "$current"
-          next="${major}.${minor}.$((patch + 1))"
+          latest="$(git describe --tags --abbrev=0 2>/dev/null || echo "v${current}")"
+          if [ "v${current}" != "${latest}" ]; then
+            # A human already bumped past the last tag (minor/major): ship that version as-is.
+            next="${current}"
+          else
+            IFS='.' read -r major minor patch <<< "$current"
+            next="${major}.${minor}.$((patch + 1))"
+          fi
           sed -i '' "s/^__version__ = \".*\"/__version__ = \"${next}\"/" src/__init__.py
           echo "version=${next}" >> "$GITHUB_OUTPUT"
           echo "Bumping ${current} -> ${next}"

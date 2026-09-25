@@ -1051,22 +1051,28 @@ function buildGraph(graph, fit) {
   const communities = (graph.communities || []).filter(c => c.files.length > 1);
 
   const map = Object.create(null);
+  // Start on a jittered grid, not a circle: a circle packs every node within a few pixels of its
+  // neighbours on large projects, which makes the repulsion pass O(N^2) and blows the layout up.
+  const gridPos = (i, n) => {
+    const cols = Math.max(1, Math.ceil(Math.sqrt(n))), rows = Math.ceil(n / cols), sp = 60;
+    return {
+      x: cx + ((i % cols) - (cols - 1) / 2) * sp + (Math.random() - 0.5) * 24,
+      y: cy + (Math.floor(i / cols) - (rows - 1) / 2) * sp + (Math.random() - 0.5) * 24,
+    };
+  };
   communities.forEach((c, i) => {
-    const id = 'domain:' + c.id, old = previous[id];
-    const angle = (2 * Math.PI * i) / (communities.length || 1), r = Math.min(cx, cy) * 0.35;
+    const id = 'domain:' + c.id, old = previous[id], p = gridPos(i, communities.length);
     map[id] = {
       id, label: c.label, type: 'domain', radius: COLOR_MAP.domain.radius, vx: 0, vy: 0,
-      x: old ? old.x : cx + Math.cos(angle) * r, y: old ? old.y : cy + Math.sin(angle) * r,
+      x: old ? old.x : p.x, y: old ? old.y : p.y,
       data: { domains: [c.label], summary: 'Cluster of ' + c.files.length + ' files around ' + c.label + '.' },
     };
   });
   graph.nodes.forEach((path, i) => {
-    const id = 'file:' + path, old = previous[id];
-    const angle = (2 * Math.PI * i) / (graph.nodes.length || 1), r = Math.min(cx, cy) * 0.65;
+    const id = 'file:' + path, old = previous[id], p = gridPos(i, graph.nodes.length);
     map[id] = {
       id, label: path.split('/').pop(), path, type: 'file', radius: COLOR_MAP.file.radius, vx: 0, vy: 0,
-      x: old ? old.x : cx + Math.cos(angle) * r + (Math.random() - 0.5) * 60,
-      y: old ? old.y : cy + Math.sin(angle) * r + (Math.random() - 0.5) * 60,
+      x: old ? old.x : p.x, y: old ? old.y : p.y,
       data: Object.prototype.hasOwnProperty.call(files, path) ? files[path] : {},
     };
   });
@@ -1140,7 +1146,13 @@ function runForceLayout(ticks) {
       a.vx += (dx / dist) * f; a.vy += (dy / dist) * f;
       b.vx -= (dx / dist) * f; b.vy -= (dy / dist) * f;
     }
-    for (const n of nodes) { n.x += n.vx; n.y += n.vy; }
+    for (const n of nodes) {
+      // Cap per-tick speed: the 1/d² repulsion is unbounded for overlapping nodes, and without
+      // this a dense start integrates into astronomically large coordinates (nothing renders).
+      const sp = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
+      if (sp > 50) { n.vx *= 50 / sp; n.vy *= 50 / sp; }
+      n.x += n.vx; n.y += n.vy;
+    }
   }
 }
 

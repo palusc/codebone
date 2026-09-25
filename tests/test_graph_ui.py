@@ -39,7 +39,12 @@ eval(src + `;
   const gEdges = []; for (let i = 0; i + 6 < N; i++) gEdges.push({from: paths[i], to: paths[i + 6], type: 'table', entity: 'T'});
   const t = Date.now();
   buildGraph({nodes: paths, files, edges: gEdges}, true);
-  console.log(JSON.stringify({nodes: nodes.length, ms: Date.now() - t}));
+  let minX = Infinity, maxX = -Infinity;
+  for (const n of nodes) { minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x); }
+  const vx0 = -pan.x / zoom, vx1 = (window.innerWidth - pan.x) / zoom;
+  let vis = 0;
+  for (const n of nodes) if (n.x >= vx0 && n.x <= vx1) vis++;
+  console.log(JSON.stringify({nodes: nodes.length, ms: Date.now() - t, spanX: maxX - minX, visible: vis}));
 `);
 """
 
@@ -51,3 +56,7 @@ def test_build_graph_survives_prototype_named_domains_and_scales(n, limit_ms):
     assert out.returncode == 0, out.stderr
     res = json.loads(out.stdout.strip().splitlines()[-1])
     assert res["nodes"] >= n and res["ms"] < limit_ms
+    # Layout must stay finite and inside the viewport: overlapping starts used to integrate the
+    # 1/d² repulsion into astronomically large coordinates, which renders an empty canvas.
+    assert res["spanX"] < 100000
+    assert res["visible"] == res["nodes"]

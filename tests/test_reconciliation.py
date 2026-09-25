@@ -179,7 +179,7 @@ def test_api_endpoints():
         print("API endpoint tests passed successfully!")
 
 
-def test_deep_scan_force_resniff_and_missing_model():
+def test_force_rescan_reanalyzes_unchanged_files():
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
         proj_dir = tmp_path / "proj"
@@ -198,27 +198,20 @@ def test_deep_scan_force_resniff_and_missing_model():
         total, sniffed, skipped = service.rescan_all()
         assert (total, sniffed, skipped) == (1, 1, 0)
 
-        # No deep scan model configured -> refuses instead of silently using the fast brain
-        try:
-            service.run_deep_scan()
-            assert False, "expected ValueError for missing deep scan model"
-        except ValueError:
-            pass
-
         # A normal rescan with unchanged content is skipped (content hash short-circuit)
         total, sniffed, skipped = service.rescan_all()
         assert (total, sniffed, skipped) == (1, 0, 1)
 
         # force=True must bypass both the mtime AND the content-hash short-circuit,
-        # otherwise Deep Scan would never actually re-run unchanged files through the bigger model
+        # otherwise a forced pass would never actually re-run unchanged files through the brain
         total, sniffed, skipped = service.rescan_all(force=True)
         assert (total, sniffed, skipped) == (1, 1, 0)
 
         service.stop()
-        print("Deep scan force-resniff test passed successfully!")
+        print("Force rescan re-sniff test passed successfully!")
 
 
 if __name__ == "__main__":
     test_scan_adoption_and_reconciliation()
     test_api_endpoints()
-    test_deep_scan_force_resniff_and_missing_model()
+    test_force_rescan_reanalyzes_unchanged_files()

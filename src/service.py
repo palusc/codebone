@@ -361,6 +361,46 @@ class CodeBoneService:
                     pass
             raise
 
+    def scan_all_projects(
+        self,
+        on_progress: Optional[Callable[[int, int, str], None]] = None,
+    ) -> list[dict]:
+        """Scans every workspace folder one after the other. Each folder becomes the active project in turn,
+        gets a full pass and its rolling snapshot (so it can be revisited without rescanning), and the
+        project that was active before is restored from its snapshot at the end. The index and the watcher
+        still hold exactly one project at a time — the workspace is only the queue."""
+        projects = [p for p in self.config.project_paths if p.exists()]
+        if not projects:
+            return []
+        active = self.config.project_path
+        results: list[dict] = []
+        for i, p in enumerate(projects):
+            if i and self.config.project_path != projects[i - 1]:
+                # A switch from the menu or MCP landed mid-pass (it aborted the scan in flight):
+                # the user's active project wins, the queue does not steal it back.
+                break
+            self.config.set("project_path", str(p))
+            self.start(auto_scan=False)  # aborts a scan in flight, rebinds the index, watches this folder
+            total, sniffed, skipped = self.rescan_all(on_progress=on_progress, wait=True)
+            results.append({"project_path": str(p), "total": total, "sniffed": sniffed, "skipped": skipped})
+        if active and active.exists() and active != Path(results[-1]["project_path"]):
+            self._restore_project(active)
+        return results
+
+    def _restore_project(self, project: Path):
+        """Makes project active again from its rolling snapshot instead of rescanning it. Falls back to a
+        full scan when no snapshot exists (first run after adding the folder to the workspace)."""
+        self.config.set("project_path", str(project))
+        self.start(auto_scan=False)
+        matching = self.scans.find_matching_scan(project)
+        if matching:
+            try:
+                self.adopt_scan(matching["id"])
+                return
+            except Exception as exc:
+                logger.warning("Snapshot restore for %s failed, rescanning instead: %s", project, exc)
+        self.rescan_all(wait=True)
+
     def _rescan_once(self, on_progress, force) -> tuple[int, int, int]:
         project_path = self.config.project_path
         if not project_path or not project_path.exists():
@@ -490,31 +530,6 @@ class CodeBoneService:
             self._snapshot_revision = self.storage.revision
         except Exception as exc:
             logger.warning("Failed to auto-save scan snapshot: %s", exc)
-
-    def run_deep_scan(
-        self,
-        on_progress: Optional[Callable[[int, int, str], None]] = None,
-    ) -> tuple[int, int, int]:
-        """One-off full re-sniff using a larger, slower local model (Deep Scan Mode),
-        then restores the normal fast brain. Heavier on RAM/CPU/time than the default."""
-        model_path = self.config.get("deep_scan_model_path")
-        if not model_path or not Path(model_path).exists():
-            raise ValueError("No Deep Scan model configured")
-
-        from .providers import BuiltinProvider
-
-        deep_provider = BuiltinProvider(model_path=model_path, n_ctx=4096)
-        with self._scan_guard:  # no normal scan may run while the provider is swapped
-            with self._lock:
-                original, self.provider = self.provider, deep_provider
-            try:
-                self._rescan_requested = False
-                return self._rescan_once(on_progress, True)
-            finally:
-                with self._lock:
-                    if self.provider is deep_provider:  # a brain switch during the scan wins
-                        self.provider = original
-                deep_provider.close()
 
     def adopt_scan(
         self,

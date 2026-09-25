@@ -313,7 +313,8 @@ def find_free_port(start_port: int = 8053, max_attempts: int = 50) -> int:
 
 
 DEFAULTS = {
-    "project_path": None,
+    "project_path": None,  # the active project — the index and the watcher always belong to exactly one folder
+    "project_paths": [],  # workspace: every project folder that is scanned, one after the other
     "server_port": 8053,
     "known_models": [{"name": BASE_MODEL_NAME, "path": BASE_MODEL_PATH}],
     "model_path": BASE_MODEL_PATH,
@@ -324,7 +325,6 @@ DEFAULTS = {
     "brain_cloud_vendor": "openai",  # "openai" | "anthropic" | "openrouter"
     "brain_cloud_api_key": "",
     "brain_cloud_model": "gpt-6",
-    "deep_scan_model_path": None,
     "recent_projects": [],
     "first_run_at": None,
     "modules": [],
@@ -377,6 +377,10 @@ class Config:
             if self.data.get("brain_cloud_model") in ("gpt-6-luna", "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"):
                 self.data["brain_cloud_model"] = "gpt-6"
                 migrated = True
+            # Existing single-project configs start their workspace with the folder they already know
+            if not self.data.get("project_paths") and self.data.get("project_path"):
+                self.data["project_paths"] = [self.data["project_path"]]
+                migrated = True
             if migrated:
                 self.save()
 
@@ -398,6 +402,13 @@ class Config:
     def set(self, key: str, value):
         with self._lock:
             self.data[key] = value
+            if key == "project_path" and value:
+                # Every writer of the active project (menu, MCP adopt, first run) joins the workspace with
+                # it — but an existing folder keeps its position, so activation never reorders the queue.
+                resolved = self._resolved_str(str(value))
+                paths = self.data.get("project_paths") or []
+                if not any(self._resolved_str(p) == resolved for p in paths):
+                    self.data["project_paths"] = paths + [resolved]
             self.save()
 
     def is_first_days(self, days: int = 7) -> bool:
@@ -430,6 +441,25 @@ class Config:
     def is_configured(self) -> bool:
         p = self.project_path
         return bool(p and p.exists())
+
+    @property
+    def project_paths(self) -> list[Path]:
+        """All workspace folders in scan order, resolved like project_path. Duplicates collapse; folders that
+        left the disk are returned too — the scan loop skips them so an unmounted volume does not silently
+        shrink the workspace."""
+        out: list[Path] = []
+        seen: set[str] = set()
+        for p in self.data.get("project_paths", []) or []:
+            if not p:
+                continue
+            try:
+                resolved = Path(p).expanduser().resolve()
+            except OSError:
+                resolved = Path(p)
+            if str(resolved) not in seen:
+                seen.add(str(resolved))
+                out.append(resolved)
+        return out
 
     @property
     def db_path(self) -> Path:
@@ -517,6 +547,29 @@ class Config:
     def clear_recent_projects(self):
         """Clears all recent projects."""
         self.data["recent_projects"] = []
+        self.save()
+
+    @staticmethod
+    def _resolved_str(project_path: str) -> str:
+        try:
+            return str(Path(project_path).expanduser().resolve())
+        except OSError:
+            return str(project_path)
+
+    def add_project_path(self, project_path: str):
+        """Adds a folder to the scan workspace (duplicates collapse, order of first addition is kept)."""
+        resolved = self._resolved_str(project_path)
+        paths = [p for p in self.data.get("project_paths", []) if self._resolved_str(p) != resolved]
+        paths.append(resolved)
+        self.data["project_paths"] = paths
+        self.save()
+
+    def remove_project_path(self, project_path: str):
+        """Removes a folder from the scan workspace; the active project is left alone (set it first)."""
+        resolved = self._resolved_str(project_path)
+        self.data["project_paths"] = [
+            p for p in self.data.get("project_paths", []) if self._resolved_str(p) != resolved
+        ]
         self.save()
 
     def get_ignore_dirs(self, project_path: Optional[Path] = None) -> set[str]:

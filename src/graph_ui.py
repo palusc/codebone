@@ -1152,7 +1152,7 @@ function nodeMatches(n) {
   }
   if (!searchQuery) return true;
   const d = n.data || {};
-  const hay = [n.label, n.path || '', d.summary || '', (d.tables || []).join(' '), (d.routes || []).join(' '), (d.events || []).join(' ')].join(' ').toLowerCase();
+  const hay = [n.label, n.path || '', d.summary || '', d.content || '', (d.tables || []).join(' '), (d.routes || []).join(' '), (d.events || []).join(' ')].join(' ').toLowerCase();
   return hay.includes(searchQuery);
 }
 
@@ -1178,6 +1178,14 @@ function draw() {
       ctx.setLineDash([4, 4]);
       ctx.strokeStyle = hot ? 'rgba(167, 139, 250, 0.95)' : 'rgba(167, 139, 250, 0.55)';
       ctx.lineWidth = hot ? 2.2 : 1.4;
+    } else if (e.type === 'import') {
+      ctx.setLineDash([2, 3]);
+      ctx.strokeStyle = hot ? 'rgba(203, 213, 225, 0.95)' : 'rgba(148, 163, 184, 0.4)';
+      ctx.lineWidth = hot ? 1.8 : 1.1;
+    } else if (e.type === 'call') {
+      ctx.setLineDash([]);
+      ctx.strokeStyle = hot ? 'rgba(74, 222, 128, 0.95)' : 'rgba(74, 222, 128, 0.55)';
+      ctx.lineWidth = hot ? 2 : 1.4;
     } else {
       ctx.setLineDash([]);
       ctx.strokeStyle = hot ? 'rgba(56, 189, 248, 0.8)' : 'rgba(148, 163, 184, 0.5)';
@@ -1297,7 +1305,7 @@ function updateTooltip(sx, sy, node) {
   type.style.background = cfg.aura;
   type.style.color = cfg.stroke;
   $('tt-title').textContent = node.label;
-  const summary = (node.data && node.data.summary) || 'No summary available.';
+  const summary = (node.data && (node.data.summary || node.data.content)) || 'No summary available.';
   $('tt-summary').textContent = summary.length > 90 ? summary.slice(0, 88) + '…' : summary;
   tooltipEl.style.left = Math.min(window.innerWidth - 300, sx + 14) + 'px';
   tooltipEl.style.top = Math.min(window.innerHeight - 100, sy + 14) + 'px';
@@ -1322,7 +1330,7 @@ function selectNode(n, keepView) {
   pill.textContent = n.type;
   pill.style.background = cfg.aura;
   pill.style.color = cfg.stroke;
-  $('sb-summary').textContent = (n.data && n.data.summary) || 'No architectural summary indexed for this module.';
+  $('sb-summary').textContent = (n.data && (n.data.summary || n.data.content)) || 'No architectural summary indexed for this module.';
 
   const chips = $('sb-entities');
   chips.replaceChildren();

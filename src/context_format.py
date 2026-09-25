@@ -4,7 +4,8 @@ Two views, both bounded in size regardless of project size:
   overview()  the map: layout, domains, key entities and a one-line summary per (important) file
   search()    the drill-down: ranked matches for domain / file / query with entities and linked files
 
-Everything here is a pure function of the stored rows, so identical index state gives identical text.
+Everything here is a pure function of the stored rows plus the read-time source facts folded into
+them, so identical index state gives identical text.
 """
 import re
 from collections import Counter
@@ -86,8 +87,9 @@ def overview(project_name: str, files: List[dict], index: dict) -> str:
     if entity_lines:
         lines += ["", "## Entities"] + entity_lines
 
-    # Files with no summary and no entities (empty __init__.py ...) tell an assistant nothing: count, do not list
-    informative = [f for f in files if f.get("summary") or f.get("tables") or f.get("routes") or f.get("events")]
+    # Files with no summary, content record and no entities (empty __init__.py ...) tell an assistant
+    # nothing: count, do not list
+    informative = [f for f in files if f.get("summary") or f.get("content") or f.get("tables") or f.get("routes") or f.get("events")]
     trivial = n - len(informative)
     n_listed = len(informative)
     ranked = sorted(informative, key=lambda f: f["path"])
@@ -98,8 +100,11 @@ def overview(project_name: str, files: List[dict], index: dict) -> str:
         ranked.sort(key=lambda f: f["path"])
     lines += ["", "## Files" + (f" (top {MAX_OVERVIEW_FILES} of {n_listed} by connectivity)" if truncated else "")]
     for f in ranked:
-        summary = _clip(f.get("summary", ""))
-        lines.append(f"- {f['path']}" + (f": {summary}" if summary else ""))
+        text = _clip(f.get("summary") or f.get("content", ""))
+        line = f"- {f['path']}" + (f": {text}" if text else "")
+        if f.get("role"):
+            line += f" [{f['role']}]"
+        lines.append(line)
 
     if trivial:
         lines.append(f"(+{trivial} files without notable content omitted)")
@@ -128,7 +133,7 @@ def _match_files(files: List[dict], index: dict, domain: str, file: str, query: 
         base = path.rsplit("/", 1)[-1]
         entities = [e.lower() for cat in ("tables", "routes", "events") for e in f.get(cat, [])]
         doms = [d.lower() for d in f.get("domains", [])]
-        summary = (f.get("summary") or "").lower()
+        summary = ((f.get("summary") or "") + " " + (f.get("content") or "")).lower()
         total = hit_terms = 0
         for t in terms:
             s = 0
@@ -189,14 +194,25 @@ def search(project_name: str, files: List[dict], index: dict, domain: str = "", 
         return "\n".join(lines)
 
     shown = matches[:MAX_MATCHES]
+    by_path = {f["path"]: f for f in files}
     for f in shown:
         doms = f.get("domains", [])
-        lines += ["", f"### {f['path']}" + (f" [{', '.join(doms[:2])}]" if doms else "")]
-        if f.get("summary"):
-            lines.append(_clip(f["summary"], 200))
+        header = f"### {f['path']}" + (f" [{', '.join(doms[:2])}]" if doms else "")
+        if f.get("role"):
+            header += f" [{f['role']}]"
+        lines += ["", header]
+        body = f.get("summary") or f.get("content") or ""
+        if body:
+            lines.append(_clip(body, 200))
         for label_, cat in (("Tables", "tables"), ("Routes", "routes"), ("Events", "events")):
             if f.get(cat):
                 lines.append(f"{label_}: {_more(f[cat], 8)}")
+        if f.get("calls"):
+            chains = []
+            for route, handler in f["calls"]:
+                h_tables = by_path.get(handler, {}).get("tables", [])
+                chains.append(f"{route} -> {handler}" + (f" (tables: {_more(h_tables, 3)})" if h_tables else ""))
+            lines.append("Calls: " + _more(chains, 4))
         links = _links(f["path"], f, index)
         if links:
             lines.append("Linked: " + ", ".join(f"{p} (via {via})" for p, via in links))
@@ -206,9 +222,19 @@ def search(project_name: str, files: List[dict], index: dict, domain: str = "", 
     return "\n".join(lines)
 
 
-def links(project_name: str, files: List[dict], index: dict, file: str = "") -> str:
-    """Files connected through shared tables, routes or events (which imports alone never reveal)."""
+def links(project_name: str, files: List[dict], index: dict, file: str = "", facts: Optional[dict] = None) -> str:
+    """Files connected through shared tables, routes or events, plus imports and API calls when the
+    caller passes the read-time facts."""
     by_path = {f["path"]: f for f in files}
+    facts = facts or {}
+    imports_by: Dict[str, List[str]] = {}
+    imported_by: Dict[str, List[str]] = {}
+    for e in facts.get("imports", []):
+        imports_by.setdefault(e["from"], []).append(e["to"])
+        imported_by.setdefault(e["to"], []).append(e["from"])
+    calls_by: Dict[str, List[list]] = {}
+    for e in facts.get("calls", []):
+        calls_by.setdefault(e["from"], []).append([e["entity"], e["to"]])
     if file:
         wanted = _tokens(file) or [file.lower()]
         targets = [p for p in sorted(by_path) if all(t in p.lower() for t in wanted)][:3]
@@ -225,11 +251,27 @@ def links(project_name: str, files: List[dict], index: dict, file: str = "") -> 
                     if others:
                         found = True
                         lines.append(f"- {label} {name}: {_more(sorted(others), 6)}")
+            calls = calls_by.get(p) or rec.get("calls") or []
+            for route, handler in calls[:5]:
+                found = True
+                h_tables = by_path.get(handler, {}).get("tables", [])
+                lines.append(f"- calls {route} -> {handler}" + (f" ({_more(h_tables, 3)})" if h_tables else ""))
+            out = imports_by.get(p, [])
+            if out:
+                found = True
+                lines.append(f"- imports: {_more(sorted(out), 4)}")
+            incoming = imported_by.get(p, [])
+            if incoming:
+                found = True
+                lines.append(f"- imported by: {_more(sorted(incoming), 4)}")
             if not found:
-                lines.append("- shares no table, route or event with other files")
+                lines.append("- shares no table, route, event or import with other files")
         return "\n".join(lines)
 
     degree = _degree(files, index)
+    for e in facts.get("imports", []) + facts.get("calls", []):
+        degree[e["from"]] = degree.get(e["from"], 0) + 1
+        degree[e["to"]] = degree.get(e["to"], 0) + 1
     hubs = [p for p, d in sorted(degree.items(), key=lambda kv: (-kv[1], kv[0])) if d][:15]
     lines = [f"# codebone links: {project_name} | most connected files"]
     lines += [f"- {p} ({degree[p]})" for p in hubs] or ["- no shared entities found"]
@@ -246,7 +288,8 @@ def overview_json(project_name: str, files: List[dict], index: dict, revision: i
         "domains": {d: len(p) for d, p in sorted(index.get("domains", {}).items())},
         "entities": {cat: sorted(index.get(cat, {})) for cat in ("tables", "routes", "events")},
         "files": [
-            {"path": f["path"], "summary": _clip(f.get("summary", "")), "domains": f.get("domains", [])}
+            {"path": f["path"], "summary": _clip(f.get("summary", "")), "domains": f.get("domains", []),
+             "content": f.get("content", ""), "role": f.get("role", ""), "calls": f.get("calls", [])}
             for f in sorted(files, key=lambda f: f["path"])[:MAX_JSON_FILES]
         ],
         "truncated": len(files) > MAX_JSON_FILES,
@@ -262,7 +305,8 @@ def search_json(project_name: str, files: List[dict], index: dict, revision: int
         "match_count": len(matches),
         "partial": partial,
         "files": [
-            {k: f.get(k) for k in ("path", "summary", "domains", "tables", "routes", "events")}
+            {**{k: f.get(k) for k in ("path", "summary", "domains", "tables", "routes", "events")},
+             "content": f.get("content") or "", "role": f.get("role") or "", "calls": f.get("calls") or []}
             for f in matches[:50]
         ],
         "truncated": len(matches) > 50,

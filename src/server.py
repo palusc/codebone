@@ -222,7 +222,8 @@ def create_app(service: CodeBoneService, allowed_hosts: Optional[set] = None) ->
             return Response(content=msg, media_type="text/plain")
 
         storage = service.storage
-        files, index, name = storage.all_files(), storage.entity_index(), project_name()
+        files, index = storage.view()
+        name = project_name()
         domain, file, query = domain.strip(), file.strip(), query.strip()
         filtered = bool(domain or file or query)
 
@@ -239,14 +240,15 @@ def create_app(service: CodeBoneService, allowed_hosts: Optional[set] = None) ->
         if not service.config.is_configured:
             return Response(content="codebone is not configured yet.", media_type="text/plain")
         storage = service.storage
-        text = context_format.links(project_name(), storage.all_files(), storage.entity_index(), file.strip())
+        files, index = storage.view()
+        text = context_format.links(project_name(), files, index, file.strip(), facts=storage.source_facts())
         return Response(content=text, media_type="text/markdown; charset=utf-8")
 
     @app.get("/codebone/graph")
     @app.get("/pug/graph")
     def graph():
         storage = service.storage
-        all_files = storage.all_files()
+        all_files = storage.view()[0]
         communities = storage.communities()
         return {
             "revision": storage.revision,

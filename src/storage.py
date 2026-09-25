@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .imports import import_edges
+from .imports import source_facts as _source_facts
 from .prompts import _clean_entity_list, parse_analysis, sanitize_text
 
 logger = logging.getLogger("codebone.storage")
@@ -132,6 +132,7 @@ class Storage:
                 (key, value),
             )
             self._conn.commit()
+            self._touch()  # project_path gates the derived views; a cached empty one must not outlive the bind
 
     # ── writes ───────────────────────────────────────────────────────────
     def _upsert(self, path, tables, routes, events, domains, summary, updated_at, mtime, content_hash, source):
@@ -324,16 +325,64 @@ class Storage:
         return self._build_index([f for f in self.all_files() if f["path"] in allowed_paths])
 
     def graph_edges(self, index: Optional[dict] = None, include_domains: bool = False) -> List[dict]:
-        """Files are logically connected if they share a DB table, API route or event (and optionally a domain).
-        Pairwise domain edges are opt-in: the live graph already draws domain hub nodes, so they are noise (and
-        quadratic). Links per entity are windowed and the total is capped, see MAX_EDGES."""
+        """Files are logically connected if they share a DB table, API route or event (and optionally a domain),
+        plus the import and fetch->route edges derived from the sources at read time. Pairwise domain edges are
+        opt-in: the live graph already draws domain hub nodes, so they are noise (and quadratic). Links per
+        entity are windowed and the total is capped, see MAX_EDGES."""
         if index is None:
-            return self._cached(("edges", include_domains), lambda: self._compute_edges(self.entity_index(), include_domains) + self._import_edges())
+            def build():
+                facts = self.source_facts()
+                return (self._compute_edges(self.view()[1], include_domains)
+                        + facts.get("imports", []) + facts.get("calls", []))
+            return self._cached(("edges", include_domains), build)
         return self._compute_edges(index, include_domains)
 
-    def _import_edges(self) -> List[dict]:
+    def source_facts(self) -> dict:
+        """Import/call edges, derived tables/routes, roles and content records, read from the project
+        files under project_path. {} without a root, so entity-less fixtures keep yielding no edges."""
         root = self.get_meta("project_path")
-        return import_edges(root, [f["path"] for f in self.all_files()]) if root else []
+        if not root:
+            return {}
+
+        def build():
+            files = self.all_files()
+            empty = {f["path"] for f in files if not (f.get("summary") or "").strip()}
+            return _source_facts(root, [f["path"] for f in files], empty)
+        return self._cached("facts", build)
+
+    def view(self) -> tuple:
+        """(files, index) with the read-time facts folded into each row: derived tables/routes unioned
+        with the stored ones, plus calls/content/role. Treat the rows as read-only — they are a view,
+        never written back."""
+        return self._cached("view", self._build_view)
+
+    def _build_view(self) -> tuple:
+        facts = self.source_facts()
+        if not facts:
+            files = self.all_files()
+            return files, self._build_index(files)
+        calls_by: Dict[str, list] = {}
+        for e in facts["calls"]:
+            calls_by.setdefault(e["from"], []).append([e["entity"], e["to"]])
+        files = [self._annotate(f, facts, calls_by) for f in self.all_files()]
+        return files, self._build_index(files)
+
+    @staticmethod
+    def _annotate(row: dict, facts: dict, calls_by: dict) -> dict:
+        p = row["path"]
+        out = dict(row)
+        derived = facts["tables"].get(p)
+        if derived:
+            # stored DDL entities for .sql are the known-corrupt ones ('public' phantom); the
+            # schema-aware read-time list replaces them instead of unioning
+            out["tables"] = list(derived) if p.endswith(".sql") else list(dict.fromkeys(row["tables"] + derived))
+        routes = facts["routes"].get(p)
+        if routes:
+            out["routes"] = list(dict.fromkeys(row["routes"] + routes))
+        out["calls"] = calls_by.get(p, [])
+        out["content"] = facts["content"].get(p, "")
+        out["role"] = facts["roles"].get(p, "")
+        return out
 
     @staticmethod
     def _compute_edges(index: dict, include_domains: bool) -> List[dict]:

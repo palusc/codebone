@@ -1,6 +1,7 @@
 """Brain providers for codebone: Built-in (Metal Qwen), Local URL, Cloud BYOK, and Fast Fallback."""
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -15,6 +16,7 @@ except ImportError:
     requests = None
 
 from .config import Config
+from .imports import JS_EXT, sql_tables, supabase_tables
 from .prompts import build_prompt, ground_analysis
 
 logger = logging.getLogger("codebone.providers")
@@ -148,8 +150,9 @@ class FastFallbackProvider(Provider):
             tables.add(m.group(1))
         for m in re.finditer(r"__tablename__\s*=\s*['\"]([^'\"]+)['\"]", code):
             tables.add(m.group(1))
-        for m in re.finditer(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?['\"`]?([A-Za-z0-9_]+)['\"`]?", code, re.IGNORECASE):
-            tables.add(m.group(1))
+        tables.update(sql_tables(code))
+        if os.path.splitext(file_path)[1].lower() in JS_EXT:  # supabase reads: .from('table')
+            tables.update(supabase_tables(code))
         for m in re.finditer(r"^\s*model\s+([A-Za-z0-9_]+)\s*\{", code, re.MULTILINE):  # Prisma
             tables.add(m.group(1))
         for m in re.finditer(r"(?:mongoose\.model|sequelize\.define|\bTable)\(\s*['\"]([A-Za-z0-9_]+)['\"]", code):

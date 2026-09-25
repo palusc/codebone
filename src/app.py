@@ -890,12 +890,13 @@ class CodeBoneApp(rumps.App):
                 restart_app()
             except Exception as err:
                 logger.error("Failed to install update: %s", err)
+                msg = str(err)  # err is unbound once this block exits; _show runs later on the main thread
 
                 def _show():
                     NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
                     rumps.alert(
                         title="Update Installation Failed",
-                        message=f"An error occurred while installing the update:\n{err}",
+                        message=f"An error occurred while installing the update:\n{msg}",
                         ok="OK",
                     )
                 self._on_main(_show)

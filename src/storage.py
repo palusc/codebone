@@ -36,8 +36,20 @@ CREATE TABLE IF NOT EXISTS meta (
 # Rendering limits for the graph: entity-sharing links are windowed per entity and capped overall so a
 # 5000-file project does not produce a multi-megabyte payload.
 MAX_PEERS_PER_ENTITY = 6
-MAX_EDGES = 6000
+# Safety valve for the entity-edge payload, not a target: only _compute_edges is capped (imports,
+# calls and orphan links come on top). A 1400-file project lands at ~1.2k entity edges, so 15000 is
+# several times what real projects produce — hit it and the tail entities are dropped silently.
+MAX_EDGES = 15000
 MAX_DOMAIN_PEERS = 15
+# Up to this many files per entity are drawn pairwise (dense and pretty); a bigger group collapses
+# into a star through its most-connected member, which keeps every member linked at n-1 edges
+# instead of the ~6n the peer window would spend — an edge only ever means "both share the entity",
+# and a star still says that for every member.
+MAX_PAIRWISE_GROUP = 10
+
+
+def _dir_of(path: str) -> str:
+    return path.rsplit("/", 1)[0] if "/" in path else "."
 
 
 class Storage:
@@ -328,14 +340,42 @@ class Storage:
         """Files are logically connected if they share a DB table, API route or event (and optionally a domain),
         plus the import and fetch->route edges derived from the sources at read time. Pairwise domain edges are
         opt-in: the live graph already draws domain hub nodes, so they are noise (and quadratic). Links per
-        entity are windowed and the total is capped, see MAX_EDGES."""
+        entity are windowed and the total is capped, see MAX_EDGES. Files that ended up with no edge
+        at all get one last directory link, see _link_orphans."""
         if index is None:
             def build():
                 facts = self.source_facts()
-                return (self._compute_edges(self.view()[1], include_domains)
-                        + facts.get("imports", []) + facts.get("calls", []))
+                return self._link_orphans(self._compute_edges(self.view()[1], include_domains)
+                                          + facts.get("imports", []) + facts.get("calls", []))
             return self._cached(("edges", include_domains), build)
-        return self._compute_edges(index, include_domains)
+        return self._link_orphans(self._compute_edges(index, include_domains))
+
+    def _link_orphans(self, edges: List[dict]) -> List[dict]:
+        """Directory fallback for files nothing connects to: one edge to a neighbour in the own
+        folder, or behind the first orphan there when the folder has no linked file either — a lone
+        island carries no information, and docs/config/assets share no table, route or event with
+        anyone. Gated on a project root like source_facts, so rootless fixtures keep yielding pure
+        edges."""
+        if not self.get_meta("project_path"):
+            return edges
+        linked = {e["from"] for e in edges} | {e["to"] for e in edges}
+        paths = sorted(f["path"] for f in self.all_files())
+        anchors: Dict[str, str] = {}
+        for p in paths:
+            if p in linked:
+                anchors.setdefault(_dir_of(p), p)
+        extra = []
+        for p in paths:
+            if p in linked:
+                continue
+            d = _dir_of(p)
+            anchor = anchors.get(d)
+            if anchor is None:
+                anchors[d] = p
+                continue
+            extra.append({"from": p, "to": anchor, "type": "path", "entity": d})
+            linked.add(p)
+        return edges + extra
 
     def source_facts(self) -> dict:
         """Import/call edges, derived tables/routes, roles and content records, read from the project
@@ -396,9 +436,23 @@ class Storage:
                       ("event", "events", MAX_PEERS_PER_ENTITY)]
         if include_domains:
             categories.insert(0, ("domain", "domains", MAX_DOMAIN_PEERS))
+        degree: Dict[str, int] = {}
+        for _, key, _ in categories:
+            for paths in index.get(key, {}).values():
+                for p in set(paths):
+                    degree[p] = degree.get(p, 0) + 1
         for category, key, max_peers in categories:
             for entity_name, paths in sorted(index.get(key, {}).items()):
                 unique = sorted(set(paths))
+                if len(unique) > MAX_PAIRWISE_GROUP:
+                    hub = min(unique, key=lambda p: (-degree.get(p, 0), p))
+                    for p in unique:
+                        if p == hub:
+                            continue
+                        if len(edges) >= MAX_EDGES:
+                            return edges
+                        edges.append({"from": hub, "to": p, "type": category, "entity": entity_name})
+                    continue
                 for i in range(len(unique)):
                     for j in range(i + 1, min(len(unique), i + 1 + max_peers)):
                         if len(edges) >= MAX_EDGES:

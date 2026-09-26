@@ -11,10 +11,12 @@ import re
 from collections import Counter
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from .codesearch import symbols, text_score
+
 MAX_OVERVIEW_FILES = 60      # files listed with a summary in the overview
 MAX_DOMAINS = 8
 MAX_ENTITIES = 15
-MAX_MATCHES = 12             # files rendered in full by search()
+MAX_MATCHES = 8              # result groups rendered in full by search()
 MAX_SUMMARY = 110
 MAX_JSON_FILES = 200
 
@@ -63,12 +65,14 @@ def _degree(files: List[dict], index: dict) -> Dict[str, int]:
     return score
 
 
-def overview(project_name: str, files: List[dict], index: dict) -> str:
+def overview(project_name: str, files: List[dict], index: dict, fresh: str = "") -> str:
     n = len(files)
     lines = [f"# codebone: {project_name} | {n} files | {_analysis_label(files)}"]
     if not n:
         lines.append("Nothing indexed yet.")
         return "\n".join(lines)
+    if fresh:
+        lines.append(fresh)
     lines.append(f"Layout: {_layout(files)}")
 
     domains = sorted(index.get("domains", {}).items(), key=lambda kv: (-len(kv[1]), kv[0].lower()))
@@ -108,25 +112,37 @@ def overview(project_name: str, files: List[dict], index: dict) -> str:
 
     if trivial:
         lines.append(f"(+{trivial} files without notable content omitted)")
-    lines += ["", 'Drill down: cb(query="billing invoice"), cb(file="auth"), cb(domain="Payment"); links: codebone_graph(file="...")']
+    lines += ["", 'Drill down: cb(query="billing invoice"), cb(file="auth"), cb(domain="Payment"); a symbol name in query shows definition and references, file= shows imports']
     return "\n".join(lines)
 
 
-def _match_files(files: List[dict], index: dict, domain: str, file: str, query: str) -> Tuple[List[dict], bool]:
-    """Returns (ranked files, partial). Terms must all match (AND); if that finds nothing, any term (OR) is used."""
+def _match_files(files: List[dict], index: dict, domain: str, file: str, query: str,
+                 texts: Optional[Dict[str, str]] = None, assets: bool = False) -> Tuple[List[Tuple[dict, int]], bool, dict]:
+    """Returns ([(file, score)] best first, partial, info).
+
+    With a query, domain and file are boosts, never filters: a file that matches the words but sits in
+    another domain still ranks, and info["domain_hits"] says how the hits split. Without a query they
+    filter. Terms must all match (AND); if that finds nothing, any term (OR) is used. Asset rows only
+    count with assets=True (info["assets_hidden"] tells how many matched anyway)."""
+    info: dict = {}
     pool = files
-    if domain:
-        wanted = _tokens(domain) or [domain.lower()]
-        pool = [f for f in pool if any(all(t in d.lower() for t in wanted) for d in f.get("domains", []))]
-    if file:
-        wanted = _tokens(file) or [file.lower()]
-        pool = [f for f in pool if all(t in f["path"].lower() for t in wanted)]
-    if not query:
-        return sorted(pool, key=lambda f: f["path"]), False
+    dw = _tokens(domain) or ([domain.lower()] if domain else [])
+    fw = _tokens(file) or ([file.lower()] if file else [])
+
+    def in_dom(f: dict) -> bool:
+        return bool(dw) and any(all(t in d.lower() for t in dw) for d in f.get("domains", []))
+
+    def in_file(f: dict) -> bool:
+        return bool(fw) and all(t in f["path"].lower() for t in fw)
 
     terms = _tokens(query)
     if not terms:
-        return [], False
+        if query:
+            return [], False, info
+        pool = [f for f in pool if (not dw or in_dom(f)) and (not fw or in_file(f))]
+        if not assets:
+            pool = [f for f in pool if f.get("source") != "asset"]
+        return [(f, 0) for f in sorted(pool, key=lambda f: f["path"])], False, info
 
     def score(f: dict) -> Tuple[int, int]:
         path = f["path"].lower()
@@ -134,9 +150,10 @@ def _match_files(files: List[dict], index: dict, domain: str, file: str, query: 
         entities = [e.lower() for cat in ("tables", "routes", "events") for e in f.get(cat, [])]
         doms = [d.lower() for d in f.get("domains", [])]
         summary = ((f.get("summary") or "") + " " + (f.get("content") or "")).lower()
+        body = text_score(texts[f["path"]], terms)[0] if texts and f["path"] in texts else [0] * len(terms)
         total = hit_terms = 0
-        for t in terms:
-            s = 0
+        for t, w in zip(terms, body):
+            s = w
             if t in base:
                 s += 5
             elif t in path:
@@ -150,6 +167,8 @@ def _match_files(files: List[dict], index: dict, domain: str, file: str, query: 
             if s:
                 hit_terms += 1
             total += s
+        if hit_terms:
+            total += 4 * in_dom(f) + 4 * in_file(f)
         return hit_terms, total
 
     scored = [(f, *score(f)) for f in pool]
@@ -160,8 +179,13 @@ def _match_files(files: List[dict], index: dict, domain: str, file: str, query: 
     else:
         hits = [(f, h, s) for f, h, s in scored if h > 0]
         partial = bool(hits)
+    if not assets:
+        info["assets_hidden"] = sum(1 for f, _, _ in hits if f.get("source") == "asset")
+        hits = [x for x in hits if x[0].get("source") != "asset"]
     hits.sort(key=lambda x: (-x[1], -x[2], x[0]["path"]))
-    return [f for f, _, _ in hits], partial
+    if dw:
+        info["domain_hits"] = sum(1 for f, _, _ in hits if in_dom(f))
+    return [(f, s) for f, _, s in hits], partial, info
 
 
 def _lookup(index: dict, cat: str, name: str) -> List[str]:
@@ -183,27 +207,79 @@ def _links(path: str, rec: dict, index: dict, limit: int = 5) -> List[Tuple[str,
     return sorted(seen.items())[:limit]
 
 
-def search(project_name: str, files: List[dict], index: dict, domain: str = "", file: str = "", query: str = "") -> str:
+def _groups(ranked: List[Tuple[dict, int]]) -> List[Tuple[dict, int, List[str]]]:
+    """Same file name and same description in several places (logo.png in three apps) -> one entry."""
+    seen: Dict[tuple, list] = {}
+    out: List[Tuple[dict, int, List[str]]] = []
+    for f, sc in ranked:
+        key = (f["path"].rsplit("/", 1)[-1], f.get("summary") or f.get("content") or "")
+        if key in seen:
+            seen[key].append(f["path"])
+        else:
+            seen[key] = others = []
+            out.append((f, sc, others))
+    return out
+
+
+def search(project_name: str, files: List[dict], index: dict, domain: str = "", file: str = "", query: str = "",
+           texts: Optional[Dict[str, str]] = None, assets: bool = False, fresh: str = "",
+           facts: Optional[dict] = None) -> str:
+    """texts (path -> source) adds the word search: code lines, symbol names and comments join the ranking and
+    the best matching lines are quoted. facts adds imports / imported by per file."""
     label = " ".join(f'{k}="{v}"' for k, v in (("domain", domain), ("file", file), ("query", query)) if v)
-    matches, partial = _match_files(files, index, domain, file, query)
-    lines = [f"# codebone: {project_name} | {label} | {len(matches)} match{'es' if len(matches) != 1 else ''}"]
+    ranked, partial, info = _match_files(files, index, domain, file, query, texts, assets)
+    groups = _groups(ranked)
+    lines = [f"# codebone: {project_name} | {label} | {len(ranked)} match{'es' if len(ranked) != 1 else ''}"]
+    if fresh:
+        lines.append(fresh)
     if partial:
         lines.append("(no file matches every term; showing files matching some)")
-    if not matches:
+    if domain and query and ranked:
+        k = info.get("domain_hits", 0)
+        lines.append(f'Domain "{domain}": {k} hit{"" if k == 1 else "s"} in it, {len(ranked) - k} elsewhere (ranked together)')
+    if info.get("assets_hidden"):
+        lines.append(f"({info['assets_hidden']} asset files also match; add assets=true to list them)")
+    terms = _tokens(query)
+    if not ranked:
+        if domain and not query:
+            known = sorted(index.get("domains", {}).items(), key=lambda kv: -len(kv[1]))[:6]
+            lines.append(f'0 files in domain "{domain}"; domains: ' + ", ".join(f"{d} ({len(p)})" for d, p in known))
         lines.append("No match. Try fewer or different words, or cb() for the overview.")
         return "\n".join(lines)
 
-    shown = matches[:MAX_MATCHES]
+    if texts and terms:
+        for sym in symbols(terms, texts):
+            d = sym["defs"][0]
+            lines += ["", f"### symbol {sym['name']}: defined at {d[0]}:{d[1]}" + (f" (+{len(sym['defs']) - 1} more)" if len(sym["defs"]) > 1 else "")]
+            lines += [f"- {p}:{i} {_clip(text, 110)}" for p, i, text in sym["uses"]]
+            if sym["more"]:
+                lines.append(f"(+{sym['more']} more references)")
+            if not sym["uses"]:
+                lines.append("- no other references found")
+
+    shown = groups[:MAX_MATCHES]
     by_path = {f["path"]: f for f in files}
-    for f in shown:
+    imports_by: Dict[str, List[str]] = {}
+    imported_by: Dict[str, List[str]] = {}
+    for e in (facts or {}).get("imports", []):
+        imports_by.setdefault(e["from"], []).append(e["to"])
+        imported_by.setdefault(e["to"], []).append(e["from"])
+    for f, sc, same in shown:
         doms = f.get("domains", [])
         header = f"### {f['path']}" + (f" [{', '.join(doms[:2])}]" if doms else "")
         if f.get("role"):
             header += f" [{f['role']}]"
+        if query:
+            header += f" (score {sc})"
         lines += ["", header]
+        if same:
+            lines.append(f"Same file in {len(same)} more place{'s' if len(same) != 1 else ''}: {_more(same, 4)}")
         body = f.get("summary") or f.get("content") or ""
         if body:
             lines.append(_clip(body, 200))
+        if texts and terms and f["path"] in texts:
+            for _, i, text in text_score(texts[f["path"]], terms)[1][:2]:
+                lines.append(f"L{i}: {_clip(text, 140)}")
         for label_, cat in (("Tables", "tables"), ("Routes", "routes"), ("Events", "events")):
             if f.get(cat):
                 lines.append(f"{label_}: {_more(f[cat], 8)}")
@@ -213,12 +289,16 @@ def search(project_name: str, files: List[dict], index: dict, domain: str = "", 
                 h_tables = by_path.get(handler, {}).get("tables", [])
                 chains.append(f"{route} -> {handler}" + (f" (tables: {_more(h_tables, 3)})" if h_tables else ""))
             lines.append("Calls: " + _more(chains, 4))
+        if imports_by.get(f["path"]):
+            lines.append("Imports: " + _more(sorted(imports_by[f["path"]]), 4))
+        if imported_by.get(f["path"]):
+            lines.append("Imported by: " + _more(sorted(imported_by[f["path"]]), 4))
         links = _links(f["path"], f, index)
         if links:
             lines.append("Linked: " + ", ".join(f"{p} (via {via})" for p, via in links))
-    if len(matches) > len(shown):
-        rest = [f["path"] for f in matches[len(shown): len(shown) + 10]]
-        lines += ["", f"(+{len(matches) - len(shown)} more: {', '.join(rest)}{' ...' if len(matches) - len(shown) > 10 else ''})"]
+    if len(groups) > len(shown):
+        rest = [g[0]["path"] for g in groups[len(shown): len(shown) + 10]]
+        lines += ["", f"(+{len(groups) - len(shown)} more: {', '.join(rest)}{' ...' if len(groups) - len(shown) > 10 else ''})"]
     return "\n".join(lines)
 
 
@@ -275,7 +355,7 @@ def links(project_name: str, files: List[dict], index: dict, file: str = "", fac
     hubs = [p for p, d in sorted(degree.items(), key=lambda kv: (-kv[1], kv[0])) if d][:15]
     lines = [f"# codebone links: {project_name} | most connected files"]
     lines += [f"- {p} ({degree[p]})" for p in hubs] or ["- no shared entities found"]
-    lines.append('Use codebone_graph(file="...") for the links of one file.')
+    lines.append('Use cb(file="...") for the links of one file.')
     return "\n".join(lines)
 
 
@@ -296,8 +376,10 @@ def overview_json(project_name: str, files: List[dict], index: dict, revision: i
     }
 
 
-def search_json(project_name: str, files: List[dict], index: dict, revision: int, domain="", file="", query="") -> dict:
-    matches, partial = _match_files(files, index, domain, file, query)
+def search_json(project_name: str, files: List[dict], index: dict, revision: int, domain="", file="", query="",
+                texts: Optional[Dict[str, str]] = None, assets: bool = False) -> dict:
+    matches, partial, _ = _match_files(files, index, domain, file, query, texts, assets)
+    matches = [f for f, _ in matches]
     return {
         "project": project_name,
         "revision": revision,

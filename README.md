@@ -10,7 +10,7 @@
 [![macOS](https://img.shields.io/badge/platform-macOS-black?logo=apple&style=flat-square)](#)
 [![Metal GPU](https://img.shields.io/badge/inference-Apple%20Silicon%20Metal-purple?style=flat-square)](#)
 [![MCP](https://img.shields.io/badge/protocol-MCP%20Native-blue?style=flat-square)](#)
-[![Version 1.6.0](https://img.shields.io/badge/version-1.6.0-informational?style=flat-square)](CHANGELOG.md)
+[![Version 1.7.0](https://img.shields.io/badge/version-1.7.0-informational?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Local Only](https://img.shields.io/badge/privacy-100%25%20local-success?style=flat-square)](#-privacy--security)
 
@@ -203,6 +203,12 @@ Project: /Users/you/my_project | Files: 142 | Updated: 2026-09-23
 ## Focused query: cb(domain="billing")
 → Returns only billing files, models (Invoice, Subscription),
   routes (POST /checkout/session), and events (InvoicePaid, PaymentFailed).
+
+## Query: cb(query="stripe webhook")
+→ A short offer first: best file with line, confidence, related files and tests,
+  and the size of the full answer. Often enough for a small change.
+## Tip: cb(query="stripe webhook", whisper=true)
+→ The full answer: best 8 files, matching lines, symbol definitions and references, imports.
 ```
 
 </details>
@@ -219,7 +225,8 @@ curl http://localhost:8053/codebone/context
 # Filter by domain, file, or entity
 curl 'http://localhost:8053/codebone/context?domain=billing'
 curl 'http://localhost:8053/codebone/context?file=payments'
-curl 'http://localhost:8053/codebone/context?query=InvoiceCreated'
+curl 'http://localhost:8053/codebone/context?query=InvoiceCreated'           # full answer
+curl 'http://localhost:8053/codebone/context?query=InvoiceCreated&offer=true' # short offer
 ```
 
 </details>

@@ -108,16 +108,21 @@ def _post(path: str, payload: dict) -> str:
 
 
 @mcp.tool()
-def cb(format: str = "markdown", domain: str = "", file: str = "", query: str = "", assets: bool = False) -> str:
-    """Codebase map from codebone; use it before reading files. No arguments: layout, domains, entities and a
-    one-line summary per file. query="billing invoice" ranks files by name, symbols, comments, code and
-    summary (best 8 with score and matching lines; a symbol name also lists definition and references);
-    file="auth" adds imports / imported by; domain="Payment" boosts that domain without hiding other hits.
-    Image and font files are hidden unless assets=true. format="json" for structured output."""
+def cb(format: str = "markdown", domain: str = "", file: str = "", query: str = "", assets: bool = False,
+       whisper: bool = False) -> str:
+    """Codebase map from codebone; call it before grep or reading files. No arguments: layout, domains, entities
+    and a one-line summary per file. query="billing invoice" answers in two steps: first a short offer (best
+    file with line, confidence, related files and tests, and the size of the full tip). Often that is enough for
+    a small change. If you need more, repeat the same call with whisper=true: best 8 files with score, matching
+    lines, symbol definitions and references, imports. file="auth" adds imports / imported by; domain="Payment"
+    boosts that domain without hiding other hits. Image and font files are hidden unless assets=true.
+    format="json" for structured output."""
     params: dict = {"format": format}
     params.update({k: v for k, v in (("domain", domain), ("file", file), ("query", query)) if v})
     if assets:
         params["assets"] = "true"
+    if query and not whisper:
+        params["offer"] = "true"
     return _get("/codebone/context", params)
 
 
@@ -151,8 +156,8 @@ def codebone_prompt() -> str:
     """Use codebone's live codebase map."""
     return (
         "codebone is available. Call cb() first for the project map, then drill down with "
-        'cb(query="...") / cb(file="...") / cb(domain="...") '
-        "instead of reading many files."
+        'cb(query="...") / cb(file="...") / cb(domain="...") instead of reading many files. '
+        "A query returns a short offer first; add whisper=true only when it does not answer your question."
     )
 
 

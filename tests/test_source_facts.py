@@ -77,3 +77,47 @@ def test_without_project_path_no_facts_no_edges(tmp_path):
     _seed(s)
     assert s.source_facts() == {}
     assert s.graph_edges() == []
+
+
+def test_template_fetch_keeps_depth_and_matches_deep_handler(tmp_path):
+    """/api/users/${id}/posts must reach the posts handler, not collapse to the static parent."""
+    files = {
+        "app/api/users/route.ts": "export async function GET() {}\n",
+        "app/api/users/[id]/route.ts": "export async function GET() {}\n",
+        "app/api/users/[id]/posts/route.ts": "export async function GET() {}\n",
+        "app/page.tsx": "export default function P() { return fetch(`/api/users/${id}/posts`) }\n",
+    }
+    for rel, code in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(code)
+    facts = source_facts(str(tmp_path), list(files))
+    assert facts["calls"] == [{"from": "app/page.tsx", "to": "app/api/users/[id]/posts/route.ts",
+                               "type": "call", "entity": "/api/users/[*]/posts"}]
+
+
+def test_sql_row_scrubs_phantom_and_keeps_regex_invisible_tables(tmp_path):
+    """A .sql row unions with the derived list: old-regex junk ('public.phantom') dies, a stored
+    TEMP table the regex cannot see survives."""
+    (tmp_path / "migrations").mkdir()
+    (tmp_path / "migrations" / "001_init.sql").write_text("CREATE TABLE jobs (id int);\n")
+    s = Storage(tmp_path / "idx.db")
+    s.insert_record({"path": "migrations/001_init.sql", "summary": "Init DDL.",
+                     "tables": ["jobs", "tmp_batch", "public.phantom", "for"], "routes": [],
+                     "events": [], "domains": []})
+    s.set_meta("project_path", str(tmp_path))
+    files, index = s.view()
+    row = next(f for f in files if f["path"] == "migrations/001_init.sql")
+    assert row["tables"] == ["jobs", "tmp_batch"]      # derived + real stored; junk scrubbed
+    assert "public.phantom" not in index["tables"] and "for" not in index["tables"]
+
+
+def test_route_and_page_entities_are_sanitised(tmp_path):
+    files = {"app/<img src=x onerror=alert(1)>/route.ts": "export async function GET() {}\n"}
+    for rel, code in files.items():
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(code)
+    facts = source_facts(str(tmp_path), list(files))
+    assert facts["routes"] and "<" not in facts["routes"][list(facts["routes"])[0]][0]
+    assert "<" not in facts["roles"][list(facts["roles"])[0]]

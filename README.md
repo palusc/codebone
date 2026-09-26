@@ -10,7 +10,7 @@
 [![macOS](https://img.shields.io/badge/platform-macOS-black?logo=apple&style=flat-square)](#)
 [![Metal GPU](https://img.shields.io/badge/inference-Apple%20Silicon%20Metal-purple?style=flat-square)](#)
 [![MCP](https://img.shields.io/badge/protocol-MCP%20Native-blue?style=flat-square)](#)
-[![Version 1.4.0](https://img.shields.io/badge/version-1.4.0-informational?style=flat-square)](CHANGELOG.md)
+[![Version 1.6.0](https://img.shields.io/badge/version-1.5.0-informational?style=flat-square)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Local Only](https://img.shields.io/badge/privacy-100%25%20local-success?style=flat-square)](#-privacy--security)
 
@@ -27,6 +27,8 @@ AI assistants typically read 10–20 files just to understand your architecture 
 </p>
 
 codebone runs in your macOS menu bar, watches every file save, and delivers a live architectural snapshot directly to Claude, Cursor, or Gemini via MCP.
+
+> 📊 **Don't take our word for it — measure it.** [codebone-benchmark](https://github.com/palusc/codebone-benchmark) ships a small messy project and one task. Run it with and without codebone, on any model you like, and compare tokens, time and cost on your own machine.
 
 ---
 
@@ -141,7 +143,7 @@ open http://localhost:8053/codebone/graph/ui
 Prompt naturally:
 > *"Implement authentication middleware for billing routes. Use codebone."*
 
-The model calls `codebone_context()` and receives the exact schemas, routes, and relationships it needs — no file dumping required.
+The model calls `cb()` and receives the exact schemas, routes, and relationships it needs — no file dumping required.
 
 <details open>
 <summary><b>⚙️ Claude Desktop, Cursor & Gemini / Antigravity Configuration</b></summary>
@@ -198,7 +200,7 @@ Project: /Users/you/my_project | Files: 142 | Updated: 2026-09-23
 - Payment & Billing (8 files: billing/stripe.py, billing/webhook.py, models/invoice.py …)
 - Order Fulfillment (15 files: orders/service.py, events/order_created.py …)
 
-## Focused query: codebone_context(domain="billing")
+## Focused query: cb(domain="billing")
 → Returns only billing files, models (Invoice, Subscription),
   routes (POST /checkout/session), and events (InvoicePaid, PaymentFailed).
 ```

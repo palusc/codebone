@@ -15,7 +15,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
-from . import anthropic_bridge, context_format
+from . import anthropic_bridge, codesearch, context_format
 from .config import find_free_port
 from .feedback import list_recent_feedback, record_feedback
 from .graph_ui import build_live_graph_html
@@ -216,7 +216,7 @@ def create_app(service: CodeBoneService, allowed_hosts: Optional[set] = None) ->
 
     @app.get("/codebone/context")
     @app.get("/pug/context")
-    def context(format: str = "markdown", domain: str = "", file: str = "", query: str = ""):
+    def context(format: str = "markdown", domain: str = "", file: str = "", query: str = "", assets: bool = False):
         if not service.config.is_configured:
             msg = "codebone is not configured yet. Please select a project folder in the menu bar."
             return Response(content=msg, media_type="text/plain")
@@ -227,12 +227,15 @@ def create_app(service: CodeBoneService, allowed_hosts: Optional[set] = None) ->
         domain, file, query = domain.strip(), file.strip(), query.strip()
         filtered = bool(domain or file or query)
 
+        root = str(service.config.project_path or "")
+        texts = codesearch.read_texts(root, files) if query and root else None
         if format == "json":
             if filtered:
-                return context_format.search_json(name, files, index, storage.revision, domain, file, query)
+                return context_format.search_json(name, files, index, storage.revision, domain, file, query, texts, assets)
             return context_format.overview_json(name, files, index, storage.revision)
-        text = (context_format.search(name, files, index, domain, file, query) if filtered
-                else context_format.overview(name, files, index))
+        fresh = codesearch.freshness(root, files) if root else ""
+        text = (context_format.search(name, files, index, domain, file, query, texts, assets, fresh, storage.source_facts())
+                if filtered else context_format.overview(name, files, index, fresh))
         return Response(content=text, media_type="text/markdown; charset=utf-8")
 
     @app.get("/codebone/links")

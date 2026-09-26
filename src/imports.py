@@ -24,10 +24,13 @@ FROM = re.compile(r"""\.from\(\s*['"]([A-Za-z_][\w]*)['"]""")
 VERB_FN = re.compile(r"export\s+(?:default\s+)?(?:async\s+)?function\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b")
 VERB_CONST = re.compile(r"export\s+const\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*(?:=|:)")
 
-# Schema-qualified names, guarded against prose: CREATE needs the column paren that real DDL has,
-# every form drops SQL keywords as names ("Create table for ..." never means a table "for").
+# Schema-qualified names, guarded against prose: CREATE needs a real-DDL marker after the name
+# (column paren, CTAS "AS ("/"AS SELECT", TEMP/UNLOGGED/OR REPLACE/ONLY prefixes — none of which
+# prose has), and every form drops SQL keywords as names ("Create table for ..." never means "for").
 _DDL_NAME = r"['\"`]?([A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)?)['\"`]?"
-CREATE_SQL = re.compile(r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?" + _DDL_NAME + r"\s*\(", re.I)
+CREATE_SQL = re.compile(
+    r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+|UNLOGGED\s+)?TABLE\s+"
+    r"(?:IF\s+NOT\s+EXISTS\s+|ONLY\s+)?" + _DDL_NAME + r"(?:\s*\(|\s+AS\s*(?:\(|SELECT\b))", re.I)
 ALTER_SQL = re.compile(r"\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?" + _DDL_NAME, re.I)
 DROP_SQL = re.compile(r"\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?" + _DDL_NAME, re.I)
 INSERT_SQL = re.compile(r"\bINSERT\s+(?:OR\s+\w+\s+)?INTO\s+" + _DDL_NAME, re.I)
@@ -146,11 +149,11 @@ def _match_handler(url: str, caller: str, handlers: Dict[str, List[str]]) -> Opt
     us = url.strip("/").split("/")
     for h_url, paths in handlers.items():
         hs = h_url.strip("/").split("/")
+        # "[*]" is a template segment from a `${...}` fetch: depth known, contents not
         hit = len(hs) == len(us) and all(
-            h.startswith("[") and h.endswith("]") or h == u for h, u in zip(hs, us))
-        # fetch('/api/x/${id}') normalizes to /api/x; the remaining handler segments must be dynamic
+            h.startswith("[") and h.endswith("]") or h == u or u == "[*]" for h, u in zip(hs, us))
         hit = hit or (len(hs) > len(us) and all(
-            (h.startswith("[") and h.endswith("]") or h == u) for h, u in zip(hs, us))
+            (h.startswith("[") and h.endswith("]") or h == u or u == "[*]") for h, u in zip(hs, us))
             and all(h.startswith("[") for h in hs[len(us):]))
         if hit:
             cands.extend(paths)
@@ -271,7 +274,10 @@ def source_facts(root: str, paths: List[str], need_content: Optional[Set[str]] =
                 if tables:
                     facts["tables"][rel] = tables
                 for m in FETCH.finditer(code):
-                    url = sanitize_text(re.sub(r"\$\{.*", "", m.group(1)).rstrip("/") or "/")
+                    # keep the segments after ${...}: template depth and static parts disambiguate
+                    # the handler ("/api/users/${id}/posts" must not degrade to "/api/users")
+                    segs = [s if "${" not in s else "[*]" for s in m.group(1).strip("/").split("/")]
+                    url = sanitize_text("/" + "/".join(segs))
                     if (rel, url) not in fetch_seen:  # one edge per (file, endpoint), not per call site
                         fetch_seen.add((rel, url))
                         fetches.append((rel, url))
@@ -282,7 +288,7 @@ def source_facts(root: str, paths: List[str], need_content: Optional[Set[str]] =
                     url = _route_url(rel)
                     if url:
                         facts["roles"][rel] = sanitize_text("route " + (",".join(verbs) + " " if verbs else "") + url)
-                        facts["routes"][rel] = [f"{v} {url}" for v in verbs]
+                        facts["routes"][rel] = [sanitize_text(f"{v} {url}") for v in verbs]
                         handlers.setdefault(url, []).append(rel)
                 elif name in PAGE_FILES:
                     url = _route_url(rel)

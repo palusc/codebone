@@ -10,15 +10,15 @@ from src.config import Config, is_watched_file, list_watched_files
 
 
 def test_ignore_rules_only_look_inside_the_project(tmp_path):
-    # codebone maps every real project file now, including node_modules — but a directory the project
-    # merely happens to live under (here "build", an ancestor of proj) must never affect what's ignored.
+    # A directory the project merely happens to live under (here "build", an ancestor of proj) must never
+    # affect what's ignored; node_modules inside the project is pruned as a dependency tree.
     proj = tmp_path / "build" / "app"
     (proj / "src").mkdir(parents=True)
     (proj / "src" / "a.py").write_text("x = 1\n")
     (proj / "node_modules" / "dep").mkdir(parents=True)
     (proj / "node_modules" / "dep" / "b.py").write_text("x = 1\n")
     found = list_watched_files(proj)
-    assert sorted(p.name for p in found) == ["a.py", "b.py"]
+    assert sorted(p.name for p in found) == ["a.py"]
 
 
 def test_secret_and_junk_names_are_still_nodes(tmp_path):

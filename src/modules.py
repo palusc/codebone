@@ -404,11 +404,25 @@ def set_modules_master(config, on: bool, home: Optional[Path] = None, keychain: 
         config.set("modules_enabled", False)
         return
     config.set("modules_enabled", True)
-    for app_id in config.get("modules_paused_apps") or []:
-        try:
-            set_app_enabled(config, app_id, True, home=home, keychain=keychain)
-        except (ValueError, SettingsUnreadable):
-            pass
+    paused = config.get("modules_paused_apps") or []
+    if paused:
+        for app_id in paused:
+            try:
+                set_app_enabled(config, app_id, True, home=home, keychain=keychain)
+            except (ValueError, SettingsUnreadable):
+                pass
+    elif not (config.get("module_apps") or {}):
+        # First switch-on with nothing routed yet: every app the selected module can serve starts
+        # enabled instead of an empty checklist — "Use for Claude Code / opencode" default to on.
+        # A later off/on cycle restores whatever the user last chose (set_app_enabled above).
+        module = get_module(config, config.get("module_selected"))
+        if module:
+            for app_id in APPS:
+                if supports(module, app_id, _port(config)):
+                    try:
+                        set_app_enabled(config, app_id, True, home=home, keychain=keychain)
+                    except (ValueError, SettingsUnreadable):
+                        pass
     config.set("modules_paused_apps", [])
 
 
@@ -432,7 +446,7 @@ def test_connection(base_url: str, model: str, key: str, timeout: float = 20.0, 
     except urllib.error.HTTPError as exc:
         try:
             text = exc.read()[:160].decode("utf-8", "replace")
-        except OSError:  # server may reset the connection while the error body is read
+        except Exception:  # reset (OSError) or truncated chunked body (IncompleteRead): message only
             text = ""
         if exc.code in (401, 403):
             return False, "The endpoint rejected the API key."

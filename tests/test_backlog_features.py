@@ -67,7 +67,7 @@ def test_issue_1_dynamic_port_probe_and_mcp_patch(monkeypatch):
 
 
 def test_issue_2_smart_ignoring():
-    """Everything is mapped (secrets/binaries as path-only nodes); only the app's own data folder is excluded."""
+    """Everything is mapped (secrets/binaries as path-only nodes) except dependency/VCS/build trees."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         proj = Path(tmp_dir)
 
@@ -112,18 +112,19 @@ def test_issue_2_smart_ignoring():
         tmp_py = proj / "scratch.tmp.py"
         tmp_py.write_text("# scratch")
 
-        # Tests: codebone maps every real project file now (lockfiles, images, node_modules, .git, secrets);
-        # nothing is filtered by extension or .gitignore — secret-shaped files are nodes too, their content
-        # is simply never read at sniff time (service._path_only).
+        # Tests: codebone maps every real project file (lockfiles, images, secrets) — nothing is filtered by
+        # extension or .gitignore; secret-shaped files are nodes too, their content is simply never read at
+        # sniff time (service._path_only). Dependency/VCS/build trees (node_modules, .git, .next) are pruned:
+        # vendored output, and walking it is what made an 800-file repo scan as 150k files.
         assert is_watched_file(normal_py, project_path=proj, gitignore_spec=gi_spec) is True
         assert is_watched_file(env_file, project_path=proj, gitignore_spec=gi_spec) is True
         assert is_watched_file(env_prod, project_path=proj, gitignore_spec=gi_spec) is True
         assert is_watched_file(lockfile, project_path=proj, gitignore_spec=gi_spec) is True
         assert is_watched_file(pnpm_lock, project_path=proj, gitignore_spec=gi_spec) is True
         assert is_watched_file(media_png, project_path=proj, gitignore_spec=gi_spec) is True
-        assert is_watched_file(node_mod, project_path=proj, gitignore_spec=gi_spec) is True
-        assert is_watched_file(next_cache, project_path=proj, gitignore_spec=gi_spec) is True  # build output is mapped too
-        assert is_watched_file(git_file, project_path=proj, gitignore_spec=gi_spec) is True
+        assert is_watched_file(node_mod, project_path=proj, gitignore_spec=gi_spec) is False
+        assert is_watched_file(next_cache, project_path=proj, gitignore_spec=gi_spec) is False  # build output
+        assert is_watched_file(git_file, project_path=proj, gitignore_spec=gi_spec) is False
         assert is_watched_file(secret_file, project_path=proj, gitignore_spec=gi_spec) is True  # .gitignore is not applied
         assert is_watched_file(tmp_py, project_path=proj, gitignore_spec=gi_spec) is True
 

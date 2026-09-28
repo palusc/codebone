@@ -17,7 +17,7 @@ except ImportError:
 
 from .config import Config
 from .imports import JS_EXT, sql_tables, supabase_tables
-from .prompts import build_prompt, ground_analysis
+from .prompts import build_prompt, build_tldr_prompt, ground_analysis, sanitize_text
 
 logger = logging.getLogger("codebone.providers")
 
@@ -83,6 +83,17 @@ class Provider:
             fb_domains, _ = FastFallbackProvider().reconcile_architecture(previous_domains, previous_entities, delta)
             domains = fb_domains
         return domains, summary
+
+    def tldr(self, file_path: str, code: str) -> str:
+        """Plain-English one-paragraph summary of a single file, independent of sniff()'s structured output."""
+        out = self.generate(build_tldr_prompt(file_path, code), max_tokens=180)
+        if not out:
+            return self._fallback_tldr(file_path, code)
+        return sanitize_text(out)
+
+    def _fallback_tldr(self, file_path: str, code: str) -> str:
+        fb = getattr(self, "_fallback", None) or FastFallbackProvider()
+        return fb.tldr(file_path, code)
 
     def _fallback_sniff(self, file_path: str, code: str) -> str:
         fb = getattr(self, "_fallback", None) or FastFallbackProvider()
@@ -212,6 +223,18 @@ class FastFallbackProvider(Provider):
             f"DOMAINS: {', '.join(a['domains']) or 'none'}\n"
             f"FLOW: {a['summary']}"
         )
+
+    def tldr(self, file_path: str, code: str) -> str:
+        """No model available: the closest thing regex extraction can say about the file."""
+        a = self.analyze(file_path, code)
+        bits = [a["summary"]] if a["summary"] else []
+        if a["domains"]:
+            bits.append(f"Part of {', '.join(a['domains'])}.")
+        if a["tables"]:
+            bits.append(f"Touches tables {', '.join(a['tables'][:5])}.")
+        if a["routes"]:
+            bits.append(f"Exposes {', '.join(a['routes'][:5])}.")
+        return " ".join(bits) or "No summary available (no local brain loaded and nothing recognizable found)."
 
 
 class BuiltinProvider(Provider):

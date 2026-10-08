@@ -658,6 +658,102 @@ def _restore_opencode_settings(path: Path, text: str, data: dict, previous) -> N
         path.unlink()
 
 
+def _restore_cursor_settings(path: Path, text: str, data: dict, previous) -> None:
+    previous = previous if isinstance(previous, dict) else {}
+    for k in ("cursor.openai.apiBaseUrl", "cursor.openai.apiKey", "cursor.general.model", "cursor.openai.model"):
+        if previous.get(k) is None:
+            data.pop(k, None)
+        else:
+            data[k] = previous[k]
+    data.pop("codebone.cursor.managed", None)
+    if data:
+        _save(path, text, data)
+    else:
+        path.unlink()
+
+
+def _restore_antigravity_settings(path: Path, text: str, data: dict, previous) -> None:
+    previous = previous if isinstance(previous, dict) else {}
+    tenv = dict(data.get("terminal.integrated.env.osx") or {})
+    prev_env = previous.get("terminal_env") or {}
+    for k in ("ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL",
+              "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL", "CODEBONE_MANAGED"):
+        if prev_env.get(k) is None:
+            tenv.pop(k, None)
+        else:
+            tenv[k] = prev_env[k]
+    if tenv:
+        data["terminal.integrated.env.osx"] = tenv
+    else:
+        data.pop("terminal.integrated.env.osx", None)
+    if previous.get("codebone_model") is None:
+        data.pop("codebone.model", None)
+    else:
+        data["codebone.model"] = previous["codebone_model"]
+    if previous.get("codebone_baseUrl") is None:
+        data.pop("codebone.baseUrl", None)
+    else:
+        data["codebone.baseUrl"] = previous["codebone_baseUrl"]
+    data.pop("codebone.antigravity.managed", None)
+    if data:
+        _save(path, text, data)
+    else:
+        path.unlink()
+
+
+def _restore_codex_settings(path: Path, previous) -> None:
+    previous = previous if isinstance(previous, dict) else {}
+    prev_model = previous.get("model")
+    prev_shell_env = previous.get("shell_env") or {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    lines = text.splitlines()
+    new_lines = []
+    first_section = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("["):
+            first_section = True
+        if not first_section and stripped.startswith("model ="):
+            if prev_model is not None:
+                new_lines.append(f'model = "{prev_model}"')
+            continue
+        new_lines.append(line)
+
+    result_lines = []
+    in_section = False
+    codebone_keys = {"CODEBONE_MANAGED", "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL",
+                     "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"}
+    for line in new_lines:
+        stripped = line.strip()
+        if stripped == "[shell_environment_policy.set]":
+            in_section = True
+            result_lines.append(line)
+            continue
+        elif in_section and stripped.startswith("["):
+            in_section = False
+            result_lines.append(line)
+            continue
+        elif in_section:
+            if "=" in stripped:
+                k = stripped.split("=", 1)[0].strip()
+                if k in codebone_keys:
+                    if k in prev_shell_env:
+                        result_lines.append(f'{k} = "{prev_shell_env[k]}"')
+                    continue
+            result_lines.append(line)
+        else:
+            result_lines.append(line)
+
+    clean_text = "\n".join(result_lines).strip()
+    if clean_text and clean_text != '[shell_environment_policy]\ninherit = "core"\n\n[shell_environment_policy.set]':
+        path.write_text(clean_text + "\n", encoding="utf-8")
+    else:
+        path.unlink(missing_ok=True)
+
+
 class _Runner:
     def __init__(self, home: Path, bundle, remove_app: bool, dry_run: bool, system: bool):
         self.home, self.bundle, self.remove_app = home, bundle, remove_app
@@ -717,9 +813,30 @@ class _Runner:
                 self.edit_config(cfg)
             except Exception as exc:  # noqa: BLE001
                 self.report.errors.append(f"MCP config {self.t(cfg.path)}: {exc}")
+        codex_cfg = self.home / ".codex" / "config.toml"
+        if codex_cfg.exists():
+            try:
+                ctext = codex_cfg.read_text(encoding="utf-8")
+                if "[mcp_servers.codebone]" in ctext:
+                    if not self.dry:
+                        lines = ctext.splitlines()
+                        res = []
+                        in_cb = False
+                        for l in lines:
+                            if l.strip() == "[mcp_servers.codebone]":
+                                in_cb = True
+                                continue
+                            elif in_cb and l.strip().startswith("["):
+                                in_cb = False
+                            if not in_cb:
+                                res.append(l)
+                        codex_cfg.write_text("\n".join(res) + "\n", encoding="utf-8")
+                    self.report.removed.append(f"MCP server entry in {self.t(codex_cfg)}")
+            except OSError:
+                pass
 
     def modules(self) -> None:
-        """Take Claude Code off a routed model module (restoring its previous settings) and delete the module keys."""
+        """Take coding agents off routed model modules (restoring their previous settings) and delete the module keys."""
         path = self.home / ".claude" / "settings.json"
         backups: dict = {}
         try:
@@ -737,6 +854,38 @@ class _Runner:
                 if not self.dry:
                     _restore_opencode_settings(oc, otext, odata, backups.get("opencode"))
                 self.report.removed.append(f"model routing in {self.t(oc)} (previous settings restored)")
+        codex_cfg = self.home / ".codex" / "config.toml"
+        if codex_cfg.exists():
+            try:
+                ctext = codex_cfg.read_text(encoding="utf-8")
+                if "CODEBONE_MANAGED" in ctext:
+                    if not self.dry:
+                        _restore_codex_settings(codex_cfg, backups.get("codex"))
+                    self.report.removed.append(f"model routing in {self.t(codex_cfg)} (previous settings restored)")
+            except OSError:
+                pass
+        for cpath in (self.home / "Library" / "Application Support" / "Cursor" / "User" / "settings.json",
+                      self.home / ".cursor" / "settings.json"):
+            if cpath.exists():
+                ctext, cdata = _parse(cpath)
+                if cdata and (cdata.get("codebone.cursor.managed") or "codebone" in str(cdata.get("cursor.openai.apiBaseUrl", ""))):
+                    if not self.dry:
+                        _restore_cursor_settings(cpath, ctext, cdata, backups.get("cursor"))
+                    self.report.removed.append(f"model routing in {self.t(cpath)} (previous settings restored)")
+        ag_path = self.home / "Library" / "Application Support" / "Antigravity IDE" / "User" / "settings.json"
+        if ag_path.exists():
+            atext, adata = _parse(ag_path)
+            if adata and (adata.get("codebone.antigravity.managed") or "CODEBONE_MANAGED" in json.dumps(adata.get("terminal.integrated.env.osx", {}))):
+                if not self.dry:
+                    _restore_antigravity_settings(ag_path, atext, adata, backups.get("antigravity"))
+                self.report.removed.append(f"model routing in {self.t(ag_path)} (previous settings restored)")
+        gemini_cfg = self.home / ".gemini" / "config" / "config.json"
+        if gemini_cfg.exists():
+            gtext, gdata = _parse(gemini_cfg)
+            if gdata and isinstance(gdata.get("userSettings"), dict) and "codeboneModule" in gdata["userSettings"]:
+                if not self.dry:
+                    gdata["userSettings"].pop("codeboneModule", None)
+                    _save(gemini_cfg, gtext, gdata)
         if path.exists():
             _text, data = _parse(path)
             if data is None:

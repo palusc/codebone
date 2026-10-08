@@ -37,6 +37,23 @@ PROGRESS_INTERVAL = 0.25  # seconds between progress callbacks during a scan
 SNAPSHOT_INTERVAL = 600.0  # at most one automatic snapshot per 10 minutes
 
 
+
+def format_eta(seconds: float | int) -> str:
+    """Format an ETA in seconds into a clean human-readable string like ~14s, ~1m 20s, or ~2h 15m."""
+    sec = int(round(seconds))
+    if sec <= 0:
+        return "< 1s"
+    if sec < 60:
+        return f"~{sec}s"
+    mins = sec // 60
+    rem_sec = sec % 60
+    if mins < 60:
+        return f"~{mins}m {rem_sec}s" if rem_sec > 0 else f"~{mins}m"
+    hrs = mins // 60
+    rem_mins = mins % 60
+    return f"~{hrs}h {rem_mins}m" if rem_mins > 0 else f"~{hrs}h"
+
+
 class CodeBoneService:
     def __init__(self, config: Config):
         self.config = config
@@ -67,11 +84,50 @@ class CodeBoneService:
         self._workspace_cache: Optional[tuple] = None  # (cache key, workspace_stats payload)
         self._snapshot_lock = threading.Lock()  # parallel project workers serialize registry updates
         self._parallel_progress_lock = threading.Lock()
+        self._cancel_requested = threading.Event()
+        self._pause_event = threading.Event()
+        self._pause_event.set()
 
     # ── activity bookkeeping ────────────────────────────────────────────
     @property
     def sniffing(self) -> bool:
         return self._active > 0
+
+    @property
+    def is_paused(self) -> bool:
+        return not self._pause_event.is_set()
+
+    def pause_scan(self):
+        """Pause any ongoing scan pass."""
+        self._pause_event.clear()
+        if self.scan_progress:
+            with self._parallel_progress_lock:
+                self.scan_progress["paused"] = True
+
+    def resume_scan(self):
+        """Resume a paused scan pass."""
+        self._pause_event.set()
+        if self.scan_progress:
+            with self._parallel_progress_lock:
+                self.scan_progress["paused"] = False
+
+    def toggle_pause_scan(self) -> bool:
+        """Toggle pause/resume state. Returns True if now paused, False if running."""
+        if self.is_paused:
+            self.resume_scan()
+            return False
+        else:
+            self.pause_scan()
+            return True
+
+    def cancel_scan(self):
+        """Cancel any ongoing scan pass immediately."""
+        self._cancel_requested.set()
+        self._epoch += 1
+        with self._req_lock:
+            self._rescan_requested = False
+        self._pause_event.set()  # unblock paused workers so they can terminate cleanly
+        self.scan_progress = None
 
     def _begin(self):
         with self._active_lock:
@@ -311,6 +367,7 @@ class CodeBoneService:
             "repo_name": proj.name if proj else "None",
             "model_name": self.config.active_model_display_name,
             "sniffing": self.sniffing,
+            "is_paused": self.is_paused,
             "model_status": self.model_status,
             "scan_progress": self.scan_progress,
             "baseline": self.last_baseline,
@@ -465,8 +522,13 @@ class CodeBoneService:
                     self._rescan_requested = True
                     return 0, 0, 0
         try:
+            self._cancel_requested.clear()
+            self._pause_event.set()
             while True:
                 result = self._rescan_once(on_progress, force)
+                if self._cancel_requested.is_set():
+                    self._scan_guard.release()
+                    return result
                 with self._req_lock:
                     if not self._rescan_requested:
                         self._scan_guard.release()
@@ -500,10 +562,14 @@ class CodeBoneService:
             if not self._scan_guard.acquire(blocking=False):
                 self._rescan_requested = True
                 return []
+        self._cancel_requested.clear()
+        self._pause_event.set()
         self._begin()
         run_requested_pass = False
         try:
             results = self._scan_projects_parallel(projects, on_progress)
+            if self._cancel_requested.is_set():
+                return results
             selected = self.config.project_path  # a menu/MCP switch during the scan wins
             completed = {r["project_path"] for r in results if not r.get("error")}
             if selected and str(selected) in completed:
@@ -513,10 +579,11 @@ class CodeBoneService:
             self.last_error = "; ".join(errors) if errors else None
             return results
         finally:
-            self.scan_progress = None
+            with self._parallel_progress_lock:
+                self.scan_progress = None
             self._end()
             with self._req_lock:
-                run_requested_pass = self._rescan_requested
+                run_requested_pass = self._rescan_requested and not self._cancel_requested.is_set()
                 self._rescan_requested = False
                 self._scan_guard.release()
             if run_requested_pass and self.config.is_configured:
@@ -536,9 +603,16 @@ class CodeBoneService:
         self.config.add_project_path(str(project))
 
         self._scan_guard.acquire()
+        self._cancel_requested.clear()
+        self._pause_event.set()
         self._begin()
         try:
-            result = self._scan_projects_parallel([project], on_progress)[0]
+            res_list = self._scan_projects_parallel([project], on_progress)
+            if not res_list:
+                return {"project_path": str(project), "total": 0, "sniffed": 0, "skipped": 0}
+            result = res_list[0]
+            if self._cancel_requested.is_set():
+                return result
             if result.get("error"):
                 raise RuntimeError(result["error"])
             if self.config.project_path == project:
@@ -546,7 +620,8 @@ class CodeBoneService:
             self._workspace_cache = None
             return result
         finally:
-            self.scan_progress = None
+            with self._parallel_progress_lock:
+                self.scan_progress = None
             self._end()
             self._scan_guard.release()
 
@@ -555,9 +630,22 @@ class CodeBoneService:
         projects: list[Path],
         on_progress: Optional[Callable[[int, int, str], None]],
     ) -> list[dict]:
+        parallel_start = time.time()
         progress: dict[str, dict] = {}
+        total_paused_time = 0.0
+        paused_start = None
 
         def report(project: Path, current: int, total: int, current_file: str):
+            nonlocal paused_start, total_paused_time
+            now = time.time()
+            if self.is_paused:
+                if paused_start is None:
+                    paused_start = now
+            else:
+                if paused_start is not None:
+                    total_paused_time += max(0.0, now - paused_start)
+                    paused_start = None
+
             with self._parallel_progress_lock:
                 progress[str(project)] = {
                     "current": current,
@@ -566,13 +654,20 @@ class CodeBoneService:
                 }
                 done = sum(p["current"] for p in progress.values())
                 grand_total = sum(p["total"] for p in progress.values())
+                elapsed = max(0.01, (now - parallel_start) - total_paused_time)
+                rate = done / elapsed if elapsed > 0 else 1.0
+                eta_sec = max(0, round((grand_total - done) / rate)) if grand_total > done and rate > 0 else 0
+                eta_str = format_eta(eta_sec)
                 self.scan_progress = {
                     "current": done,
                     "total": grand_total,
                     "pct": int(done * 100 / max(1, grand_total)),
+                    "eta_seconds": eta_sec,
+                    "eta_str": eta_str,
                     "current_file": current_file,
                     "project": f"{len(progress)}/{len(projects)} projects",
                     "projects": {Path(k).name: dict(v) for k, v in progress.items()},
+                    "paused": self.is_paused,
                 }
             if on_progress:
                 on_progress(done, grand_total, current_file)
@@ -589,6 +684,10 @@ class CodeBoneService:
                 for project in projects
             }
             for future in as_completed(futures):
+                if self._cancel_requested.is_set():
+                    for f in futures:
+                        f.cancel()
+                    break
                 project = futures[future]
                 try:
                     results_by_path[str(project)] = future.result()
@@ -601,7 +700,7 @@ class CodeBoneService:
                         "skipped": 0,
                         "error": str(exc),
                     }
-        return [results_by_path[str(p)] for p in projects]
+        return [results_by_path.get(str(p), {"project_path": str(p), "total": 0, "sniffed": 0, "skipped": 0}) for p in projects]
 
     def _scan_project_isolated(
         self,
@@ -618,6 +717,8 @@ class CodeBoneService:
             worker_config.save()
 
             worker = CodeBoneService(worker_config)
+            worker._cancel_requested = self._cancel_requested
+            worker._pause_event = self._pause_event
             worker_owns_provider = True
             # Cloud/local providers are cheap and carry mutable request state, so each worker keeps its own.
             # The built-in model is hundreds of MB and already protects llama.cpp with a generation lock;
@@ -636,9 +737,10 @@ class CodeBoneService:
                     unused_provider.close()
             try:
                 total, sniffed, skipped = worker.rescan_all(on_progress=on_progress, wait=True)
-                with self._snapshot_lock:
-                    self.scans.save_snapshot(project.name, project, worker.storage)
-                    self.config.add_recent_scanned_project(str(project))
+                if not self._cancel_requested.is_set():
+                    with self._snapshot_lock:
+                        self.scans.save_snapshot(project.name, project, worker.storage)
+                        self.config.add_recent_scanned_project(str(project))
                 result = {
                     "project_path": str(project),
                     "total": total,
@@ -745,15 +847,41 @@ class CodeBoneService:
         active_rel: set[str] = set()
         sniffed = skipped = 0
         start_time = time.time()
+        total_paused_time = 0.0
         last_report = 0.0
         aborted = False
 
         self._begin()
         try:
             for idx, path in enumerate(matching_files, start=1):
-                if epoch != self._epoch:
+                if epoch != self._epoch or self._cancel_requested.is_set():
                     aborted = True
                     break
+
+                # Handle scan pause
+                paused_start = None
+                while not self._pause_event.is_set():
+                    if epoch != self._epoch or self._cancel_requested.is_set():
+                        aborted = True
+                        break
+                    if paused_start is None:
+                        paused_start = time.time()
+                        with self._parallel_progress_lock:
+                            if self.scan_progress:
+                                self.scan_progress["paused"] = True
+                        if on_progress:
+                            on_progress(idx, total, f"[Paused] {path.name}")
+                    time.sleep(0.1)
+
+                if paused_start is not None:
+                    total_paused_time += max(0.0, time.time() - paused_start)
+                    with self._parallel_progress_lock:
+                        if self.scan_progress:
+                            self.scan_progress["paused"] = False
+
+                if aborted:
+                    break
+
                 try:
                     rel_path = str(path.relative_to(project_path))
                 except ValueError:
@@ -763,21 +891,25 @@ class CodeBoneService:
                 now = time.time()
                 if now - last_report >= PROGRESS_INTERVAL or idx == total:
                     last_report = now
-                    elapsed = max(0.01, now - start_time)
-                    eta_sec = max(0, round((total - idx) / (idx / elapsed)))
-                    self.scan_progress = {
-                        "current": idx,
-                        "total": total,
-                        "sniffed": sniffed,
-                        "skipped": skipped,
-                        "pct": int(idx * 100 / max(1, total)),
-                        "eta_seconds": eta_sec,
-                        "eta_str": f"~{eta_sec}s" if eta_sec < 60 else f"~{round(eta_sec / 60, 1)}m",
-                        "current_file": rel_path,
-                        # Which workspace folder this pass belongs to: the menu may be showing another
-                        # project while a multi-project scan runs.
-                        "project": project_path.name,
-                    }
+                    elapsed = max(0.01, (now - start_time) - total_paused_time)
+                    rate = idx / elapsed
+                    eta_sec = max(0, round((total - idx) / rate)) if total > idx else 0
+                    eta_str = format_eta(eta_sec)
+                    with self._parallel_progress_lock:
+                        self.scan_progress = {
+                            "current": idx,
+                            "total": total,
+                            "sniffed": sniffed,
+                            "skipped": skipped,
+                            "pct": int(idx * 100 / max(1, total)),
+                            "eta_seconds": eta_sec,
+                            "eta_str": eta_str,
+                            "current_file": rel_path,
+                            # Which workspace folder this pass belongs to: the menu may be showing another
+                            # project while a multi-project scan runs.
+                            "project": project_path.name,
+                            "paused": self.is_paused,
+                        }
                     if on_progress:
                         on_progress(idx, total, rel_path)
 
@@ -813,7 +945,8 @@ class CodeBoneService:
                     self.storage.remove_files(deleted_paths)
                     logger.info("Cleaned up %d deleted files from storage", len(deleted_paths))
         finally:
-            self.scan_progress = None
+            with self._parallel_progress_lock:
+                self.scan_progress = None
             self._end()
 
         logger.info("Rescan %s: %d total, %d sniffed, %d skipped", "aborted" if aborted else "finished", total, sniffed, skipped)

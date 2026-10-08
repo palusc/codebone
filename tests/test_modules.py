@@ -217,3 +217,92 @@ def test_uninstall_restores_opencode_too(env):
     (support / "config.json").write_text(cfg.config_file.read_text())
     assert not un.run_uninstall(home=home, remove_app=False).errors
     assert json.loads(oc.read_text()) == {"theme": "dark"} and not support.exists()
+
+
+def test_codex_target_writes_config_and_restores_it(env):
+    cfg, home, kc = env
+    c_path = home / ".codex" / "config.toml"
+    c_path.parent.mkdir(parents=True)
+    original = 'model = "gpt-4"\n\n[shell_environment_policy]\ninherit = "core"\n'
+    c_path.write_text(original)
+    m = add(cfg, kc)
+    cfg.set("module_selected", m["id"])
+    modules.set_app_enabled(cfg, "codex", True, home=home, keychain=kc)
+
+    text = c_path.read_text()
+    assert f'model = "{m["model"]}"' in text
+    assert f'OPENAI_BASE_URL = "{m["openai_url"]}"' in text
+    assert 'OPENAI_API_KEY = "sk-secret-123"' in text
+    assert f'ANTHROPIC_BASE_URL = "{m["anthropic_url"]}"' in text
+    assert 'CODEBONE_MANAGED = "1"' in text
+
+    modules.set_app_enabled(cfg, "codex", False, home=home)
+    restored = c_path.read_text()
+    assert 'model = "gpt-4"' in restored
+    assert "OPENAI_BASE_URL" not in restored
+    assert "CODEBONE_MANAGED" not in restored
+
+
+def test_cursor_target_writes_settings_and_restores_it(env):
+    cfg, home, kc = env
+    cur_path = home / "Library" / "Application Support" / "Cursor" / "User" / "settings.json"
+    cur_path.parent.mkdir(parents=True)
+    original = {"editor.fontSize": 14}
+    cur_path.write_text(json.dumps(original))
+    m = add(cfg, kc)
+    cfg.set("module_selected", m["id"])
+    modules.set_app_enabled(cfg, "cursor", True, home=home, keychain=kc)
+
+    data = json.loads(cur_path.read_text())
+    assert data["cursor.openai.apiBaseUrl"] == m["openai_url"]
+    assert data["cursor.openai.apiKey"] == "sk-secret-123"
+    assert data["cursor.general.model"] == m["model"]
+    assert data["codebone.cursor.managed"] is True
+    assert data["editor.fontSize"] == 14
+
+    modules.set_app_enabled(cfg, "cursor", False, home=home)
+    assert json.loads(cur_path.read_text()) == original
+
+
+def test_antigravity_target_writes_settings_and_restores_it(env):
+    cfg, home, kc = env
+    ag_path = home / "Library" / "Application Support" / "Antigravity IDE" / "User" / "settings.json"
+    ag_path.parent.mkdir(parents=True)
+    original = {"terminal.integrated.env.osx": {"CUSTOM_ENV": "active"}, "editor.tabSize": 2}
+    ag_path.write_text(json.dumps(original))
+    m = add(cfg, kc)
+    cfg.set("module_selected", m["id"])
+    modules.set_app_enabled(cfg, "antigravity", True, home=home, keychain=kc)
+
+    data = json.loads(ag_path.read_text())
+    tenv = data["terminal.integrated.env.osx"]
+    assert tenv["CUSTOM_ENV"] == "active"
+    assert tenv["OPENAI_BASE_URL"] == m["openai_url"]
+    assert tenv["OPENAI_API_KEY"] == "sk-secret-123"
+    assert tenv["ANTHROPIC_BASE_URL"] == m["anthropic_url"]
+    assert tenv["CODEBONE_MANAGED"] == "1"
+    assert data["codebone.model"] == m["model"]
+    assert data["codebone.antigravity.managed"] is True
+
+    modules.set_app_enabled(cfg, "antigravity", False, home=home)
+    assert json.loads(ag_path.read_text()) == original
+
+
+def test_force_restore_all_clears_all_coding_agents(env):
+    cfg, home, kc = env
+    m = add(cfg, kc)
+    cfg.set("module_selected", m["id"])
+
+    # Enable all
+    for app in ("claude-code", "codex", "cursor", "antigravity", "opencode"):
+        modules.set_app_enabled(cfg, app, True, home=home, keychain=kc)
+    assert len(modules.enabled_apps(cfg)) == 5
+
+    # Force restore all
+    modules.force_restore_all(cfg, home=home)
+    assert modules.enabled_apps(cfg) == []
+    assert not (home / ".claude" / "settings.json").exists()
+    assert not (home / ".codex" / "config.toml").exists()
+    assert not (home / "Library" / "Application Support" / "Cursor" / "User" / "settings.json").exists()
+    assert not (home / "Library" / "Application Support" / "Antigravity IDE" / "User" / "settings.json").exists()
+    assert not (home / ".config" / "opencode" / "opencode.json").exists()

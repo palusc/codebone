@@ -15,6 +15,7 @@ import rumps
 from PyObjCTools import AppHelper
 from Foundation import NSRunLoop, NSDate
 from AppKit import (
+    NSAlert,
     NSOpenPanel,
     NSApplication,
     NSApplicationActivationPolicyAccessory,
@@ -508,19 +509,32 @@ class CodeBoneApp(rumps.App):
         self.service.on_activity_start = self._on_sniff_start
         self.service.on_activity_end = self._on_sniff_end
 
-        # Custom Header View (Title, Folder/Prompt, Status Dot, Divider, Knowledge Graph Card)
+        # Custom Header View (Title "codebone", Status Dot LED, Divider, Knowledge Graph Card)
         (
             self.header_view,
             self.header_action_delegate,
-            self.folder_btn,
             self.status_dot,
             self.card_stats_label,
+            self.header_title_lbl,
         ) = self._build_header_view()
+        self.folder_btn = None
         self.header_item = rumps.MenuItem("codebone", callback=None)
         try:
             self.header_item._menuitem.setView_(self.header_view)
         except Exception as exc:
             logger.warning("Could not set custom header view: %s", exc)
+
+        self._last_completed_scans: dict[str, float] = {}
+
+        self.pause_scan_item = rumps.MenuItem("Pause Indexing", callback=self.toggle_pause_indexing)
+        _set_symbol_icon(self.pause_scan_item, "pause.fill")
+        self.cancel_scan_item = rumps.MenuItem("Cancel Indexing", callback=self.cancel_indexing)
+        _set_symbol_icon(self.cancel_scan_item, "xmark.circle")
+        try:
+            self.pause_scan_item._menuitem.setHidden_(True)
+            self.cancel_scan_item._menuitem.setHidden_(True)
+        except Exception:
+            pass
 
         # The three most recently scanned projects are direct one-click rows in the main menu. Empty
         # placeholders are hidden so the layout does not gain another unnecessary submenu.
@@ -554,9 +568,9 @@ class CodeBoneApp(rumps.App):
         self.modules_menu = rumps.MenuItem("Coding Agent")
         _set_symbol_icon(self.modules_menu, "square.stack.3d.up")
 
-        # The map model analyses files, builds TLDRs and powers the knowledge map. It is deliberately
+        # The map agent analyses files, builds TLDRs and powers the knowledge map. It is deliberately
         # separate from the optional model routed into the user's coding agent.
-        self.brain_menu = rumps.MenuItem("Map Model")
+        self.brain_menu = rumps.MenuItem("Map Agent")
         _set_symbol_icon(self.brain_menu, "brain")
 
         # API keys in one place: the cloud BYOK key and every module's key from the Keychain
@@ -640,7 +654,7 @@ class CodeBoneApp(rumps.App):
             self.full_disk_access_item,
         ])
 
-        # The two model roles are adjacent and plainly named: Map Model belongs to codebone; Coding Agent
+        # The two agent roles are adjacent and plainly named: Map Agent belongs to codebone; Coding Agent
         # controls the optional model used by Claude Code/opencode. Setup links are kept in Help.
         self.settings_menu.update([
             self.brain_menu,
@@ -664,9 +678,11 @@ class CodeBoneApp(rumps.App):
         self.quit_item = rumps.MenuItem("Quit codebone", callback=self.quit_app)
         _set_symbol_icon(self.quit_item, "power")
 
-        # Reading order: live status → latest work → all projects → settings → fixed footer.
+        # Reading order: live status → scan controls (when active) → latest work → all projects → settings → fixed footer.
         self.menu = [
             self.header_item,
+            self.pause_scan_item,
+            self.cancel_scan_item,
             *self.quick_access_items,
             self.projects_menu,
             None,
@@ -700,12 +716,12 @@ class CodeBoneApp(rumps.App):
         self.service.ensure_builtin_model()
 
     def _build_header_view(self):
-        """Constructs the native macOS popover header view with live status indicator and knowledge graph card."""
-        w, h = 276.0, 94.0
+        """Constructs the native macOS popover header view with title + LED indicator and knowledge graph card."""
+        w, h = 276.0, 72.0
         container = NSView.alloc().initWithFrame_(NSRect(NSPoint(0, 0), NSSize(w, h)))
         delegate = HeaderActionDelegate.alloc().initWithApp_(self)
 
-        # 1. Top row title: icon + "codebone" (bold 15pt)
+        # 1. Top row title: icon + "codebone" (bold 15pt) + LED status dot
         icon_path = _get_icon(ICON_ACTIVE)
         bone_img = None
         if Path(icon_path).exists():
@@ -715,11 +731,11 @@ class CodeBoneApp(rumps.App):
         if bone_img:
             bone_img.setSize_(NSSize(16, 16))
             bone_img.setTemplate_(True)
-            logo_iv = NSImageView.alloc().initWithFrame_(NSRect(NSPoint(14, 69), NSSize(16, 16)))
+            logo_iv = NSImageView.alloc().initWithFrame_(NSRect(NSPoint(14, 49), NSSize(16, 16)))
             logo_iv.setImage_(bone_img)
             container.addSubview_(logo_iv)
 
-        title_lbl = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(34, 66), NSSize(200, 20)))
+        title_lbl = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(34, 47), NSSize(180, 20)))
         title_lbl.setStringValue_("codebone")
         title_lbl.setFont_(NSFont.boldSystemFontOfSize_(15.0))
         title_lbl.setTextColor_(NSColor.labelColor())
@@ -729,48 +745,30 @@ class CodeBoneApp(rumps.App):
         title_lbl.setSelectable_(False)
         container.addSubview_(title_lbl)
 
-        # 2. Top row folder link: small folder icon + name directly under "codebone".
-        # Both rows share the same two columns — icon left edge x=14, text left edge x=34 (aligned with
-        # the title text above) — and the same vertical centre: icon 49+13/2 = 55.5, text 47+17/2 = 55.5.
-        folder_sym = NSImage.imageWithSystemSymbolName_accessibilityDescription_("folder", None)
-        if folder_sym:
-            folder_sym.setSize_(NSSize(13, 13))
-            folder_sym.setTemplate_(True)
-            f_iv = NSImageView.alloc().initWithFrame_(NSRect(NSPoint(14, 49), NSSize(13, 13)))
-            f_iv.setImage_(folder_sym)
-            container.addSubview_(f_iv)
-
-        folder_btn = FolderButton.alloc().initWithFrame_(NSRect(NSPoint(34, 47), NSSize(198, 17)))
-        folder_btn.setTarget_(delegate)
-        folder_btn.setAction_(objc.selector(delegate.folderClicked_, signature=b"v@:@"))
-        init_folder = self.config.project_path.name if (self.config.is_configured and self.config.project_path) else "Click to index local codebase"
-        folder_btn.setFolderName_(init_folder)
-        container.addSubview_(folder_btn)
-
-        # 3. Top row status indicator dot (Green = Active/Watching, Blue = Sniffing/Indexing, Gray = Unconfigured)
-        status_dot = StatusDotView.alloc().initWithFrame_(NSRect(NSPoint(248, 60), NSSize(14, 14)))
+        # Status indicator dot LED (Green = Active/Watching, Blue = Sniffing/Indexing, Gray = Unconfigured)
+        status_dot = StatusDotView.alloc().initWithFrame_(NSRect(NSPoint(248, 50), NSSize(14, 14)))
         status_dot.setColor_(NSColor.systemGreenColor() if self.config.is_configured else NSColor.secondaryLabelColor())
         container.addSubview_(status_dot)
 
-        # 4. Divider line
-        div = NSBox.alloc().initWithFrame_(NSRect(NSPoint(12, 41), NSSize(252, 1)))
+        # 2. Divider line
+        div = NSBox.alloc().initWithFrame_(NSRect(NSPoint(12, 42), NSSize(252, 1)))
         div.setBoxType_(NSBoxSeparator)
         container.addSubview_(div)
 
-        # 5. Bottom row: clickable CardRowView for Knowledge Graph HUD
+        # 3. Bottom row: clickable CardRowView for Knowledge Graph HUD
         card = CardRowView.alloc().initWithFrame_(NSRect(NSPoint(6, 5), NSSize(264, 32)))
         card.setTarget_(delegate)
         card.setAction_(objc.selector(delegate.cardClicked_, signature=b"v@:@"))
         card.setToolTip_("Click to open interactive Live Graph in browser")
 
-        # 5a. Clean Apple SF Symbol vector icon
+        # 3a. Clean Apple SF Symbol vector icon
         graph_img = _create_clean_graph_icon(18.0)
         graph_iv = NSImageView.alloc().initWithFrame_(NSRect(NSPoint(8, 7), NSSize(18, 18)))
         if graph_img:
             graph_iv.setImage_(graph_img)
         card.addSubview_(graph_iv)
 
-        # 5b. Card stats line (vertically centered, no extra subtitle below)
+        # 3b. Card stats line (always active project: Nodes & Connections)
         init_files = self.service.storage.file_count() if self.config.is_configured else 0
         init_edges = len(self.service.storage.graph_edges(include_domains=True)) if self.config.is_configured else 0
         stats_lbl = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(34, 7), NSSize(204, 18)))
@@ -784,7 +782,7 @@ class CodeBoneApp(rumps.App):
         stats_lbl.cell().setLineBreakMode_(NSLineBreakByTruncatingTail)
         card.addSubview_(stats_lbl)
 
-        # 5c. Chevron
+        # 3c. Chevron
         chev = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(244, 7), NSSize(14, 18)))
         chev.setStringValue_("›")
         chev.setFont_(NSFont.boldSystemFontOfSize_(15.0))
@@ -796,7 +794,7 @@ class CodeBoneApp(rumps.App):
         card.addSubview_(chev)
 
         container.addSubview_(card)
-        return container, delegate, folder_btn, status_dot, stats_lbl
+        return container, delegate, status_dot, stats_lbl, title_lbl
 
     def _build_modules_switch_row(self):
         """A menu row that IS the on/off control for the custom coding model, native-switch style
@@ -966,6 +964,30 @@ class CodeBoneApp(rumps.App):
             NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
             rumps.alert("codebone", "No project configured. Please select a project folder first.")
             return
+
+        if self.service.sniffing:
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            alert = NSAlert.alloc().init()
+            alert.setMessageText_("Scan Already in Progress")
+            is_paused = self.service.is_paused
+            current_target = ""
+            if self.service.scan_progress:
+                current_target = self.service.scan_progress.get("project", "")
+            detail = f"A scan is currently active{f' ({current_target})' if current_target else ''}."
+            if is_paused:
+                detail += " It is currently paused."
+            detail += "\n\nRunning multiple scans slows down your Mac. What would you like to do?"
+            alert.setInformativeText_(detail)
+            alert.addButtonWithTitle_("Wait / Keep Running" if not is_paused else "Keep Paused")
+            alert.addButtonWithTitle_("Cancel Ongoing Scan")
+            alert.addButtonWithTitle_("Resume Scan" if is_paused else "Pause Scan")
+            response = alert.runModal()
+            if response == 1001:
+                self.cancel_indexing()
+            elif response == 1002:
+                self.toggle_pause_indexing()
+            return
+
         projects = [p for p in self.config.project_paths if p.exists()]
         if len(projects) <= 1:
             label = projects[0].name if projects else "project"
@@ -987,6 +1009,10 @@ class CodeBoneApp(rumps.App):
                 results = self.service.scan_all_projects(on_progress=_on_prog)
                 if not results:
                     return
+                for r in results:
+                    proj_p = r.get("project_path")
+                    if proj_p:
+                        self._last_completed_scans[str(Path(proj_p).resolve())] = time.time()
                 if self.service.last_error:
                     # A scan can "succeed" (return normally) while having silently skipped part of a
                     # project (an unreadable subfolder, permissions) — surface that instead of reporting
@@ -1011,6 +1037,7 @@ class CodeBoneApp(rumps.App):
                 self._on_main(self._push_stats)
             try:
                 result = self.service.scan_project(p, on_progress=_on_prog)
+                self._last_completed_scans[str(p.resolve())] = time.time()
                 rumps.notification(
                     "codebone",
                     "Indexing Complete",
@@ -1025,6 +1052,66 @@ class CodeBoneApp(rumps.App):
         threading.Thread(target=_run, daemon=True, name="codebone-single-scan").start()
 
     def start_project_scan(self, p: Path):
+        p = p.resolve()
+        # 1. Guard against overlapping scans: warn user to protect system performance
+        if self.service.sniffing:
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            alert = NSAlert.alloc().init()
+            alert.setMessageText_("Scan Already in Progress")
+            is_paused = self.service.is_paused
+            current_target = ""
+            if self.service.scan_progress:
+                current_target = self.service.scan_progress.get("project", "")
+            detail = f"A scan is currently running{f' ({current_target})' if current_target else ''}."
+            if is_paused:
+                detail += " It is currently paused."
+            detail += (
+                f"\n\nStarting another scan for '{p.name}' now would compete for CPU resources and battery power.\n\n"
+                "What would you like to do?"
+            )
+            alert.setInformativeText_(detail)
+            alert.addButtonWithTitle_("Wait / Keep Running" if not is_paused else "Keep Paused")
+            alert.addButtonWithTitle_("Cancel Ongoing Scan")
+            alert.addButtonWithTitle_("Resume Scan" if is_paused else "Pause Scan")
+            response = alert.runModal()
+            if response == 1001:  # Cancel Ongoing Scan
+                self.cancel_indexing()
+            elif response == 1002:  # Pause / Resume
+                self.toggle_pause_indexing()
+            return
+
+        # 2. Guard against redundant indexing (< 120s ago with no changes)
+        target_str = str(p)
+        last_done = self._last_completed_scans.get(target_str)
+        if not last_done:
+            snap = self.service._snapshot_for_project(p)
+            if snap and snap.get("updated_at"):
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(snap["updated_at"])
+                    last_done = dt.timestamp()
+                except Exception:
+                    pass
+
+        if last_done:
+            elapsed = time.time() - last_done
+            if 0 <= elapsed < 120:
+                elapsed_sec = int(round(elapsed))
+                ago_str = f"{elapsed_sec}s ago" if elapsed_sec > 1 else "just now"
+                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+                alert = NSAlert.alloc().init()
+                alert.setMessageText_("Project Recently Indexed")
+                alert.setInformativeText_(
+                    f"'{p.name}' was already indexed {ago_str}.\n\n"
+                    "Re-indexing right away consumes unnecessary CPU and battery power without finding new changes.\n\n"
+                    "Do you want to re-index anyway?"
+                )
+                alert.addButtonWithTitle_("Skip (Keep Current Map)")
+                alert.addButtonWithTitle_("Re-index Anyway")
+                response = alert.runModal()
+                if response != 1001:
+                    return
+
         rumps.notification("codebone", "Indexing Started", f"Indexing '{p.name}'...")
         self._run_single_scan(p)
 
@@ -1068,37 +1155,50 @@ class CodeBoneApp(rumps.App):
         configured = data.get("configured", False)
         running = data.get("running", False)
         sniffing = data.get("sniffing", False)
+        is_paused = bool(data.get("is_paused", False) or (data.get("scan_progress") and data["scan_progress"].get("paused", False)))
         scan_progress = data.get("scan_progress")
         repo_name = data.get("repo_name", "None")
         file_count = data.get("file_count", 0)
         connection_count = data.get("connection_count", 0)
-        ws = self.service.workspace_stats() if configured else {"projects": [], "total_nodes": 0, "total_connections": 0}
-        ws_count = len(ws["projects"])
-
-        signature = (configured, running, sniffing, repo_name, file_count, connection_count,
-                     ws_count, ws["total_nodes"], ws["total_connections"],
+        signature = (configured, running, sniffing, is_paused, repo_name, file_count, connection_count,
                      json.dumps(scan_progress, sort_keys=True) if scan_progress else None)
         if signature == getattr(self, "_last_stats_signature", None):
             return  # nothing changed: do not make AppKit redraw the menu every 2 s
         self._last_stats_signature = signature
 
-        # 1. Update top row folder button (folder name directly under 'codebone')
-        if hasattr(self, "folder_btn") and self.folder_btn is not None:
-            if configured and self.config.project_path:
-                folder_display = self.config.project_path.name
-                self.folder_btn.setToolTip_("Active project — click to reveal in Finder")
-            elif configured and repo_name != "None":
-                folder_display = repo_name
-                self.folder_btn.setToolTip_("Active project — click to reveal in Finder")
+        # 0. Update macOS menubar title (e.g. " (~14s)" or " (Paused)" next to icon during scan)
+        if configured and sniffing and scan_progress:
+            eta_str = scan_progress.get("eta_str", "")
+            if is_paused:
+                self.title = " (Paused)"
+            elif eta_str:
+                self.title = f" ({eta_str})"
             else:
-                folder_display = "No project selected yet"
-                self.folder_btn.setToolTip_("Click to select a project folder")
-            self.folder_btn.setFolderName_(folder_display)
+                self.title = " (Scanning…)"
+        elif not self.icon:
+            self.title = "codebone"
+        else:
+            self.title = ""
 
-        # 2. Update status indicator dot
+        # 1. Update header title (codebone or codebone · ~12s / Paused / Scanning)
+        if hasattr(self, "header_title_lbl") and self.header_title_lbl is not None:
+            if configured and sniffing:
+                eta_str = scan_progress.get("eta_str", "") if scan_progress else ""
+                if is_paused:
+                    self.header_title_lbl.setStringValue_("codebone  ·  Paused")
+                elif eta_str:
+                    self.header_title_lbl.setStringValue_(f"codebone  ·  {eta_str}")
+                else:
+                    self.header_title_lbl.setStringValue_("codebone  ·  Scanning")
+            else:
+                self.header_title_lbl.setStringValue_("codebone")
+
+        # 2. Update status indicator dot (Yellow = Paused, Blue = Scanning, Green = Ready/Watching)
         if hasattr(self, "status_dot") and self.status_dot is not None:
             if not configured:
                 self.status_dot.setColor_(NSColor.secondaryLabelColor())
+            elif is_paused:
+                self.status_dot.setColor_(NSColor.systemYellowColor())
             elif sniffing:
                 self.status_dot.setColor_(NSColor.systemBlueColor())
             elif running:
@@ -1106,7 +1206,7 @@ class CodeBoneApp(rumps.App):
             else:
                 self.status_dot.setColor_(NSColor.systemOrangeColor())
 
-        # 3. Update bottom card row stats label — the one glance that answers "what is running right now?"
+        # 3. Update bottom card row stats label — always show the currently selected project's info
         if hasattr(self, "card_stats_label") and self.card_stats_label is not None:
             if configured:
                 if sniffing and scan_progress:
@@ -1114,27 +1214,80 @@ class CodeBoneApp(rumps.App):
                     tot = scan_progress.get("total", 0)
                     cur_f = scan_progress.get("current_file", "")
                     short_f = Path(cur_f).name if cur_f else ""
-                    where = scan_progress.get("project") or repo_name
-                    if short_f:
-                        stats_text = f"Indexing {short_f} ({curr}/{tot})"
+                    eta_str = scan_progress.get("eta_str", "")
+                    if is_paused:
+                        stats_text = f"Paused ({curr}/{tot})  ·  Resume to continue"
                     else:
-                        stats_text = f"Indexing ({curr}/{tot})  ·  {file_count} Nodes"
-                    if where and ws_count > 1:
-                        stats_text = f"{where}: {stats_text}"
-                elif ws_count > 1:
-                    stats_text = (
-                        f"{ws_count} projects  ·  {_fmt_count(ws['total_nodes'])} Nodes  ·  "
-                        f"{_fmt_count(ws['total_connections'])} Connections"
-                    )
+                        eta_part = f"  ·  {eta_str} left" if eta_str else ""
+                        if short_f:
+                            stats_text = f"Indexing {short_f} ({curr}/{tot}){eta_part}"
+                        else:
+                            stats_text = f"Indexing ({curr}/{tot}){eta_part}"
+                elif sniffing:
+                    stats_text = "Indexing codebase..."
                 else:
-                    stats_text = f"{file_count} Nodes  ·  {connection_count} Connections"
+                    stats_text = f"{_fmt_count(file_count)} Nodes  ·  {_fmt_count(connection_count)} Connections"
             else:
                 stats_text = "No project selected yet"
             self.card_stats_label.setStringValue_(stats_text)
 
+        # 4. Update scan control menu items (Pause/Resume and Cancel)
+        if hasattr(self, "pause_scan_item") and hasattr(self, "cancel_scan_item"):
+            if sniffing:
+                try:
+                    self.pause_scan_item._menuitem.setHidden_(False)
+                    self.cancel_scan_item._menuitem.setHidden_(False)
+                except Exception:
+                    pass
+                if is_paused:
+                    self.pause_scan_item.title = "Resume Indexing"
+                    _set_symbol_icon(self.pause_scan_item, "play.fill")
+                else:
+                    self.pause_scan_item.title = "Pause Indexing"
+                    _set_symbol_icon(self.pause_scan_item, "pause.fill")
+            else:
+                try:
+                    self.pause_scan_item._menuitem.setHidden_(True)
+                    self.cancel_scan_item._menuitem.setHidden_(True)
+                except Exception:
+                    pass
+
+    def toggle_pause_indexing(self, _sender=None):
+        """Toggle scan pause/resume state with immediate notification and UI refresh."""
+        paused = self.service.toggle_pause_scan()
+        if paused:
+            rumps.notification("codebone", "Indexing Paused", "Indexing paused. Background CPU usage suspended.")
+        else:
+            rumps.notification("codebone", "Indexing Resumed", "Indexing resumed.")
+        self._push_stats()
+
+    def pause_indexing(self, _sender=None):
+        """Pause active indexing."""
+        self.service.pause_scan()
+        rumps.notification("codebone", "Indexing Paused", "Indexing paused. Background CPU usage suspended.")
+        self._push_stats()
+
+    def resume_indexing(self, _sender=None):
+        """Resume paused indexing."""
+        self.service.resume_scan()
+        rumps.notification("codebone", "Indexing Resumed", "Indexing resumed.")
+        self._push_stats()
+
+    def cancel_indexing(self, _sender=None):
+        """Cancel ongoing indexing and release CPU resources immediately."""
+        self.service.cancel_scan()
+        rumps.notification("codebone", "Indexing Cancelled", "Scan cancelled. Background CPU load stopped.")
+        self._push_stats()
+        self._update_ui_state()
+
     def _apply_all_icons(self):
         """Applies native Apple SF Symbol vector icons across the entire menu hierarchy."""
         # Top-level menu items
+        if hasattr(self, "pause_scan_item"):
+            is_paused = getattr(self.service, "is_paused", False)
+            _set_symbol_icon(self.pause_scan_item, "play.fill" if is_paused else "pause.fill")
+        if hasattr(self, "cancel_scan_item"):
+            _set_symbol_icon(self.cancel_scan_item, "xmark.circle")
         _set_symbol_icon(self.mcp_setup_item, "bolt.fill")
         for item in self.quick_access_items:
             _set_symbol_icon(item, "clock.arrow.circlepath")
@@ -1194,7 +1347,7 @@ class CodeBoneApp(rumps.App):
     def _on_sniff_end(self):
         self._on_main(self._push_stats)
 
-    # Provider profiles for the Map Model menu: (config vendor id, label, default model id).
+    # Provider profiles for the Map Agent menu: (config vendor id, label, default model id).
     # The model ids are the ones CloudProvider itself falls back to — no second list to keep in sync.
     BRAIN_PROFILES = (
         ("openrouter", "OpenRouter", "openai/gpt-4o-mini"),
@@ -1240,7 +1393,7 @@ class CodeBoneApp(rumps.App):
         return self.config.get("brain_tested_signature", "") == self._brain_signature()
 
     def _update_brain_checks(self):
-        """Rebuilds the Map Model menu: one status line for what is active right now, the provider
+        """Rebuilds the Map Agent menu: one status line for what is active right now, the provider
         profiles in plain words (key in, test, done), then the local model files."""
         provider = self.config.get("brain_provider", "builtin")
         current_model_path = self.config.get("model_path")
@@ -1447,10 +1600,14 @@ class CodeBoneApp(rumps.App):
             recent = seeded[:10]
 
         visible: list[Path] = []
+        seen_resolved: set[str] = set()
         for raw in recent or []:
             path = Path(raw).expanduser()
             if path.exists() and path.is_dir():
-                visible.append(path.resolve())
+                resolved = str(path.resolve())
+                if resolved not in seen_resolved:
+                    seen_resolved.add(resolved)
+                    visible.append(path.resolve())
             if len(visible) == 3:
                 break
 
@@ -1458,6 +1615,7 @@ class CodeBoneApp(rumps.App):
         active = self.config.project_path
         active_str = str(active) if active else None
         ws_by_path = {p["path"]: p for p in self.service.workspace_stats()["projects"]}
+        names = [p.name for p in visible]
         for index, item in enumerate(self.quick_access_items):
             show = index < len(visible)
             try:
@@ -1466,7 +1624,14 @@ class CodeBoneApp(rumps.App):
                 pass
             if show:
                 path = visible[index]
-                item.title = path.name or str(path)
+                if names.count(path.name) > 1:
+                    item.title = f"{path.name} ({path.parent.name})"
+                else:
+                    item.title = path.name or str(path)
+                try:
+                    item._menuitem.setToolTip_(str(path))
+                except Exception:
+                    pass
                 item.state = bool(active and active == path)
                 self._populate_project_actions(item, path, ws_by_path.get(str(path)), active_str)
             elif getattr(item, "_menu", None) is not None:
@@ -1494,6 +1659,17 @@ class CodeBoneApp(rumps.App):
             item.add(rumps.MenuItem("Current Project", callback=None))
         else:
             item.add(rumps.MenuItem("Index this project to activate it", callback=None))
+
+        info_item = rumps.MenuItem(
+            "Info...",
+            callback=lambda _, target=project: self.show_project_info(target),
+        )
+        _set_symbol_icon(info_item, "info.circle")
+        try:
+            info_item._menuitem.setToolTip_(str(project.resolve()))
+        except Exception:
+            pass
+        item.add(info_item)
 
         item.add(None)
         scan_item = rumps.MenuItem(
@@ -1549,12 +1725,21 @@ class CodeBoneApp(rumps.App):
         ws_by_path = {p["path"]: p for p in self.service.workspace_stats()["projects"]}
 
         if workspace:
+            names = [p.name for p in workspace]
             for p in workspace:
                 info = ws_by_path.get(str(p))
-                item = rumps.MenuItem(p.name or str(p))
+                if names.count(p.name) > 1:
+                    title = f"{p.name} ({p.parent.name})"
+                else:
+                    title = p.name or str(p)
+                item = rumps.MenuItem(title)
                 _set_symbol_icon(item, "folder.fill" if active_str == str(p) else "folder")
                 if active_str == str(p):
                     item.state = True
+                try:
+                    item._menuitem.setToolTip_(str(p.resolve()))
+                except Exception:
+                    pass
                 self._populate_project_actions(item, p, info, active_str)
                 self.projects_menu.add(item)
         else:
@@ -1649,6 +1834,39 @@ class CodeBoneApp(rumps.App):
 
         threading.Thread(target=_run, daemon=True, name="codebone-activate-project").start()
 
+    def show_project_info(self, p: Path):
+        """Displays project directory location, status, and gives a quick link to reveal in Finder or copy path."""
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        resolved = p.resolve()
+        path_str = str(resolved)
+        is_active = self.config.project_path and self.config.project_path.resolve() == resolved
+        status_line = "Active Project" if is_active else "Inactive Project"
+
+        ws_by_path = {item["path"]: item for item in self.service.workspace_stats()["projects"]}
+        info = ws_by_path.get(path_str)
+        if info:
+            stats_line = f"Knowledge Graph: {_fmt_count(info['nodes'])} Nodes · {_fmt_count(info['connections'])} Connections"
+        else:
+            stats_line = "Knowledge Graph: Not indexed yet"
+
+        msg = (
+            f"Directory:\n{path_str}\n\n"
+            f"Status: {status_line}\n"
+            f"{stats_line}"
+        )
+        res = rumps.alert(
+            title=f"Project Info: {p.name}",
+            message=msg,
+            ok="Open in Finder",
+            cancel="Close",
+            other="Copy Path",
+        )
+        if res == 1:
+            self.reveal_project(p)
+        elif res == -1:
+            copy_to_clipboard(path_str)
+            rumps.notification("codebone", "Path Copied", path_str)
+
     def reveal_project(self, p: Path):
         try:
             subprocess.Popen(["open", str(p)])
@@ -1685,10 +1903,12 @@ class CodeBoneApp(rumps.App):
                 item.state = app_id in active
                 self.modules_menu.add(item)
             copy_menu = rumps.MenuItem("Copy for Other Apps")
-            # Only what another app actually needs typed in: the base URLs are built by codebone itself
-            # (Anthropic/OpenAI format), so copying them would just restate what the config already holds.
-            for what, fn in (("Model ID", lambda: (selected or {}).get("model")),
-                             ("API key", lambda: modules.Keychain().get(selected["id"]) if selected else None)):
+            for what, fn in (
+                ("Model ID", lambda: (selected or {}).get("model")),
+                ("API key", lambda: modules.Keychain().get(selected["id"]) if selected else None),
+                ("OpenAI Base URL", lambda: (selected or {}).get("openai_url") or (modules._url(selected, "openai") if selected else None)),
+                ("Anthropic Base URL", lambda: (selected or {}).get("anthropic_url") or (modules._url(selected, "anthropic") if selected else None)),
+            ):
                 copy_menu.add(rumps.MenuItem(what, callback=lambda _, w=what, f=fn: self.copy_module_value(w, f)))
             self.modules_menu.add(copy_menu)
             self.modules_menu.add(None)
@@ -1753,14 +1973,14 @@ class CodeBoneApp(rumps.App):
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         if rumps.alert(
             "Reset Coding Agent Connection",
-            "This puts Claude Code and opencode back on their normal setup, whatever codebone currently "
-            "thinks their state is. Use this if a model's API key stopped working and switching it off "
-            "didn't fix it.",
+            "This puts all coding agents (Claude Code, Codex, Cursor, Antigravity, and opencode) back "
+            "on their normal setup, whatever codebone currently thinks their state is. Use this if a "
+            "model's API key stopped working and switching it off didn't fix it.",
             ok="Reset to Normal", cancel="Cancel",
         ) != 1:
             return
         modules.force_restore_all(self.config)
-        rumps.notification("codebone", "Coding Agent Reset", "Claude Code and opencode are back on their normal setup.")
+        rumps.notification("codebone", "Coding Agents Reset", "All coding agents are back on their normal setup.")
         self._update_modules_menu()
         self._sync_modules_switch()
 
@@ -2204,6 +2424,7 @@ class CodeBoneApp(rumps.App):
             from .server import patch_mcp_configs
             server_port = getattr(getattr(self, "server", None), "port", None) or self.config.get("active_port") or self.config.get("server_port", 8053)
             patch_mcp_configs(server_port)
+            rumps.notification("codebone", "Coding Agents Connected", "MCP configured for Claude Desktop, Claude Code, Cursor, Antigravity & Codex.")
         except Exception as exc:
             logger.warning("Could not patch MCP configs during open_mcp_setup: %s", exc)
         from AppKit import NSURL, NSWorkspace

@@ -221,3 +221,77 @@ def test_a_request_made_during_a_scan_gets_its_own_pass(tmp_path):
     release.set()
     t.join(5)
     assert len(passes) == 2
+
+
+def test_format_eta():
+    from src.service import format_eta
+    assert format_eta(0) == "< 1s"
+    assert format_eta(-5) == "< 1s"
+    assert format_eta(14.2) == "~14s"
+    assert format_eta(59) == "~59s"
+    assert format_eta(60) == "~1m"
+    assert format_eta(84) == "~1m 24s"
+    assert format_eta(3600) == "~1h"
+    assert format_eta(3665) == "~1h 1m"
+
+
+def test_scan_pause_and_resume(tmp_path):
+    import threading
+    import time
+    svc, proj = make(tmp_path)
+    for i in range(10):
+        (proj / f"file_{i}.py").write_text(f"def f_{i}(): pass\n")
+
+    assert not svc.is_paused
+    paused_seen = threading.Event()
+    resumed_seen = threading.Event()
+
+    def on_prog(cur, tot, f):
+        if svc.is_paused:
+            paused_seen.set()
+        elif paused_seen.is_set():
+            resumed_seen.set()
+
+    t = threading.Thread(target=lambda: svc.rescan_all(on_progress=on_prog))
+    t.start()
+    svc.pause_scan()
+    assert svc.is_paused
+    # Wait briefly while paused
+    time.sleep(0.2)
+    svc.resume_scan()
+    assert not svc.is_paused
+    t.join(5)
+    assert svc.storage.file_count() == 10
+
+
+def test_scan_toggle_pause(tmp_path):
+    svc, _ = make(tmp_path)
+    assert not svc.is_paused
+    now_paused = svc.toggle_pause_scan()
+    assert now_paused and svc.is_paused
+    now_running = svc.toggle_pause_scan()
+    assert not now_running and not svc.is_paused
+
+
+def test_scan_cancellation(tmp_path):
+    import threading
+    import time
+    svc, proj = make(tmp_path)
+    for i in range(50):
+        (proj / f"file_{i}.py").write_text(f"def f_{i}(): pass\n")
+
+    started = threading.Event()
+
+    def on_prog(cur, tot, f):
+        started.set()
+
+    t = threading.Thread(target=lambda: svc.rescan_all(on_progress=on_prog))
+    t.start()
+    started.wait(2)
+    svc.cancel_scan()
+    t.join(5)
+
+    assert svc.scan_progress is None
+    # Cancelled before completing all 50 files
+    assert svc.storage.file_count() < 50
+

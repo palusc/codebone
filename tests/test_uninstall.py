@@ -913,3 +913,50 @@ def test_shell_process_pattern_matches_launchers_but_not_editors():
     lines = [f"{i + 100:>6} {1:>5} {cmd}" for i, cmd in enumerate(mine + others)]
     out = subprocess.run(["grep", "-E", pattern], input="\n".join(lines) + "\n", capture_output=True, text=True).stdout
     assert out.splitlines() == lines[: len(mine)]
+
+
+def test_uninstall_restores_codex_cursor_and_antigravity(world):
+    home = world["home"]
+    # Codex
+    codex_toml = home / ".codex" / "config.toml"
+    codex_toml.parent.mkdir(parents=True, exist_ok=True)
+    codex_toml.write_text(
+        'model = "mimo"\n\n[shell_environment_policy]\ninherit = "core"\n\n[shell_environment_policy.set]\nCODEBONE_MANAGED = "1"\nOPENAI_BASE_URL = "https://mimo"\n\n[mcp_servers.codebone]\ncommand = "python"\n'
+    )
+    # Cursor
+    cursor_json = home / "Library" / "Application Support" / "Cursor" / "User" / "settings.json"
+    cursor_json.parent.mkdir(parents=True, exist_ok=True)
+    cursor_json.write_text(json.dumps({"cursor.openai.apiBaseUrl": "https://mimo", "codebone.cursor.managed": True, "editor.fontSize": 14}))
+    # Antigravity
+    ag_json = home / "Library" / "Application Support" / "Antigravity IDE" / "User" / "settings.json"
+    ag_json.parent.mkdir(parents=True, exist_ok=True)
+    ag_json.write_text(json.dumps({"terminal.integrated.env.osx": {"CODEBONE_MANAGED": "1", "OPENAI_BASE_URL": "https://mimo"}, "codebone.antigravity.managed": True, "editor.tabSize": 2}))
+
+    # Config with backups
+    cfg_file = world["support"] / "config.json"
+    cfg_file.write_text(json.dumps({
+        "module_backups": {
+            "codex": {"model": "gpt-original", "shell_env": {}},
+            "cursor": {"cursor.openai.apiBaseUrl": None, "cursor.openai.apiKey": None, "cursor.general.model": None, "cursor.openai.model": None},
+            "antigravity": {"terminal_env": {}, "codebone_model": None, "codebone_baseUrl": None},
+        }
+    }))
+
+    report = un.run_uninstall(home=home, bundle=world["bundle"], remove_app=False)
+    assert not report.errors
+
+    # Verify Codex restored
+    ctext = codex_toml.read_text()
+    assert 'model = "gpt-original"' in ctext
+    assert "CODEBONE_MANAGED" not in ctext
+    assert "[mcp_servers.codebone]" not in ctext
+
+    # Verify Cursor restored
+    cdata = json.loads(cursor_json.read_text())
+    assert "cursor.openai.apiBaseUrl" not in cdata
+    assert cdata.get("editor.fontSize") == 14
+
+    # Verify Antigravity restored
+    adata = json.loads(ag_json.read_text())
+    assert "CODEBONE_MANAGED" not in adata.get("terminal.integrated.env.osx", {})
+    assert adata.get("editor.tabSize") == 2

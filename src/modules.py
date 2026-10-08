@@ -30,7 +30,13 @@ PRESETS = [
 ]
 
 # app id -> (menu name, API format the app needs)
-APPS = {"claude-code": ("Claude Code", "anthropic"), "opencode": ("opencode", "openai")}
+APPS = {
+    "claude-code": ("Claude Code", "anthropic"),
+    "codex": ("Codex", "openai"),
+    "cursor": ("Cursor", "openai"),
+    "antigravity": ("Antigravity (Gemini)", "openai"),
+    "opencode": ("opencode", "openai"),
+}
 OPENCODE_PROVIDER = "codebone"
 FORMAT_NAMES = {"anthropic": "Anthropic", "openai": "OpenAI"}
 
@@ -106,7 +112,14 @@ def _url(module: dict, fmt: str, port: Optional[int] = None) -> Optional[str]:
 
 
 def supports(module: dict, app_id: str, port: Optional[int] = None) -> bool:
-    return bool(_url(module, APPS[app_id][1], port))
+    if app_id not in APPS:
+        return False
+    fmt = APPS[app_id][1]
+    if _url(module, fmt, port):
+        return True
+    if app_id in ("codex", "antigravity"):
+        return bool(_url(module, "anthropic", port))
+    return False
 
 
 # ── Claude Code ──────────────────────────────────────────────────────────────
@@ -229,6 +242,343 @@ def restore_opencode(previous: Optional[dict], home: Optional[Path] = None) -> b
     return True
 
 
+# ── Codex ────────────────────────────────────────────────────────────────────
+def codex_path(home: Optional[Path] = None) -> Path:
+    return Path(home or Path.home()) / ".codex" / "config.toml"
+
+
+def _codex_ours(text: str) -> bool:
+    return "CODEBONE_MANAGED" in text or "codebone" in text
+
+
+def apply_codex(module: dict, key: str, previous: Optional[dict] = None, home: Optional[Path] = None,
+                port: Optional[int] = None) -> dict:
+    path = codex_path(home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    lines = text.splitlines()
+
+    if previous is None or not _codex_ours(text):
+        prev_model = None
+        for line in lines:
+            if line.strip().startswith("["):
+                break
+            if line.strip().startswith("model ="):
+                _, v = line.split("=", 1)
+                prev_model = v.strip().strip('"').strip("'")
+                break
+        prev_shell_env = {}
+        in_shell_env = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped == "[shell_environment_policy.set]":
+                in_shell_env = True
+                continue
+            elif in_shell_env and stripped.startswith("["):
+                break
+            elif in_shell_env and "=" in stripped:
+                k, v = stripped.split("=", 1)
+                prev_shell_env[k.strip()] = v.strip().strip('"').strip("'")
+        previous = {"model": prev_model, "shell_env": prev_shell_env}
+
+    openai_url = _url(module, "openai", port)
+    anthropic_url = _url(module, "anthropic", port)
+
+    # 1. Update top-level model
+    model_updated = False
+    new_lines = []
+    first_section = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("["):
+            first_section = True
+        if not first_section and stripped.startswith("model ="):
+            new_lines.append(f'model = "{module["model"]}"')
+            model_updated = True
+        else:
+            new_lines.append(line)
+    if not model_updated:
+        new_lines.insert(0, f'model = "{module["model"]}"')
+
+    # 2. Update [shell_environment_policy.set]
+    shell_keys = {
+        "CODEBONE_MANAGED": "1",
+    }
+    if openai_url:
+        shell_keys["OPENAI_BASE_URL"] = openai_url
+        if key:
+            shell_keys["OPENAI_API_KEY"] = key
+        shell_keys["OPENAI_MODEL"] = module["model"]
+    if anthropic_url:
+        shell_keys["ANTHROPIC_BASE_URL"] = anthropic_url
+        shell_keys["ANTHROPIC_MODEL"] = module["model"]
+        shell_keys["ANTHROPIC_SMALL_FAST_MODEL"] = module["model"]
+
+    found_section = False
+    result_lines = []
+    in_section = False
+    existing_keys_handled = set()
+
+    for line in new_lines:
+        stripped = line.strip()
+        if stripped == "[shell_environment_policy.set]":
+            found_section = True
+            in_section = True
+            result_lines.append(line)
+            continue
+        elif in_section and stripped.startswith("["):
+            for sk, sv in shell_keys.items():
+                if sk not in existing_keys_handled:
+                    result_lines.append(f'{sk} = "{sv}"')
+                    existing_keys_handled.add(sk)
+            in_section = False
+            result_lines.append(line)
+            continue
+        elif in_section:
+            if "=" in stripped:
+                k = stripped.split("=", 1)[0].strip()
+                if k in shell_keys:
+                    result_lines.append(f'{k} = "{shell_keys[k]}"')
+                    existing_keys_handled.add(k)
+                    continue
+            result_lines.append(line)
+        else:
+            result_lines.append(line)
+
+    if in_section:
+        for sk, sv in shell_keys.items():
+            if sk not in existing_keys_handled:
+                result_lines.append(f'{sk} = "{sv}"')
+                existing_keys_handled.add(sk)
+    elif not found_section:
+        result_lines.append("\n[shell_environment_policy]")
+        result_lines.append('inherit = "core"')
+        result_lines.append("\n[shell_environment_policy.set]")
+        for sk, sv in shell_keys.items():
+            result_lines.append(f'{sk} = "{sv}"')
+
+    tmp = path.with_name(path.name + ".codebone.tmp")
+    tmp.write_text("\n".join(result_lines) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    return previous
+
+
+def restore_codex(previous: Optional[dict], home: Optional[Path] = None) -> bool:
+    path = codex_path(home)
+    if not path.exists():
+        return False
+    text = path.read_text(encoding="utf-8")
+    if not _codex_ours(text):
+        return False
+
+    previous = previous or {}
+    prev_model = previous.get("model")
+    prev_shell_env = previous.get("shell_env") or {}
+
+    lines = text.splitlines()
+    first_section = False
+    new_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("["):
+            first_section = True
+        if not first_section and stripped.startswith("model ="):
+            if prev_model is not None:
+                new_lines.append(f'model = "{prev_model}"')
+            continue
+        new_lines.append(line)
+
+    result_lines = []
+    in_section = False
+    codebone_keys = {"CODEBONE_MANAGED", "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL",
+                     "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"}
+
+    for line in new_lines:
+        stripped = line.strip()
+        if stripped == "[shell_environment_policy.set]":
+            in_section = True
+            result_lines.append(line)
+            continue
+        elif in_section and stripped.startswith("["):
+            in_section = False
+            result_lines.append(line)
+            continue
+        elif in_section:
+            if "=" in stripped:
+                k = stripped.split("=", 1)[0].strip()
+                if k in codebone_keys:
+                    if k in prev_shell_env:
+                        result_lines.append(f'{k} = "{prev_shell_env[k]}"')
+                    continue
+            result_lines.append(line)
+        else:
+            result_lines.append(line)
+
+    clean_text = "\n".join(result_lines).strip()
+    if clean_text and clean_text != '[shell_environment_policy]\ninherit = "core"\n\n[shell_environment_policy.set]':
+        tmp = path.with_name(path.name + ".codebone.tmp")
+        tmp.write_text(clean_text + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+    else:
+        path.unlink(missing_ok=True)
+    return True
+
+
+# ── Cursor ───────────────────────────────────────────────────────────────────
+def cursor_path(home: Optional[Path] = None) -> Path:
+    return Path(home or Path.home()) / "Library" / "Application Support" / "Cursor" / "User" / "settings.json"
+
+
+def cursor_fallback_path(home: Optional[Path] = None) -> Path:
+    return Path(home or Path.home()) / ".cursor" / "settings.json"
+
+
+def _cursor_ours(data: dict) -> bool:
+    return bool(data.get("codebone.cursor.managed")) or "codebone" in str(data.get("cursor.openai.apiBaseUrl", ""))
+
+
+def apply_cursor(module: dict, key: str, previous: Optional[dict] = None, home: Optional[Path] = None,
+                 port: Optional[int] = None) -> dict:
+    p1 = cursor_path(home)
+    p2 = cursor_fallback_path(home)
+    target = p1 if p1.parent.exists() or not p2.parent.exists() else p2
+    data = _read(target)
+    if previous is None or not _cursor_ours(data):
+        previous = {k: data.get(k) for k in ("cursor.openai.apiBaseUrl", "cursor.openai.apiKey", "cursor.general.model", "cursor.openai.model")}
+    url = _url(module, "openai", port) or _url(module, "anthropic", port)
+    data["cursor.openai.apiBaseUrl"] = url
+    data["cursor.openai.apiKey"] = key
+    data["cursor.general.model"] = module["model"]
+    data["cursor.openai.model"] = module["model"]
+    data["codebone.cursor.managed"] = True
+    _write(target, data)
+    return previous
+
+
+def restore_cursor(previous: Optional[dict], home: Optional[Path] = None) -> bool:
+    restored = False
+    previous = previous or {}
+    for path in (cursor_path(home), cursor_fallback_path(home)):
+        if not path.exists():
+            continue
+        data = _read(path)
+        if not _cursor_ours(data):
+            continue
+        for k in ("cursor.openai.apiBaseUrl", "cursor.openai.apiKey", "cursor.general.model", "cursor.openai.model"):
+            if previous.get(k) is None:
+                data.pop(k, None)
+            else:
+                data[k] = previous[k]
+        data.pop("codebone.cursor.managed", None)
+        if data:
+            _write(path, data)
+        else:
+            path.unlink()
+        restored = True
+    return restored
+
+
+# ── Antigravity (Gemini) ─────────────────────────────────────────────────────
+def antigravity_ide_path(home: Optional[Path] = None) -> Path:
+    return Path(home or Path.home()) / "Library" / "Application Support" / "Antigravity IDE" / "User" / "settings.json"
+
+
+def gemini_config_path(home: Optional[Path] = None) -> Path:
+    return Path(home or Path.home()) / ".gemini" / "config" / "config.json"
+
+
+def _antigravity_ours(data: dict) -> bool:
+    return bool(data.get("codebone.antigravity.managed")) or "CODEBONE_MANAGED" in json.dumps(data.get("terminal.integrated.env.osx", {}))
+
+
+def apply_antigravity(module: dict, key: str, previous: Optional[dict] = None, home: Optional[Path] = None,
+                      port: Optional[int] = None) -> dict:
+    path = antigravity_ide_path(home)
+    data = _read(path)
+    tenv = dict(data.get("terminal.integrated.env.osx") or {})
+    if previous is None or not _antigravity_ours(data):
+        previous = {
+            "terminal_env": {k: tenv.get(k) for k in ("ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL",
+                                                      "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL", "CODEBONE_MANAGED")},
+            "codebone_model": data.get("codebone.model"),
+            "codebone_baseUrl": data.get("codebone.baseUrl"),
+        }
+    openai_url = _url(module, "openai", port)
+    anthropic_url = _url(module, "anthropic", port)
+    tenv["CODEBONE_MANAGED"] = "1"
+    if openai_url:
+        tenv["OPENAI_BASE_URL"] = openai_url
+        if key:
+            tenv["OPENAI_API_KEY"] = key
+        tenv["OPENAI_MODEL"] = module["model"]
+    if anthropic_url:
+        tenv["ANTHROPIC_BASE_URL"] = anthropic_url
+        tenv["ANTHROPIC_MODEL"] = module["model"]
+        tenv["ANTHROPIC_SMALL_FAST_MODEL"] = module["model"]
+    data["terminal.integrated.env.osx"] = tenv
+    data["codebone.model"] = module["model"]
+    data["codebone.baseUrl"] = openai_url or anthropic_url
+    data["codebone.antigravity.managed"] = True
+    _write(path, data)
+
+    g_cfg = gemini_config_path(home)
+    if g_cfg.exists():
+        try:
+            gdata = _read(g_cfg)
+            us = dict(gdata.get("userSettings") or {})
+            us["codeboneModule"] = {"model": module["model"], "base_url": openai_url or anthropic_url}
+            gdata["userSettings"] = us
+            _write(g_cfg, gdata)
+        except Exception:
+            pass
+    return previous
+
+
+def restore_antigravity(previous: Optional[dict], home: Optional[Path] = None) -> bool:
+    path = antigravity_ide_path(home)
+    restored = False
+    if path.exists():
+        data = _read(path)
+        if _antigravity_ours(data):
+            tenv = dict(data.get("terminal.integrated.env.osx") or {})
+            prev_env = (previous or {}).get("terminal_env") or {}
+            for k in ("ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL",
+                      "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL", "CODEBONE_MANAGED"):
+                if prev_env.get(k) is None:
+                    tenv.pop(k, None)
+                else:
+                    tenv[k] = prev_env[k]
+            if tenv:
+                data["terminal.integrated.env.osx"] = tenv
+            else:
+                data.pop("terminal.integrated.env.osx", None)
+            if (previous or {}).get("codebone_model") is None:
+                data.pop("codebone.model", None)
+            else:
+                data["codebone.model"] = previous["codebone_model"]
+            if (previous or {}).get("codebone_baseUrl") is None:
+                data.pop("codebone.baseUrl", None)
+            else:
+                data["codebone.baseUrl"] = previous["codebone_baseUrl"]
+            data.pop("codebone.antigravity.managed", None)
+            if data:
+                _write(path, data)
+            else:
+                path.unlink()
+            restored = True
+    g_cfg = gemini_config_path(home)
+    if g_cfg.exists():
+        try:
+            gdata = _read(g_cfg)
+            if isinstance(gdata.get("userSettings"), dict):
+                gdata["userSettings"].pop("codeboneModule", None)
+                _write(g_cfg, gdata)
+        except Exception:
+            pass
+    return restored
+
+
 # ── library (stored in codebone's config; keys never are) ─────────────────────
 def list_modules(config) -> List[dict]:
     return [m for m in config.get("modules", []) if isinstance(m, dict) and m.get("id")]
@@ -280,6 +630,15 @@ def _apply(config, app_id: str, module: dict, home, keychain) -> None:
     previous = backups.get(app_id) if app_id in enabled_apps(config) else None
     if app_id == "claude-code":
         backups[app_id] = apply_claude(module, previous, home, _port(config))
+    elif app_id == "codex":
+        key = (keychain or Keychain()).get(module["id"]) or ""
+        backups[app_id] = apply_codex(module, key, previous, home, _port(config))
+    elif app_id == "cursor":
+        key = (keychain or Keychain()).get(module["id"]) or ""
+        backups[app_id] = apply_cursor(module, key, previous, home, _port(config))
+    elif app_id == "antigravity":
+        key = (keychain or Keychain()).get(module["id"]) or ""
+        backups[app_id] = apply_antigravity(module, key, previous, home, _port(config))
     else:
         key = (keychain or Keychain()).get(module["id"])
         if not key:
@@ -300,7 +659,16 @@ def set_app_enabled(config, app_id: str, on: bool, home: Optional[Path] = None,
         # a crash, a config desync, or a manual edit can leave settings.json pointing at a module
         # while codebone believes it already put things back. Restoring is a no-op when the
         # settings file is not ours (restore_settings/restore_opencode check that themselves).
-        (restore_settings if app_id == "claude-code" else restore_opencode)(backups.get(app_id), home)
+        if app_id == "claude-code":
+            restore_settings(backups.get(app_id), home)
+        elif app_id == "codex":
+            restore_codex(backups.get(app_id), home)
+        elif app_id == "cursor":
+            restore_cursor(backups.get(app_id), home)
+        elif app_id == "antigravity":
+            restore_antigravity(backups.get(app_id), home)
+        else:
+            restore_opencode(backups.get(app_id), home)
         apps[app_id] = False
         backups.pop(app_id, None)
         config.set("module_backups", backups)
@@ -386,6 +754,21 @@ def force_restore_all(config, home: Optional[Path] = None) -> None:
                     op_path.unlink()
         except SettingsUnreadable:
             pass
+
+    try:
+        restore_codex(None, home)
+    except Exception:
+        pass
+
+    try:
+        restore_cursor(None, home)
+    except Exception:
+        pass
+
+    try:
+        restore_antigravity(None, home)
+    except Exception:
+        pass
 
     config.set("module_apps", {})
     config.set("module_backups", {})

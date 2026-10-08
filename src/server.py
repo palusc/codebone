@@ -146,6 +146,39 @@ def patch_mcp_configs(port: int, project_path: Optional[Path] = None):
         except Exception as exc:
             logger.warning("Could not update MCP config at %s: %s", target, exc)
 
+    # Codex MCP config (~/.codex/config.toml)
+    codex_toml = home / ".codex" / "config.toml"
+    if codex_toml.parent.exists():
+        try:
+            raw = codex_toml.read_text(encoding="utf-8") if codex_toml.exists() else ""
+            if "[mcp_servers.codebone]" not in raw:
+                snippet = (
+                    "\n[mcp_servers.codebone]\n"
+                    f'command = "{python_cmd}"\n'
+                    'args = [\n    "-m",\n    "codebone_mcp.server",\n]\n'
+                )
+                codex_toml.write_text(raw + snippet, encoding="utf-8")
+                logger.info("Updated MCP config %s", codex_toml)
+            else:
+                lines = raw.splitlines()
+                in_cb = False
+                changed = False
+                for idx, l in enumerate(lines):
+                    if l.strip() == "[mcp_servers.codebone]":
+                        in_cb = True
+                    elif in_cb and l.strip().startswith("["):
+                        break
+                    elif in_cb and l.strip().startswith("command ="):
+                        new_line = f'command = "{python_cmd}"'
+                        if lines[idx] != new_line:
+                            lines[idx] = new_line
+                            changed = True
+                if changed:
+                    codex_toml.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                    logger.info("Updated MCP config %s", codex_toml)
+        except Exception as exc:
+            logger.warning("Could not update MCP config at %s: %s", codex_toml, exc)
+
 
 _SAFE_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _MAX_TEXT = 5000

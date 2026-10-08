@@ -526,11 +526,8 @@ class CodeBoneApp(rumps.App):
         # placeholders are hidden so the layout does not gain another unnecessary submenu.
         self.quick_access_paths: list[Path] = []
         self.quick_access_items: list[rumps.MenuItem] = []
-        for index in range(3):
-            item = rumps.MenuItem(
-                "Recent Project",
-                callback=lambda _, position=index: self.open_quick_access_project(position),
-            )
+        for _index in range(3):
+            item = rumps.MenuItem("Recent Project")
             _set_symbol_icon(item, "clock.arrow.circlepath")
             self.quick_access_items.append(item)
 
@@ -1433,7 +1430,7 @@ class CodeBoneApp(rumps.App):
         rumps.notification("codebone", "Model switched", f"Active model: {name}")
 
     def _update_quick_access_menu(self):
-        """Show the three latest successful scans as direct main-menu rows, newest first."""
+        """Show the three latest successful scans as full project menus, newest first."""
         recent = self.config.recent_scanned_projects
         if recent is None:
             # One-time migration for existing installs: the snapshot registry is already ordered newest first.
@@ -1459,6 +1456,8 @@ class CodeBoneApp(rumps.App):
 
         self.quick_access_paths = visible
         active = self.config.project_path
+        active_str = str(active) if active else None
+        ws_by_path = {p["path"]: p for p in self.service.workspace_stats()["projects"]}
         for index, item in enumerate(self.quick_access_items):
             show = index < len(visible)
             try:
@@ -1469,10 +1468,74 @@ class CodeBoneApp(rumps.App):
                 path = visible[index]
                 item.title = path.name or str(path)
                 item.state = bool(active and active == path)
+                self._populate_project_actions(item, path, ws_by_path.get(str(path)), active_str)
+            elif getattr(item, "_menu", None) is not None:
+                item.clear()
 
-    def open_quick_access_project(self, position: int):
-        if 0 <= position < len(self.quick_access_paths):
-            self.activate_project_from_menu(self.quick_access_paths[position])
+    def _populate_project_actions(
+        self,
+        item: rumps.MenuItem,
+        project: Path,
+        info: Optional[dict],
+        active_str: Optional[str],
+    ):
+        """Give recent shortcuts and Projects entries the exact same project submenu."""
+        if getattr(item, "_menu", None) is not None:
+            item.clear()
+
+        if info and active_str != str(project):
+            select_item = rumps.MenuItem(
+                "Set as Current Project",
+                callback=lambda _, target=project: self.activate_project_from_menu(target),
+            )
+            _set_symbol_icon(select_item, "checkmark.circle")
+            item.add(select_item)
+        elif active_str == str(project):
+            item.add(rumps.MenuItem("Current Project", callback=None))
+        else:
+            item.add(rumps.MenuItem("Index this project to activate it", callback=None))
+
+        item.add(None)
+        scan_item = rumps.MenuItem(
+            "Index",
+            callback=lambda _, target=project: self.start_project_scan(target),
+        )
+        _set_symbol_icon(scan_item, "arrow.clockwise")
+        item.add(scan_item)
+
+        tldr_item = rumps.MenuItem(
+            "TLDR",
+            callback=lambda _, target=project: self._run_project_tldr(target),
+        )
+        _set_symbol_icon(tldr_item, "text.quote")
+        item.add(tldr_item)
+
+        item.add(None)
+        if info:
+            nodes = rumps.MenuItem(
+                f"{_fmt_count(info['nodes'])} Nodes — Open Map",
+                callback=lambda _, target=project: self.view_project_map(target),
+            )
+            _set_symbol_icon(nodes, "point.3.connected.trianglepath.dotted")
+            item.add(nodes)
+            item.add(rumps.MenuItem(f"{_fmt_count(info['connections'])} Connections", callback=None))
+        else:
+            item.add(rumps.MenuItem("Not Indexed Yet", callback=None))
+
+        reveal = rumps.MenuItem(
+            "Show in Finder...",
+            callback=lambda _, target=project: self.reveal_project(target),
+        )
+        _set_symbol_icon(reveal, "finder")
+        item.add(reveal)
+
+        item.add(None)
+        remove = rumps.MenuItem(
+            "Remove Project...",
+            callback=lambda _, target=project: self.remove_from_workspace(target),
+        )
+        _set_symbol_icon(remove, "minus.circle")
+        item.add(remove)
 
     def _update_projects_menu(self):
         """Keep the first level to project names; actions and details live one level deeper."""
@@ -1480,7 +1543,8 @@ class CodeBoneApp(rumps.App):
             self.projects_menu.clear()
 
         active = self.config.project_path
-        workspace = [p for p in self.config.project_paths if p.exists()]
+        recent_paths = {str(p) for p in self.quick_access_paths}
+        workspace = [p for p in self.config.project_paths if p.exists() and str(p) not in recent_paths]
         active_str = str(active) if active else None
         ws_by_path = {p["path"]: p for p in self.service.workspace_stats()["projects"]}
 
@@ -1491,63 +1555,11 @@ class CodeBoneApp(rumps.App):
                 _set_symbol_icon(item, "folder.fill" if active_str == str(p) else "folder")
                 if active_str == str(p):
                     item.state = True
-
-                if info and active_str != str(p):
-                    select_item = rumps.MenuItem(
-                        "Set as Current Project",
-                        callback=lambda _, target=p: self.activate_project_from_menu(target),
-                    )
-                    _set_symbol_icon(select_item, "checkmark.circle")
-                    item.add(select_item)
-                elif active_str == str(p):
-                    item.add(rumps.MenuItem("Current Project", callback=None))
-                else:
-                    item.add(rumps.MenuItem("Index this project to activate it", callback=None))
-
-                item.add(None)
-                scan_item = rumps.MenuItem(
-                    "Index",
-                    callback=lambda _, target=p: self.start_project_scan(target),
-                )
-                _set_symbol_icon(scan_item, "arrow.clockwise")
-                item.add(scan_item)
-
-                tldr_item = rumps.MenuItem(
-                    "TLDR",
-                    callback=lambda _, target=p: self._run_project_tldr(target),
-                )
-                _set_symbol_icon(tldr_item, "text.quote")
-                item.add(tldr_item)
-
-                item.add(None)
-                if info:
-                    nodes = rumps.MenuItem(
-                        f"{_fmt_count(info['nodes'])} Nodes — Open Map",
-                        callback=lambda _, target=p: self.view_project_map(target),
-                    )
-                    _set_symbol_icon(nodes, "point.3.connected.trianglepath.dotted")
-                    item.add(nodes)
-                    item.add(rumps.MenuItem(f"{_fmt_count(info['connections'])} Connections", callback=None))
-                else:
-                    item.add(rumps.MenuItem("Not Indexed Yet", callback=None))
-
-                reveal = rumps.MenuItem(
-                    "Show in Finder...",
-                    callback=lambda _, target=p: self.reveal_project(target),
-                )
-                _set_symbol_icon(reveal, "finder")
-                item.add(reveal)
-
-                item.add(None)
-                remove = rumps.MenuItem(
-                    "Remove Project...",
-                    callback=lambda _, target=p: self.remove_from_workspace(target),
-                )
-                _set_symbol_icon(remove, "minus.circle")
-                item.add(remove)
+                self._populate_project_actions(item, p, info, active_str)
                 self.projects_menu.add(item)
         else:
-            self.projects_menu.add(rumps.MenuItem("No Project Folders Yet", callback=None))
+            message = "All Projects Are Shown Above" if self.quick_access_paths else "No Project Folders Yet"
+            self.projects_menu.add(rumps.MenuItem(message, callback=None))
 
         self.projects_menu.add(None)
         add_item = rumps.MenuItem("+ Add Project...", callback=self.choose_project)
@@ -1573,6 +1585,8 @@ class CodeBoneApp(rumps.App):
 
         was_active = self.config.project_path == p
         self.config.remove_project_path(str(p))
+        self.config.remove_recent_project(str(p))
+        self.config.remove_recent_scanned_project(str(p))
         remaining = [path for path in self.config.project_paths if path.exists()]
         if not was_active:
             self._update_ui_state()

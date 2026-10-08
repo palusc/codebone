@@ -547,6 +547,16 @@ class Config:
             self.data["recent_scanned_projects"] = recents[:10]
             self.save()
 
+    def remove_recent_scanned_project(self, project_path: str):
+        """Remove a project from the recent shortcuts without touching its saved scan."""
+        resolved = self._resolved_str(project_path)
+        with self._lock:
+            self.data["recent_scanned_projects"] = [
+                p for p in (self.data.get("recent_scanned_projects") or [])
+                if self._resolved_str(p) != resolved
+            ]
+            self.save()
+
     def add_recent_project(self, project_path: str):
         """Adds a project path to the MRU recent projects list (max 10)."""
         try:

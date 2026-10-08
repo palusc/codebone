@@ -78,6 +78,9 @@ class TestRecentProjects(unittest.TestCase):
         self.assertEqual(recents[0], str(Path("/path/to/scanned_4").resolve()))
         self.assertNotIn(str(Path("/path/to/scanned_0").resolve()), recents)
 
+        self.config.remove_recent_scanned_project("/path/to/scanned_4")
+        self.assertNotIn(str(Path("/path/to/scanned_4").resolve()), self.config.recent_scanned_projects)
+
     def test_persistence_across_instances(self):
         self.config.add_recent_project("/persistent/proj")
 

@@ -11,7 +11,7 @@ Incremental updates within each series are documented as distinct letter release
 ## [Unreleased]
 
 ### Changed
-- **Cleaner project navigation**: The three most recently scanned projects are direct main-menu shortcuts. The full Projects menu shows only project names at its first level, with Index, TLDR, map statistics, Finder and removal actions inside each project.
+- **Cleaner project navigation**: The three most recently scanned projects are full project menus directly in the main menu. `Projects` lists only the remaining folders, so no project is duplicated; every project menu contains Index, TLDR, map statistics, Finder and removal actions.
 - **Clear model roles**: Settings now separates codebone's **Map Model** from the optional **Coding Agent** model. MCP setup and common support destinations moved into **Help & Quick Links**.
 - **Safer recent-history cleanup**: Clear Recent Projects now explains that it only removes recent shortcuts and leaves workspace projects, saved maps and source folders untouched.
 

@@ -261,4 +261,3 @@ def test_issue_6_initial_days_and_status_mcp_metadata():
         assert data["is_first_days"] is True
         assert "mcp_guide_url" in data
         assert "mcp-setup" in data["mcp_guide_url"]
-

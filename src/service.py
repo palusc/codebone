@@ -1,11 +1,14 @@
 """CodeBoneService ties together config, brain provider, watcher, storage, and server."""
 import ast
+import copy
 import hashlib
 import json
 import logging
 import os
+import tempfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -61,6 +64,9 @@ class CodeBoneService:
         self._last_snapshot = 0.0
         self._broken_since: dict = {}
         self._snapshot_revision = -1
+        self._workspace_cache: Optional[tuple] = None  # (cache key, workspace_stats payload)
+        self._snapshot_lock = threading.Lock()  # parallel project workers serialize registry updates
+        self._parallel_progress_lock = threading.Lock()
 
     # ── activity bookkeeping ────────────────────────────────────────────
     @property
@@ -187,6 +193,11 @@ class CodeBoneService:
         """True when a real model backs the provider (cheap: never loads or contacts anything)."""
         provider = self.provider
         return not isinstance(provider, FastFallbackProvider) and bool(getattr(provider, "ready", False))
+
+    @property
+    def model_ready(self) -> bool:
+        """Public form of _model_ready() for the menu's status line."""
+        return self._model_ready()
 
     # ── baseline ────────────────────────────────────────────────────────
     def inspect_baseline(self, project_path: Optional[Path] = None) -> dict:
@@ -316,6 +327,115 @@ class CodeBoneService:
             "event_count": len(index["events"]),
         }
 
+    def workspace_stats(self) -> dict:
+        """Per-project node/connection counts for the whole workspace, plus totals.
+
+        The live index only ever holds one project (see _bind_project), so every other folder is counted
+        from its rolling scan snapshot — no database is opened unless something actually changed. Only
+        folders that exist on disk are reported: an unmounted volume must not show up as an empty project.
+        """
+        active = self.config.project_path
+        snapshots = {s.get("project_path"): s for s in self.scans.list_scans() if s.get("project_path")}
+        key = (
+            str(active),
+            self.storage.revision,  # the active project's counts change on every write
+            tuple(sorted((p, m.get("updated_at"), m.get("file_count")) for p, m in snapshots.items())),
+        )
+        if getattr(self, "_workspace_cache", None) is not None and self._workspace_cache[0] == key:
+            return self._workspace_cache[1]
+
+        index = self.storage.entity_index()
+        total_nodes = total_edges = 0
+        projects: list[dict] = []
+        for p in self.config.project_paths:
+            if not p.exists():
+                continue
+            if active and p == active:
+                nodes = self.storage.file_count()
+                edges = len(self.storage.graph_edges(index, include_domains=True))
+            else:
+                meta = snapshots.get(str(p))
+                db = Path(meta["db_path"]) if meta and meta.get("db_path") else None
+                if not db or not db.exists():
+                    continue  # never scanned: nothing to report rather than a fake "0 files"
+                snap = None
+                try:
+                    snap = Storage(db, readonly=True)
+                    snap_idx = snap.entity_index()
+                    nodes = snap.file_count()
+                    edges = len(snap.graph_edges(snap_idx, include_domains=True))
+                except Exception as exc:
+                    logger.warning("Could not read snapshot for %s: %s", p, exc)
+                    continue
+                finally:
+                    if snap is not None:
+                        snap.close()
+            total_nodes += nodes
+            total_edges += edges
+            projects.append({
+                "name": p.name,
+                "path": str(p),
+                "active": bool(active and p == active),
+                "nodes": nodes,
+                "connections": edges,
+            })
+
+        payload = {"projects": projects, "total_nodes": total_nodes, "total_connections": total_edges}
+        self._workspace_cache = (key, payload)
+        return payload
+
+    def resolve_workspace_project(self, project: str | Path | None = None) -> Path:
+        """Resolve an optional menu/API project selector strictly inside the configured workspace."""
+        if project is None or not str(project).strip():
+            active = self.config.project_path
+            if not active:
+                raise FileNotFoundError("No active project")
+            return active
+        raw = str(project).strip()
+        workspace = [p for p in self.config.project_paths if p.exists()]
+        try:
+            candidate = Path(raw).expanduser().resolve()
+        except OSError:
+            candidate = Path(raw)
+        exact = [p for p in workspace if p == candidate]
+        if exact:
+            return exact[0]
+        named = [p for p in workspace if p.name.casefold() == raw.casefold()]
+        if len(named) == 1:
+            return named[0]
+        if len(named) > 1:
+            raise ValueError(f"Project name '{raw}' is ambiguous; use its full path")
+        raise FileNotFoundError(f"No workspace project matches '{raw}'")
+
+    def project_tldr(self, project: str | Path | None = None) -> dict:
+        """Return a short whole-project explanation from the live index or the project's snapshot."""
+        target = self.resolve_workspace_project(project)
+        storage = self.storage if target == self.config.project_path else None
+        close_after = False
+        if storage is None:
+            snapshot = self._snapshot_for_project(target)
+            if not snapshot:
+                raise FileNotFoundError(f"'{target.name}' has not been indexed yet")
+            storage = Storage(Path(snapshot["db_path"]), readonly=True)
+            close_after = True
+        try:
+            # TLDR is a view over the already-built project index. It does not open or summarize individual
+            # source documents on demand.
+            files = storage.all_files()
+            index = storage.entity_index()
+            if not files:
+                raise ValueError(f"'{target.name}' has no indexed files")
+            text = self.provider.project_tldr(target.name, files, index)
+            return {
+                "project": target.name,
+                "project_path": str(target),
+                "file_count": len(files),
+                "text": text,
+            }
+        finally:
+            if close_after:
+                storage.close()
+
     def reset_map(self):
         """Clear the index. A running scan is told to stop first: it works from a stale snapshot of what exists."""
         self._epoch += 1
@@ -365,27 +485,211 @@ class CodeBoneService:
         self,
         on_progress: Optional[Callable[[int, int, str], None]] = None,
     ) -> list[dict]:
-        """Scans every workspace folder one after the other. Each folder becomes the active project in turn,
-        gets a full pass and its rolling snapshot (so it can be revisited without rescanning), and the
-        project that was active before is restored from its snapshot at the end. The index and the watcher
-        still hold exactly one project at a time — the workspace is only the queue."""
+        """Scan every workspace folder concurrently into isolated databases.
+
+        Workers share the configured brain but never the live SQLite connection. Each completed database is
+        published as that project's rolling snapshot, then the project selected by the user is restored into
+        the live index. A project switch during the batch therefore wins and no worker can overwrite another
+        project's rows.
+        """
         projects = [p for p in self.config.project_paths if p.exists()]
         if not projects:
             return []
-        active = self.config.project_path
-        results: list[dict] = []
-        for i, p in enumerate(projects):
-            if i and self.config.project_path != projects[i - 1]:
-                # A switch from the menu or MCP landed mid-pass (it aborted the scan in flight):
-                # the user's active project wins, the queue does not steal it back.
-                break
-            self.config.set("project_path", str(p))
-            self.start(auto_scan=False)  # aborts a scan in flight, rebinds the index, watches this folder
-            total, sniffed, skipped = self.rescan_all(on_progress=on_progress, wait=True)
-            results.append({"project_path": str(p), "total": total, "sniffed": sniffed, "skipped": skipped})
-        if active and active.exists() and active != Path(results[-1]["project_path"]):
-            self._restore_project(active)
-        return results
+
+        with self._req_lock:
+            if not self._scan_guard.acquire(blocking=False):
+                self._rescan_requested = True
+                return []
+        self._begin()
+        run_requested_pass = False
+        try:
+            results = self._scan_projects_parallel(projects, on_progress)
+            selected = self.config.project_path  # a menu/MCP switch during the scan wins
+            completed = {r["project_path"] for r in results if not r.get("error")}
+            if selected and str(selected) in completed:
+                self._restore_snapshot_to_live(selected)
+            self._workspace_cache = None
+            errors = [f"{Path(r['project_path']).name}: {r['error']}" for r in results if r.get("error")]
+            self.last_error = "; ".join(errors) if errors else None
+            return results
+        finally:
+            self.scan_progress = None
+            self._end()
+            with self._req_lock:
+                run_requested_pass = self._rescan_requested
+                self._rescan_requested = False
+                self._scan_guard.release()
+            if run_requested_pass and self.config.is_configured:
+                # Preserve rescan_all's "one more pass" contract when a watcher/API request arrives while
+                # the workspace batch owns the scan guard.
+                self.rescan_all(wait=True)
+
+    def scan_project(
+        self,
+        project: Path,
+        on_progress: Optional[Callable[[int, int, str], None]] = None,
+    ) -> dict:
+        """Scan one workspace project in isolation without temporarily changing the active project."""
+        project = Path(project).expanduser().resolve()
+        if not project.exists():
+            raise FileNotFoundError(f"Project folder not found: {project}")
+        self.config.add_project_path(str(project))
+
+        self._scan_guard.acquire()
+        self._begin()
+        try:
+            result = self._scan_projects_parallel([project], on_progress)[0]
+            if result.get("error"):
+                raise RuntimeError(result["error"])
+            if self.config.project_path == project:
+                self._restore_snapshot_to_live(project)
+            self._workspace_cache = None
+            return result
+        finally:
+            self.scan_progress = None
+            self._end()
+            self._scan_guard.release()
+
+    def _scan_projects_parallel(
+        self,
+        projects: list[Path],
+        on_progress: Optional[Callable[[int, int, str], None]],
+    ) -> list[dict]:
+        progress: dict[str, dict] = {}
+
+        def report(project: Path, current: int, total: int, current_file: str):
+            with self._parallel_progress_lock:
+                progress[str(project)] = {
+                    "current": current,
+                    "total": total,
+                    "current_file": current_file,
+                }
+                done = sum(p["current"] for p in progress.values())
+                grand_total = sum(p["total"] for p in progress.values())
+                self.scan_progress = {
+                    "current": done,
+                    "total": grand_total,
+                    "pct": int(done * 100 / max(1, grand_total)),
+                    "current_file": current_file,
+                    "project": f"{len(progress)}/{len(projects)} projects",
+                    "projects": {Path(k).name: dict(v) for k, v in progress.items()},
+                }
+            if on_progress:
+                on_progress(done, grand_total, current_file)
+
+        max_workers = min(4, len(projects))
+        results_by_path: dict[str, dict] = {}
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="codebone-project") as pool:
+            futures = {
+                pool.submit(
+                    self._scan_project_isolated,
+                    project,
+                    lambda cur, tot, name, p=project: report(p, cur, tot, name),
+                ): project
+                for project in projects
+            }
+            for future in as_completed(futures):
+                project = futures[future]
+                try:
+                    results_by_path[str(project)] = future.result()
+                except Exception as exc:
+                    logger.exception("Parallel project scan failed for %s", project)
+                    results_by_path[str(project)] = {
+                        "project_path": str(project),
+                        "total": 0,
+                        "sniffed": 0,
+                        "skipped": 0,
+                        "error": str(exc),
+                    }
+        return [results_by_path[str(p)] for p in projects]
+
+    def _scan_project_isolated(
+        self,
+        project: Path,
+        on_progress: Optional[Callable[[int, int, str], None]] = None,
+    ) -> dict:
+        """Build one project's index in a private SQLite database, then publish its rolling snapshot."""
+        self.config.config_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".parallel-scan-", dir=self.config.config_dir) as tmp:
+            worker_config = Config(Path(tmp) / "config.json")
+            worker_config.data = copy.deepcopy(self.config.data)
+            worker_config.data["project_path"] = str(project)
+            worker_config.data["project_paths"] = [str(project)]
+            worker_config.save()
+
+            worker = CodeBoneService(worker_config)
+            worker_owns_provider = True
+            # Cloud/local providers are cheap and carry mutable request state, so each worker keeps its own.
+            # The built-in model is hundreds of MB and already protects llama.cpp with a generation lock;
+            # it must be shared instead of loaded once per project. Exact fallback instances can be cloned,
+            # while custom Provider subclasses used by integrations/tests stay shared.
+            if type(self.provider) is FastFallbackProvider:
+                unused_provider = worker.provider
+                worker.provider = FastFallbackProvider()
+                if hasattr(unused_provider, "close"):
+                    unused_provider.close()
+            elif self.config.get("brain_provider", "builtin") not in ("cloud", "local_url"):
+                unused_provider = worker.provider
+                worker.provider = self.provider
+                worker_owns_provider = False
+                if unused_provider is not self.provider and hasattr(unused_provider, "close"):
+                    unused_provider.close()
+            try:
+                total, sniffed, skipped = worker.rescan_all(on_progress=on_progress, wait=True)
+                with self._snapshot_lock:
+                    self.scans.save_snapshot(project.name, project, worker.storage)
+                    self.config.add_recent_scanned_project(str(project))
+                result = {
+                    "project_path": str(project),
+                    "total": total,
+                    "sniffed": sniffed,
+                    "skipped": skipped,
+                }
+                if worker.last_error:
+                    result["error"] = worker.last_error
+                return result
+            finally:
+                worker.stop()
+                if worker_owns_provider and hasattr(worker.provider, "close"):
+                    worker.provider.close()
+                worker.storage.close()
+
+    def _snapshot_for_project(self, project: Path) -> Optional[dict]:
+        target = str(Path(project).expanduser().resolve())
+        return next((s for s in self.scans.list_scans() if s.get("project_path") == target), None)
+
+    def _restore_snapshot_to_live(self, project: Path):
+        snapshot = self._snapshot_for_project(project)
+        if not snapshot:
+            return
+        self.config.set("project_path", str(project))
+        self.stop()
+        self.storage.restore_from(Path(snapshot["db_path"]))
+        self.start(auto_scan=False)
+
+    def activate_project(self, project: Path):
+        """Switch the live map and watcher to an already-scanned workspace project without rescanning it."""
+        target = Path(project).expanduser().resolve()
+        if not target.exists() or not target.is_dir():
+            raise FileNotFoundError(f"Project folder not found: {target}")
+        snapshot = self._snapshot_for_project(target)
+        if not snapshot:
+            raise FileNotFoundError(f"'{target.name}' has not been indexed yet")
+        if self.config.project_path == target and self.watching:
+            return
+
+        self.stop()
+        if not self._scan_guard.acquire(timeout=5):
+            raise RuntimeError("A project scan is still finishing. Try again in a moment.")
+        try:
+            self.config.add_project_path(str(target))
+            self.config.set("project_path", str(target))
+            self.storage.restore_from(Path(snapshot["db_path"]))
+            self._workspace_cache = None
+        finally:
+            self._scan_guard.release()
+        self.start(auto_scan=False)
+        self.last_error = None
 
     def _restore_project(self, project: Path):
         """Makes project active again from its rolling snapshot instead of rescanning it. Falls back to a
@@ -470,6 +774,9 @@ class CodeBoneService:
                         "eta_seconds": eta_sec,
                         "eta_str": f"~{eta_sec}s" if eta_sec < 60 else f"~{round(eta_sec / 60, 1)}m",
                         "current_file": rel_path,
+                        # Which workspace folder this pass belongs to: the menu may be showing another
+                        # project while a multi-project scan runs.
+                        "project": project_path.name,
                     }
                     if on_progress:
                         on_progress(idx, total, rel_path)
@@ -526,6 +833,7 @@ class CodeBoneService:
                 project_path=self.config.project_path,
                 storage=self.storage,
             )
+            self.config.add_recent_scanned_project(str(self.config.project_path))
             self._last_snapshot = time.time()
             self._snapshot_revision = self.storage.revision
         except Exception as exc:

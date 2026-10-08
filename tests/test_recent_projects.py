@@ -60,9 +60,23 @@ class TestRecentProjects(unittest.TestCase):
     def test_clear_recent_projects(self):
         self.config.add_recent_project("/a")
         self.config.add_recent_project("/b")
+        self.config.add_recent_scanned_project("/scan-a")
         self.config.clear_recent_projects()
 
         self.assertEqual(self.config.recent_projects, [])
+        self.assertEqual(self.config.recent_scanned_projects, [])
+
+    def test_recent_scans_are_separate_and_newest_first(self):
+        self.assertIsNone(self.config.recent_scanned_projects)
+
+        for i in range(12):
+            self.config.add_recent_scanned_project(f"/path/to/scanned_{i}")
+        self.config.add_recent_scanned_project("/path/to/scanned_4")
+
+        recents = self.config.recent_scanned_projects
+        self.assertEqual(len(recents), 10)
+        self.assertEqual(recents[0], str(Path("/path/to/scanned_4").resolve()))
+        self.assertNotIn(str(Path("/path/to/scanned_0").resolve()), recents)
 
     def test_persistence_across_instances(self):
         self.config.add_recent_project("/persistent/proj")

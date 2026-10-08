@@ -5,7 +5,7 @@ _PAGE = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>codebone — Semantic Code Graph</title>
+<title>codebone — Code Graph</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -844,7 +844,7 @@ _PAGE = r"""<!DOCTYPE html>
         Architectural Purpose
       </div>
       <div class="summary-card" id="sb-summary">
-        No semantic summary available.
+        No summary available.
       </div>
     </div>
 
@@ -1009,7 +1009,7 @@ function updateHud(status, graph) {
   scanning = !!(status.scanning || status.sniffing);
   if (status.model_status) { label = 'Preparing model: ' + status.model_status; badge.className = 'status-badge sniffing'; }
   else if (status.scan_progress) { label = 'Indexing ' + status.scan_progress.pct + '%'; badge.className = 'status-badge sniffing'; }
-  else if (scanning) { label = 'Sniffing & Indexing...'; badge.className = 'status-badge sniffing'; }
+  else if (scanning) { label = 'Indexing...'; badge.className = 'status-badge sniffing'; }
   $('status-text').textContent = label;
   checkMcpPing(status);
 }

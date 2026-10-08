@@ -71,6 +71,7 @@ You don't need to write long prompts like *"use codebone"* or *"inspect architec
 * **`cb`** — Injects the live high-level architecture & active business domains into your AI context.
 * **`cb: how does billing work?`** — Directly queries database models, API routes, and events for Billing.
 * **`cb auth.py`** — Returns instant semantic context and cross-module links for that specific file.
+* **`codebone_tldr()`** — Explains the active project in one short paragraph; pass a workspace project name to summarize another codebase.
 
 codebone provides native `cb` MCP tools and prompts, recognized across all major AI agent environments.
 
@@ -247,7 +248,7 @@ codebone pairs local-first Apple Silicon Metal acceleration with zero-cost smart
 | **Cloud BYOK** | Your own API key — Anthropic (`Claude Sonnet 5`) or OpenAI (`GPT-6`). | Zero RAM |
 | **Custom .gguf** | Load any GGUF model directly via macOS file dialog (Qwen 7B, Llama 3, etc.). | Native Metal |
 
-> ⚙️ Switch anytime via 🦴 ➔ **Settings** ➔ **Model**.
+> ⚙️ Switch anytime via 🦴 ➔ **Settings** ➔ **Map Model**. This model is used by codebone for indexing, maps, and project TLDRs.
 
 ### ⚡ Smart Scan & Instant Adoption
 
@@ -259,16 +260,16 @@ Never re-scan from scratch when switching branches or reorganizing code:
 
 ---
 
-## 🧩 Modules: use another model for coding
+## 🧩 Coding Agent: use another model for coding
 
 Add a model API once, then choose per app whether it uses it. Each app has its own on/off switch.
 
-1. 🦴 ➔ **Modules** ➔ **Add Module...**: pick the **MiMo V2.6 Pro (Xiaomi)** preset, or **Custom...** with a model ID and a base URL in Anthropic format (for Claude Code) and/or OpenAI format (for opencode). The API key goes into your macOS Keychain.
-2. Under **Use for ...** switch on the apps that should use it. **Claude Code** (terminal and VS Code) and **opencode** are supported directly. New sessions pick the change up; running sessions keep their model.
+1. 🦴 ➔ **Settings** ➔ **Coding Agent** ➔ **Add Model...**: pick the **MiMo V2.6 Pro (Xiaomi)** preset, or **Custom...** with a model ID and a base URL in Anthropic format (for Claude Code) and/or OpenAI format (for opencode). The API key goes into your macOS Keychain.
+2. Turn on **Use Custom Model**, then under **Use in ...** select the coding agents that should use it. **Claude Code** (terminal and VS Code) and **opencode** are supported directly. New sessions pick the change up; running sessions keep their model.
 3. Switch an app off and codebone restores exactly the settings it changed in that app's config (`~/.claude/settings.json`, `~/.config/opencode/opencode.json`) and leaves everything else alone. A settings file that cannot be parsed is never touched.
 4. Any other app (Cursor, Antigravity, Cline, ...): **Copy for Other Apps** copies the base URL, model ID or API key so you can paste them into that app's model settings.
 
-Claude Code fetches the key from the Keychain on demand. opencode can only read a key from a file or environment variable, so for it codebone keeps a private key file (owner-only) in its own data folder and deletes it when the app is switched off. Modules are for coding only; the model that indexes your project stays under **Settings ➔ Model**. Uninstalling codebone switches every app back and deletes the stored keys. Your code goes to the module's provider like with any hosted model.
+Claude Code fetches the key from the Keychain on demand. opencode can only read a key from a file or environment variable, so for it codebone keeps a private key file (owner-only) in its own data folder and deletes it when the app is switched off. **Coding Agent** models are for coding only; codebone's own analysis model stays under **Settings ➔ Map Model**. Uninstalling codebone switches every app back and deletes the stored keys. Your code goes to the selected model provider like with any hosted model.
 
 ---
 

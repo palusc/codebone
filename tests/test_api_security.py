@@ -70,20 +70,15 @@ def test_context_overview_query_and_links(client):
     assert client.get("/codebone/context", params={"format": "json", "query": "invoice"}).json()["match_count"] == 2
 
 
-def test_tldr_reads_disk_and_falls_back_without_a_model(client, tmp_path):
-    (tmp_path / "proj" / "billing").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "proj" / "billing" / "stripe.py").write_text(
-        "def checkout():\n    charge_card()\n"
-    )
-    ok = client.get("/codebone/tldr", params={"file": "billing/stripe.py"})
+def test_tldr_summarizes_the_active_project_without_reading_a_file(client):
+    ok = client.get("/codebone/tldr")
     assert ok.status_code == 200
-    assert "# billing/stripe.py" in ok.text and "Defines checkout" in ok.text
+    assert "# proj" in ok.text
+    assert "3-file software project" in ok.text
+    assert "Billing" in ok.text
 
-    missing = client.get("/codebone/tldr", params={"file": "nope.py"})
+    missing = client.get("/codebone/tldr", params={"project": "nope"})
     assert missing.status_code == 404
-
-    no_param = client.get("/codebone/tldr")
-    assert no_param.status_code == 400
 
 
 def test_rescan_and_reset_do_not_pile_up_threads(client):

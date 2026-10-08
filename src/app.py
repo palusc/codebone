@@ -1,5 +1,6 @@
 """The 'Bone' UI — codebone macOS menu bar app."""
 import fcntl
+import hashlib
 import json
 import logging
 import os
@@ -57,7 +58,13 @@ from AppKit import (
 from .config import Config
 from .feedback import record_feedback
 from .logging_setup import configure_logging
-from .permissions import check_folder_access, open_full_disk_access_settings, reveal_codebone_in_finder
+from .permissions import (
+    check_folder_access,
+    has_full_disk_access,
+    is_protected_user_folder,
+    open_full_disk_access_settings,
+    reveal_codebone_in_finder,
+)
 from .server import ServerThread
 from .service import CodeBoneService, PugService
 from .updater import CURRENT_VERSION, check_for_updates, download_and_install_update, restart_app
@@ -92,6 +99,11 @@ def _get_icon(path_str: str) -> str:
     except Exception:
         pass
     return path_str
+
+
+def _fmt_count(n: int) -> str:
+    """1420 -> "1.420": the HUD shows counts the way the roadmap writes them (German thousands dot)."""
+    return f"{int(n):,}".replace(",", ".")
 
 
 def _set_symbol_icon(menu_item: Optional[rumps.MenuItem], symbol_name: str, size: float = 15.0):
@@ -458,7 +470,7 @@ class HeaderActionDelegate(NSObject):
 
 
 class ModulesSwitchDelegate(NSObject):
-    """Action delegate for the native switch on the Modules row (Tailscale-style: the switch itself
+    """Action delegate for the native switch on the coding-agent row (Tailscale-style: the switch itself
     is the on/off control, no need to open a submenu to flip it)."""
 
     def initWithApp_(self, app):
@@ -510,13 +522,22 @@ class CodeBoneApp(rumps.App):
         except Exception as exc:
             logger.warning("Could not set custom header view: %s", exc)
 
-        # Projects: the scan workspace (every folder that gets scanned, one after the other) plus the
-        # recents it was picked from. Built by _update_projects_menu.
+        # The three most recently scanned projects are direct one-click rows in the main menu. Empty
+        # placeholders are hidden so the layout does not gain another unnecessary submenu.
+        self.quick_access_paths: list[Path] = []
+        self.quick_access_items: list[rumps.MenuItem] = []
+        for index in range(3):
+            item = rumps.MenuItem(
+                "Recent Project",
+                callback=lambda _, position=index: self.open_quick_access_project(position),
+            )
+            _set_symbol_icon(item, "clock.arrow.circlepath")
+            self.quick_access_items.append(item)
+
         self.projects_menu = rumps.MenuItem("Projects")
         _set_symbol_icon(self.projects_menu, "folder")
 
-        # MCP AI Assistants Setup
-        self.mcp_setup_item = rumps.MenuItem("Connect AI Assistants (MCP)...", callback=self.open_mcp_setup)
+        self.mcp_setup_item = rumps.MenuItem("Connect Coding Agent (MCP)...", callback=self.open_mcp_setup)
         _set_symbol_icon(self.mcp_setup_item, "bolt.fill")
 
         # Model modules: API endpoints Claude Code can be routed through (for coding, not for indexing).
@@ -527,17 +548,18 @@ class CodeBoneApp(rumps.App):
             self.modules_switch_delegate,
             self.modules_switch,
         ) = self._build_modules_switch_row()
-        self.modules_switch_item = rumps.MenuItem("Modules", callback=None)
+        self.modules_switch_item = rumps.MenuItem("Use Custom Model", callback=None)
         try:
             self.modules_switch_item._menuitem.setView_(self.modules_switch_row)
         except Exception as exc:
-            logger.warning("Could not set custom Modules switch view: %s", exc)
+            logger.warning("Could not set custom coding-agent switch view: %s", exc)
 
-        self.modules_menu = rumps.MenuItem("Modules Settings")
+        self.modules_menu = rumps.MenuItem("Coding Agent")
         _set_symbol_icon(self.modules_menu, "square.stack.3d.up")
 
-        # Model Selection Submenu (Dynamic active model list)
-        self.brain_menu = rumps.MenuItem("Model")
+        # The map model analyses files, builds TLDRs and powers the knowledge map. It is deliberately
+        # separate from the optional model routed into the user's coding agent.
+        self.brain_menu = rumps.MenuItem("Map Model")
         _set_symbol_icon(self.brain_menu, "brain")
 
         # API keys in one place: the cloud BYOK key and every module's key from the Keychain
@@ -545,17 +567,14 @@ class CodeBoneApp(rumps.App):
         _set_symbol_icon(self.api_keys_menu, "key")
 
         # Settings Items
-        self.adopt_scan_item = rumps.MenuItem("Adopt / Link Existing Scan...", callback=self.choose_adopt_scan)
+        self.adopt_scan_item = rumps.MenuItem("Match a Previous Scan...", callback=self.choose_adopt_scan)
         _set_symbol_icon(self.adopt_scan_item, "link")
 
-        self.copy_curl_item = rumps.MenuItem("Copy Context (curl)", callback=self.copy_curl)
+        self.copy_curl_item = rumps.MenuItem("Copy AI Context (curl)", callback=self.copy_curl)
         _set_symbol_icon(self.copy_curl_item, "doc.on.clipboard")
 
-        self.rescan_item = rumps.MenuItem("Scan Project Now", callback=self.rescan_workspace)
+        self.rescan_item = rumps.MenuItem("Index Project Now", callback=self.rescan_workspace)
         _set_symbol_icon(self.rescan_item, "arrow.clockwise")
-
-        self.open_repo_item = rumps.MenuItem("Open Project in Finder...", callback=self.open_repo)
-        _set_symbol_icon(self.open_repo_item, "folder")
 
         self.view_logs_item = rumps.MenuItem("View Logs...", callback=self.view_logs)
         _set_symbol_icon(self.view_logs_item, "doc.text")
@@ -575,6 +594,18 @@ class CodeBoneApp(rumps.App):
         self.settings_menu = rumps.MenuItem("Settings")
         _set_symbol_icon(self.settings_menu, "gearshape")
 
+        self.help_menu = rumps.MenuItem("Help & Quick Links")
+        _set_symbol_icon(self.help_menu, "questionmark.circle")
+
+        self.open_map_item = rumps.MenuItem("Open Knowledge Map...", callback=self.view_live_graph)
+        _set_symbol_icon(self.open_map_item, "point.3.connected.trianglepath.dotted")
+
+        self.documentation_item = rumps.MenuItem(
+            "Documentation...",
+            callback=lambda _: self.open_url("https://github.com/palusc/codebone"),
+        )
+        _set_symbol_icon(self.documentation_item, "book")
+
         self.feedback_item = rumps.MenuItem("Feedback & Bug Report...", callback=self.open_feedback_dialog)
         _set_symbol_icon(self.feedback_item, "exclamationmark.bubble")
 
@@ -585,16 +616,13 @@ class CodeBoneApp(rumps.App):
         _set_symbol_icon(self.uninstall_item, "trash")
 
         # Settings is grouped into sub-sections so it's clear at a glance where a given
-        # setting lives, instead of one long flat list.
+        # setting lives, instead of one long flat list. The Finder jump is not repeated here:
+        # clicking the project name in the header reveals the folder (the one entry point).
         self.project_settings_menu = rumps.MenuItem("Project")
         _set_symbol_icon(self.project_settings_menu, "folder.badge.gearshape")
         self.project_settings_menu.update([
             self.adopt_scan_item,
             self.copy_curl_item,
-            None,
-            self.open_repo_item,
-            self.view_logs_item,
-            self.full_disk_access_item,
         ])
 
         self.scan_data_menu = rumps.MenuItem("Scan Data")
@@ -606,18 +634,27 @@ class CodeBoneApp(rumps.App):
             self.reset_map_item,
         ])
 
-        # One Settings menu holds everything that configures the app: modules (switch + details),
-        # what the brain runs on, where the keys live, and the project/data utilities.
+        self.help_menu.update([
+            self.mcp_setup_item,
+            self.open_map_item,
+            self.documentation_item,
+            None,
+            self.view_logs_item,
+            self.full_disk_access_item,
+        ])
+
+        # The two model roles are adjacent and plainly named: Map Model belongs to codebone; Coding Agent
+        # controls the optional model used by Claude Code/opencode. Setup links are kept in Help.
         self.settings_menu.update([
-            self.modules_switch_item,
+            self.brain_menu,
             self.modules_menu,
             None,
-            self.brain_menu,
             self.api_keys_menu,
             None,
-            self.mcp_setup_item,
             self.project_settings_menu,
             self.scan_data_menu,
+            None,
+            self.help_menu,
             None,
             self.check_updates_item,
             None,
@@ -630,9 +667,10 @@ class CodeBoneApp(rumps.App):
         self.quit_item = rumps.MenuItem("Quit codebone", callback=self.quit_app)
         _set_symbol_icon(self.quit_item, "power")
 
+        # Reading order: live status → latest work → all projects → settings → fixed footer.
         self.menu = [
             self.header_item,
-            self.rescan_item,
+            *self.quick_access_items,
             self.projects_menu,
             None,
             self.settings_menu,
@@ -654,7 +692,14 @@ class CodeBoneApp(rumps.App):
 
         # Start watcher if configured
         if self.config.is_configured:
-            self.service.start(auto_scan=True)
+            project = self.config.project_path
+            if project and is_protected_user_folder(project) and not has_full_disk_access():
+                # FSEvents can block the whole process while macOS waits on a denied protected folder.
+                # Keep the menu and local API responsive so Help > macOS Disk Access Settings remains usable.
+                self.service.last_error = "Full Disk Access is required to watch this project folder."
+                logger.warning("Watcher not started: Full Disk Access is required for %s", project)
+            else:
+                self.service.start(auto_scan=True)
         self.service.ensure_builtin_model()
 
     def _build_header_view(self):
@@ -687,7 +732,9 @@ class CodeBoneApp(rumps.App):
         title_lbl.setSelectable_(False)
         container.addSubview_(title_lbl)
 
-        # 2. Top row folder link: small folder icon + name directly under "codebone"
+        # 2. Top row folder link: small folder icon + name directly under "codebone".
+        # Both rows share the same two columns — icon left edge x=14, text left edge x=34 (aligned with
+        # the title text above) — and the same vertical centre: icon 49+13/2 = 55.5, text 47+17/2 = 55.5.
         folder_sym = NSImage.imageWithSystemSymbolName_accessibilityDescription_("folder", None)
         if folder_sym:
             folder_sym.setSize_(NSSize(13, 13))
@@ -696,7 +743,7 @@ class CodeBoneApp(rumps.App):
             f_iv.setImage_(folder_sym)
             container.addSubview_(f_iv)
 
-        folder_btn = FolderButton.alloc().initWithFrame_(NSRect(NSPoint(31, 47), NSSize(205, 17)))
+        folder_btn = FolderButton.alloc().initWithFrame_(NSRect(NSPoint(34, 47), NSSize(198, 17)))
         folder_btn.setTarget_(delegate)
         folder_btn.setAction_(objc.selector(delegate.folderClicked_, signature=b"v@:@"))
         init_folder = self.config.project_path.name if (self.config.is_configured and self.config.project_path) else "Click to index local codebase"
@@ -755,14 +802,14 @@ class CodeBoneApp(rumps.App):
         return container, delegate, folder_btn, status_dot, stats_lbl
 
     def _build_modules_switch_row(self):
-        """A menu row that IS the on/off control for Modules, native-switch style (à la Tailscale's
+        """A menu row that IS the on/off control for the custom coding model, native-switch style
         toggle rows) instead of a checkmark buried inside a submenu."""
         w, h = 276.0, 30.0
         container = NSView.alloc().initWithFrame_(NSRect(NSPoint(0, 0), NSSize(w, h)))
         delegate = ModulesSwitchDelegate.alloc().initWithApp_(self)
 
         label = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(18, 6), NSSize(180, 18)))
-        label.setStringValue_("Modules")
+        label.setStringValue_("Use Custom Model")
         label.setFont_(NSFont.systemFontOfSize_(13.5))
         label.setTextColor_(NSColor.labelColor())
         label.setBezeled_(False)
@@ -925,11 +972,11 @@ class CodeBoneApp(rumps.App):
         projects = [p for p in self.config.project_paths if p.exists()]
         if len(projects) <= 1:
             label = projects[0].name if projects else "project"
-            rumps.notification("codebone", "Scan Started", f"Scanning {label} and building knowledge graph...")
+            rumps.notification("codebone", "Scan Started", f"Scanning {label}...")
         else:
             rumps.notification(
                 "codebone", "Scan Started",
-                f"Scanning {len(projects)} project folders one after another...",
+                f"Scanning {len(projects)} project folders...",
             )
         self._run_workspace_scan()
 
@@ -960,6 +1007,65 @@ class CodeBoneApp(rumps.App):
 
         threading.Thread(target=_run, daemon=True, name="codebone-workspace-scan").start()
 
+    def _run_single_scan(self, p: Path):
+        """Reindexes exactly one workspace folder and keeps the current project active."""
+        def _run():
+            def _on_prog(cur, tot, f):
+                self._on_main(self._push_stats)
+            try:
+                result = self.service.scan_project(p, on_progress=_on_prog)
+                rumps.notification(
+                    "codebone",
+                    "Indexing Complete",
+                    f"{p.name}: {result['total']} files mapped.",
+                )
+            except Exception as exc:
+                logger.exception("Single project scan failed")
+                rumps.notification("codebone", "Indexing Failed", str(exc))
+            finally:
+                self._on_main(self._update_ui_state)
+
+        threading.Thread(target=_run, daemon=True, name="codebone-single-scan").start()
+
+    def start_project_scan(self, p: Path):
+        rumps.notification("codebone", "Indexing Started", f"Indexing '{p.name}'...")
+        self._run_single_scan(p)
+
+    def _run_project_tldr(self, p: Path):
+        """Build and show the short whole-project explanation without changing the active project."""
+        def _run():
+            try:
+                try:
+                    result = self.service.project_tldr(p)
+                except FileNotFoundError:
+                    # A newly added workspace folder has no snapshot yet. Index it once, then summarize it.
+                    self.service.scan_project(p)
+                    result = self.service.project_tldr(p)
+
+                def _show():
+                    NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+                    rumps.alert(
+                        title=f"TLDR — {result['project']}",
+                        message=f"{result['text']}\n\n{result['file_count']} indexed files",
+                        ok="Done",
+                    )
+
+                self._on_main(_show)
+            except Exception as exc:
+                logger.exception("Project TLDR failed for %s", p)
+                message = str(exc)
+
+                def _show_error():
+                    NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+                    rumps.alert("TLDR Failed", message)
+
+                self._on_main(_show_error)
+            finally:
+                self._on_main(self._update_ui_state)
+
+        rumps.notification("codebone", "Creating Project TLDR", f"Summarizing '{p.name}'...")
+        threading.Thread(target=_run, daemon=True, name="codebone-project-tldr").start()
+
     def _push_stats(self, _timer=None):
         data = self.service.stats_snapshot()
         configured = data.get("configured", False)
@@ -969,8 +1075,11 @@ class CodeBoneApp(rumps.App):
         repo_name = data.get("repo_name", "None")
         file_count = data.get("file_count", 0)
         connection_count = data.get("connection_count", 0)
+        ws = self.service.workspace_stats() if configured else {"projects": [], "total_nodes": 0, "total_connections": 0}
+        ws_count = len(ws["projects"])
 
         signature = (configured, running, sniffing, repo_name, file_count, connection_count,
+                     ws_count, ws["total_nodes"], ws["total_connections"],
                      json.dumps(scan_progress, sort_keys=True) if scan_progress else None)
         if signature == getattr(self, "_last_stats_signature", None):
             return  # nothing changed: do not make AppKit redraw the menu every 2 s
@@ -980,13 +1089,13 @@ class CodeBoneApp(rumps.App):
         if hasattr(self, "folder_btn") and self.folder_btn is not None:
             if configured and self.config.project_path:
                 folder_display = self.config.project_path.name
-                self.folder_btn.setToolTip_("Click to reveal project in Finder")
+                self.folder_btn.setToolTip_("Active project — click to reveal in Finder")
             elif configured and repo_name != "None":
                 folder_display = repo_name
-                self.folder_btn.setToolTip_("Click to reveal project in Finder")
+                self.folder_btn.setToolTip_("Active project — click to reveal in Finder")
             else:
-                folder_display = "Click to index local codebase"
-                self.folder_btn.setToolTip_("Click to select and index project folder")
+                folder_display = "No project selected yet"
+                self.folder_btn.setToolTip_("Click to select a project folder")
             self.folder_btn.setFolderName_(folder_display)
 
         # 2. Update status indicator dot
@@ -1000,7 +1109,7 @@ class CodeBoneApp(rumps.App):
             else:
                 self.status_dot.setColor_(NSColor.systemOrangeColor())
 
-        # 3. Update bottom card row stats label
+        # 3. Update bottom card row stats label — the one glance that answers "what is running right now?"
         if hasattr(self, "card_stats_label") and self.card_stats_label is not None:
             if configured:
                 if sniffing and scan_progress:
@@ -1008,21 +1117,30 @@ class CodeBoneApp(rumps.App):
                     tot = scan_progress.get("total", 0)
                     cur_f = scan_progress.get("current_file", "")
                     short_f = Path(cur_f).name if cur_f else ""
+                    where = scan_progress.get("project") or repo_name
                     if short_f:
                         stats_text = f"Indexing {short_f} ({curr}/{tot})"
                     else:
                         stats_text = f"Indexing ({curr}/{tot})  ·  {file_count} Nodes"
+                    if where and ws_count > 1:
+                        stats_text = f"{where}: {stats_text}"
+                elif ws_count > 1:
+                    stats_text = (
+                        f"{ws_count} projects  ·  {_fmt_count(ws['total_nodes'])} Nodes  ·  "
+                        f"{_fmt_count(ws['total_connections'])} Connections"
+                    )
                 else:
                     stats_text = f"{file_count} Nodes  ·  {connection_count} Connections"
             else:
-                stats_text = "0 Nodes  ·  0 Connections"
+                stats_text = "No project selected yet"
             self.card_stats_label.setStringValue_(stats_text)
 
     def _apply_all_icons(self):
         """Applies native Apple SF Symbol vector icons across the entire menu hierarchy."""
         # Top-level menu items
         _set_symbol_icon(self.mcp_setup_item, "bolt.fill")
-        _set_symbol_icon(self.rescan_item, "arrow.clockwise")
+        for item in self.quick_access_items:
+            _set_symbol_icon(item, "clock.arrow.circlepath")
         _set_symbol_icon(self.projects_menu, "folder")
         _set_symbol_icon(self.settings_menu, "gearshape")
         _set_symbol_icon(self.feedback_item, "exclamationmark.bubble")
@@ -1035,9 +1153,11 @@ class CodeBoneApp(rumps.App):
         _set_symbol_icon(self.api_keys_menu, "key")
         _set_symbol_icon(self.project_settings_menu, "folder.badge.gearshape")
         _set_symbol_icon(self.scan_data_menu, "externaldrive")
+        _set_symbol_icon(self.help_menu, "questionmark.circle")
+        _set_symbol_icon(self.open_map_item, "point.3.connected.trianglepath.dotted")
+        _set_symbol_icon(self.documentation_item, "book")
         _set_symbol_icon(self.adopt_scan_item, "link")
         _set_symbol_icon(self.copy_curl_item, "doc.on.clipboard")
-        _set_symbol_icon(self.open_repo_item, "folder")
         _set_symbol_icon(self.view_logs_item, "doc.text")
         _set_symbol_icon(self.full_disk_access_item, "lock.shield")
         _set_symbol_icon(self.check_updates_item, "arrow.triangle.2.circlepath")
@@ -1053,10 +1173,11 @@ class CodeBoneApp(rumps.App):
             self.title = "codebone"
         if hasattr(self, "mcp_setup_item") and self.mcp_setup_item:
             if self.config.is_first_days():
-                self.mcp_setup_item.title = "⚡ Connect AI Assistants (MCP)..."
+                self.mcp_setup_item.title = "⚡ Connect Coding Agent (MCP)..."
             else:
-                self.mcp_setup_item.title = "Connect AI Assistants (MCP)..."
+                self.mcp_setup_item.title = "Connect Coding Agent (MCP)..."
         self._apply_all_icons()
+        self._update_quick_access_menu()
         self._update_projects_menu()
         self._update_brain_checks()
         self._update_api_keys_menu()
@@ -1076,15 +1197,97 @@ class CodeBoneApp(rumps.App):
     def _on_sniff_end(self):
         self._on_main(self._push_stats)
 
+    # Provider profiles for the Map Model menu: (config vendor id, label, default model id).
+    # The model ids are the ones CloudProvider itself falls back to — no second list to keep in sync.
+    BRAIN_PROFILES = (
+        ("openrouter", "OpenRouter", "openai/gpt-4o-mini"),
+        ("anthropic", "Claude (Anthropic)", "claude-sonnet-5"),
+        ("openai", "OpenAI", "gpt-6"),
+    )
+
+    def _brain_status(self) -> tuple[str, str]:
+        """(active model, state) for the status line. Deliberately offline: the menu may rebuild on the
+        2 s stats timer and must never turn that into a network probe."""
+        provider = self.config.get("brain_provider", "builtin")
+        name = self.config.active_model_display_name
+        if provider == "cloud":
+            if len((self.config.get("brain_cloud_api_key") or "").strip()) <= 8:
+                return name, "API key missing"
+            return name, "Ready ✓" if self._brain_connection_verified() else "Not tested"
+        if provider == "local_url":
+            if not self.config.get("brain_local_url"):
+                return name, "Server URL missing"
+            return name, "Ready ✓" if self._brain_connection_verified() else "Not tested"
+        return name, "Ready" if self.service.model_ready else "Model loading"
+
+    def _brain_signature(self) -> str:
+        """Non-secret fingerprint binding a successful test to the exact current provider settings."""
+        provider = self.config.get("brain_provider", "builtin")
+        if provider == "cloud":
+            key_hash = hashlib.sha256(
+                (self.config.get("brain_cloud_api_key") or "").encode("utf-8")
+            ).hexdigest()[:12]
+            raw = ":".join((
+                "cloud",
+                self.config.get("brain_cloud_vendor", "openai"),
+                self.config.get("brain_cloud_model", ""),
+                key_hash,
+            ))
+        elif provider == "local_url":
+            raw = f"local_url:{self.config.get('brain_local_url', '')}"
+        else:
+            raw = f"builtin:{self.config.get('model_path', '')}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _brain_connection_verified(self) -> bool:
+        return self.config.get("brain_tested_signature", "") == self._brain_signature()
+
     def _update_brain_checks(self):
-        """Rebuilds the Model & Brain submenu with an active list of known models and providers."""
+        """Rebuilds the Map Model menu: one status line for what is active right now, the provider
+        profiles in plain words (key in, test, done), then the local model files."""
         provider = self.config.get("brain_provider", "builtin")
         current_model_path = self.config.get("model_path")
 
         if getattr(self.brain_menu, "_menu", None) is not None:
             self.brain_menu.clear()
 
-        # 1. Active list of known local models
+        purpose_item = rumps.MenuItem("Used for maps, indexing & TLDRs", callback=None)
+        self.brain_menu.add(purpose_item)
+        self.brain_menu.add(None)
+
+        # 1. Status line — one plain description of what codebone is using now
+        name, state = self._brain_status()
+        status_item = rumps.MenuItem(f"Active: {name} ({state})", callback=None)
+        self.brain_menu.add(status_item)
+        self.brain_menu.add(None)
+
+        # 2. Provider profiles: pick one, paste the key, codebone tests the connection
+        for vid, label, model in self.BRAIN_PROFILES:
+            connected = bool(
+                provider == "cloud"
+                and self.config.get("brain_cloud_vendor") == vid
+                and self._brain_connection_verified()
+            )
+            item = rumps.MenuItem(
+                f"{label}{' — Connected ✓' if connected else '...'}",
+                callback=lambda _, v=vid, m=model, l=label: self.setup_brain_profile(v, m, l),
+            )
+            _set_symbol_icon(item, "cloud")
+            item.state = bool(provider == "cloud" and self.config.get("brain_cloud_vendor") == vid)
+            self.brain_menu.add(item)
+
+        self.brain_local_item = rumps.MenuItem(
+            "Local Server (Ollama / LM Studio)"
+            + (" — Connected ✓" if provider == "local_url" and self._brain_connection_verified() else "..."),
+            callback=self.select_brain_local
+        )
+        _set_symbol_icon(self.brain_local_item, "network")
+        self.brain_local_item.state = (provider == "local_url")
+        self.brain_menu.add(self.brain_local_item)
+
+        self.brain_menu.add(None)
+
+        # 3. Local model files (advanced)
         for m in self.config.known_models:
             m_name = m.get("name", "Model")
             m_path = m.get("path")
@@ -1098,21 +1301,76 @@ class CodeBoneApp(rumps.App):
 
         self.brain_menu.add(None)
 
-        # 2. Local options: talk to an already-running local server instead of the built-in model
-        self.brain_local_item = rumps.MenuItem(
-            "Local URL (Ollama / LM Studio)...",
-            callback=self.select_brain_local
-        )
-        _set_symbol_icon(self.brain_local_item, "network")
-        self.brain_local_item.state = (provider == "local_url")
-        self.brain_menu.add(self.brain_local_item)
-
-        self.brain_menu.add(None)
-
-        # 3. Actions
         self.add_model_item = rumps.MenuItem("Add Model File (.gguf)...", callback=self.add_model_file)
         _set_symbol_icon(self.add_model_item, "plus")
         self.brain_menu.add(self.add_model_item)
+
+    def setup_brain_profile(self, vendor: str, model: str, label: str):
+        """Dead-simple model setup: paste the API key once, codebone saves it and checks the connection."""
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        current = ""
+        if self.config.get("brain_cloud_vendor") == vendor:
+            current = self.config.get("brain_cloud_api_key", "")
+        resp = rumps.Window(
+            message=f"API key for {label} (saved in codebone's config on this Mac):",
+            title=f"Connect {label}",
+            default_text=current,
+            ok="Save & Test Connection",
+            cancel="Cancel",
+            dimensions=(360, 24),
+            secure=True,
+        ).run()
+        if not resp.clicked:
+            return
+        key = resp.text.strip()
+        if not key:
+            return
+        self.config.set("brain_cloud_vendor", vendor)
+        self.config.set("brain_cloud_model", model)
+        self.config.set("brain_cloud_api_key", key)
+        self.config.set("brain_provider", "cloud")
+        self.config.set("brain_tested_signature", "")
+        self.service.reload_provider()
+        self._update_ui_state()
+        self._test_brain(f"{label} ({model})")
+
+    def _test_brain(self, label: str):
+        """Verifies the configured model really answers. Success is what the status line's "(Ready)"
+        means, so the check runs in the background and reports through a notification/alert."""
+        signature = self._brain_signature()
+        provider = self.service.provider
+
+        def _run():
+            try:
+                out = provider.generate("Reply with the single word OK.", max_tokens=16)
+            except Exception as exc:
+                logger.warning("Brain connection test failed: %s", exc)
+                out = ""
+            ok = bool(out and out.strip())
+
+            def _done():
+                still_current = self._brain_signature() == signature
+                if not still_current:
+                    return  # the user selected another provider while this request was in flight
+                self.config.set("brain_tested_signature", signature if ok else "")
+                if ok:
+                    rumps.notification(
+                        "codebone",
+                        f"Connected: {label}",
+                        f"Active model: {self.config.active_model_display_name}",
+                    )
+                else:
+                    NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+                    rumps.alert(
+                        "Connection Test Failed",
+                        f"{label} did not answer.\n\nCheck the API key (or that the local server is "
+                        "running) and try again.",
+                    )
+                self._update_ui_state()
+
+            self._on_main(_done)
+
+        threading.Thread(target=_run, daemon=True, name="codebone-brain-test").start()
 
     def _update_api_keys_menu(self):
         """Rebuilds the API Keys submenu: the cloud BYOK key and every module's key, one list instead of
@@ -1122,7 +1380,7 @@ class CodeBoneApp(rumps.App):
             self.api_keys_menu.clear()
 
         provider = self.config.get("brain_provider", "builtin")
-        cloud_item = rumps.MenuItem("Cloud BYOK (OpenAI / Anthropic)...", callback=self.select_brain_cloud)
+        cloud_item = rumps.MenuItem("Paste an API key directly...", callback=self.select_brain_cloud)
         _set_symbol_icon(cloud_item, "cloud")
         cloud_item.state = (provider == "cloud")
         if self.config.get("brain_cloud_api_key"):
@@ -1174,95 +1432,214 @@ class CodeBoneApp(rumps.App):
         self._update_ui_state()
         rumps.notification("codebone", "Model switched", f"Active model: {name}")
 
+    def _update_quick_access_menu(self):
+        """Show the three latest successful scans as direct main-menu rows, newest first."""
+        recent = self.config.recent_scanned_projects
+        if recent is None:
+            # One-time migration for existing installs: the snapshot registry is already ordered newest first.
+            seeded: list[str] = []
+            for scan in self.service.scans.list_scans():
+                raw = scan.get("project_path")
+                if not raw:
+                    continue
+                path = Path(raw).expanduser()
+                resolved = str(path.resolve())
+                if path.exists() and resolved not in seeded:
+                    seeded.append(resolved)
+            self.config.set("recent_scanned_projects", seeded[:10])
+            recent = seeded[:10]
+
+        visible: list[Path] = []
+        for raw in recent or []:
+            path = Path(raw).expanduser()
+            if path.exists() and path.is_dir():
+                visible.append(path.resolve())
+            if len(visible) == 3:
+                break
+
+        self.quick_access_paths = visible
+        active = self.config.project_path
+        for index, item in enumerate(self.quick_access_items):
+            show = index < len(visible)
+            try:
+                item._menuitem.setHidden_(not show)
+            except Exception:
+                pass
+            if show:
+                path = visible[index]
+                item.title = path.name or str(path)
+                item.state = bool(active and active == path)
+
+    def open_quick_access_project(self, position: int):
+        if 0 <= position < len(self.quick_access_paths):
+            self.activate_project_from_menu(self.quick_access_paths[position])
+
     def _update_projects_menu(self):
-        """Rebuilds the Projects submenu: the scan workspace (folders scanned one after another), the
-        multi-folder picker, and the recents the workspace has not seen yet."""
+        """Keep the first level to project names; actions and details live one level deeper."""
         if getattr(self.projects_menu, "_menu", None) is not None:
             self.projects_menu.clear()
 
         active = self.config.project_path
         workspace = [p for p in self.config.project_paths if p.exists()]
         active_str = str(active) if active else None
-        in_workspace = {str(p) for p in workspace}
+        ws_by_path = {p["path"]: p for p in self.service.workspace_stats()["projects"]}
 
-        # 1. Workspace folders — click switches the active project (index, watcher and graph follow)
         if workspace:
             for p in workspace:
-                item = rumps.MenuItem(
-                    p.name or str(p),
-                    callback=lambda _, target=p: self.open_project_path(target),
-                )
-                _set_symbol_icon(item, "folder")
+                info = ws_by_path.get(str(p))
+                item = rumps.MenuItem(p.name or str(p))
+                _set_symbol_icon(item, "folder.fill" if active_str == str(p) else "folder")
                 if active_str == str(p):
                     item.state = True
+
+                if info and active_str != str(p):
+                    select_item = rumps.MenuItem(
+                        "Set as Current Project",
+                        callback=lambda _, target=p: self.activate_project_from_menu(target),
+                    )
+                    _set_symbol_icon(select_item, "checkmark.circle")
+                    item.add(select_item)
+                elif active_str == str(p):
+                    item.add(rumps.MenuItem("Current Project", callback=None))
+                else:
+                    item.add(rumps.MenuItem("Index this project to activate it", callback=None))
+
+                item.add(None)
+                scan_item = rumps.MenuItem(
+                    "Index",
+                    callback=lambda _, target=p: self.start_project_scan(target),
+                )
+                _set_symbol_icon(scan_item, "arrow.clockwise")
+                item.add(scan_item)
+
+                tldr_item = rumps.MenuItem(
+                    "TLDR",
+                    callback=lambda _, target=p: self._run_project_tldr(target),
+                )
+                _set_symbol_icon(tldr_item, "text.quote")
+                item.add(tldr_item)
+
+                item.add(None)
+                if info:
+                    nodes = rumps.MenuItem(
+                        f"{_fmt_count(info['nodes'])} Nodes — Open Map",
+                        callback=lambda _, target=p: self.view_project_map(target),
+                    )
+                    _set_symbol_icon(nodes, "point.3.connected.trianglepath.dotted")
+                    item.add(nodes)
+                    item.add(rumps.MenuItem(f"{_fmt_count(info['connections'])} Connections", callback=None))
+                else:
+                    item.add(rumps.MenuItem("Not Indexed Yet", callback=None))
+
+                reveal = rumps.MenuItem(
+                    "Show in Finder...",
+                    callback=lambda _, target=p: self.reveal_project(target),
+                )
+                _set_symbol_icon(reveal, "finder")
+                item.add(reveal)
+
+                item.add(None)
+                remove = rumps.MenuItem(
+                    "Remove Project...",
+                    callback=lambda _, target=p: self.remove_from_workspace(target),
+                )
+                _set_symbol_icon(remove, "minus.circle")
+                item.add(remove)
                 self.projects_menu.add(item)
         else:
             self.projects_menu.add(rumps.MenuItem("No Project Folders Yet", callback=None))
 
-        # 2. Pick folders — multi-select, they join the workspace
-        add_item = rumps.MenuItem("Add Project Folders...", callback=self.choose_project)
+        self.projects_menu.add(None)
+        add_item = rumps.MenuItem("+ Add Project...", callback=self.choose_project)
         _set_symbol_icon(add_item, "folder.badge.plus")
         self.projects_menu.add(add_item)
 
-        # 3. Drop folders from the workspace; the active project has to be switched away from first
-        removable = [p for p in workspace if active_str != str(p)]
-        if removable:
-            remove_menu = rumps.MenuItem("Remove from Workspace")
-            for p in removable:
-                remove_menu.add(rumps.MenuItem(
-                    p.name or str(p),
-                    callback=lambda _, target=p: self.remove_from_workspace(target),
-                ))
-            self.projects_menu.add(remove_menu)
-
-        # 4. Recents from the MRU and saved scan snapshots that are not in the workspace yet
-        recent_list: list[Path] = []
-        seen = set(in_workspace)
-        for p_str in self.config.recent_projects:
-            if not p_str:
-                continue
-            p = Path(p_str)
-            if p.exists() and str(p) not in seen:
-                seen.add(str(p))
-                recent_list.append(p)
-        try:
-            for s in self.service.scans.list_scans():
-                p_str = s.get("project_path")
-                if p_str:
-                    p = Path(p_str)
-                    if p.exists() and str(p) not in seen:
-                        seen.add(str(p))
-                        recent_list.append(p)
-        except Exception:
-            pass
-
-        if recent_list:
+        if self.config.recent_scanned_projects:
             self.projects_menu.add(None)
-            for p in recent_list[:10]:
-                name = p.name or str(p)
-                try:
-                    rel_to_home = f"~/{p.relative_to(Path.home())}"
-                except Exception:
-                    rel_to_home = str(p)
-                item = rumps.MenuItem(
-                    f"{name}  ({rel_to_home})",
-                    callback=lambda _, target_path=p: self.open_project_path(target_path),
-                )
-                _set_symbol_icon(item, "clock.arrow.circlepath")
-                self.projects_menu.add(item)
-
-        if self.config.recent_projects:
-            self.projects_menu.add(None)
-            clear_item = rumps.MenuItem("Clear Recent Projects", callback=self.clear_recent_projects)
+            clear_item = rumps.MenuItem("Clear Recent Projects...", callback=self.clear_recent_projects)
             _set_symbol_icon(clear_item, "trash")
             self.projects_menu.add(clear_item)
 
     def remove_from_workspace(self, p: Path):
-        """Takes a folder out of the scan queue; the active project is never listed, so this cannot empty
-        the index behind the user's back."""
+        """Remove a project from the workspace without deleting its folder or saved map."""
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        if rumps.alert(
+            "Remove Project?",
+            f"Remove '{p.name}' from Projects?\n\nIts folder and saved map stay on your Mac.",
+            ok="Remove",
+            cancel="Cancel",
+        ) != 1:
+            return
+
+        was_active = self.config.project_path == p
         self.config.remove_project_path(str(p))
-        self._update_projects_menu()
-        rumps.notification("codebone", "Removed from Workspace", f"'{p.name}' will no longer be scanned.")
+        remaining = [path for path in self.config.project_paths if path.exists()]
+        if not was_active:
+            self._update_ui_state()
+            rumps.notification("codebone", "Project Removed", f"'{p.name}' is no longer in Projects.")
+            return
+
+        if not remaining:
+            self.service.stop()
+            self.config.set("project_path", None)
+            self._update_ui_state()
+            rumps.notification("codebone", "Project Removed", "Add a project whenever you're ready.")
+            return
+
+        next_project = remaining[0]
+
+        def _switch_after_remove():
+            try:
+                self.service.activate_project(next_project)
+            except FileNotFoundError:
+                self.config.set("project_path", str(next_project))
+                self.service.start(auto_scan=True)
+            finally:
+                self._on_main(self._update_ui_state)
+
+        threading.Thread(target=_switch_after_remove, daemon=True, name="codebone-remove-project").start()
+        rumps.notification("codebone", "Project Removed", f"Now using '{next_project.name}'.")
+
+    def activate_project_from_menu(self, p: Path):
+        self._activate_project(p, open_map=False)
+
+    def view_project_map(self, p: Path):
+        self._activate_project(p, open_map=True)
+
+    def _activate_project(self, p: Path, open_map: bool):
+        """Restore a project's saved map, then optionally open that exact map in the browser."""
+        if self.config.project_path == p and self.service.watching:
+            if open_map:
+                self.view_live_graph(None)
+            return
+
+        def _run():
+            try:
+                self.service.activate_project(p)
+            except Exception as exc:
+                message = str(exc)
+
+                def _show_error():
+                    NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+                    rumps.alert("Project Could Not Be Opened", message)
+
+                self._on_main(_show_error)
+                return
+
+            def _done():
+                self._update_ui_state()
+                if open_map:
+                    self.view_live_graph(None)
+
+            self._on_main(_done)
+
+        threading.Thread(target=_run, daemon=True, name="codebone-activate-project").start()
+
+    def reveal_project(self, p: Path):
+        try:
+            subprocess.Popen(["open", str(p)])
+        except Exception as exc:
+            logger.error("Failed to reveal project %s: %s", p, exc)
 
     # ── model modules ────────────────────────────────────────────────────
     def _update_modules_menu(self):
@@ -1275,6 +1652,10 @@ class CodeBoneApp(rumps.App):
         master_on = bool(self.config.get("modules_enabled"))
         active = set(modules.enabled_apps(self.config))
 
+        self.modules_menu.add(rumps.MenuItem("Model used by your coding agent", callback=None))
+        self.modules_menu.add(self.modules_switch_item)
+        self.modules_menu.add(None)
+
         for m in library:  # which model
             item = rumps.MenuItem(m["name"], callback=(lambda _, mid=m["id"]: self.pick_module(mid)) if master_on else None)
             item.state = bool(selected and selected["id"] == m["id"])
@@ -1284,7 +1665,7 @@ class CodeBoneApp(rumps.App):
             for app_id, (label, fmt) in modules.APPS.items():  # which apps use it
                 needs = "" if (selected is None or modules.supports(selected, app_id)) else f"  (needs {modules.FORMAT_NAMES[fmt]} URL)"
                 item = rumps.MenuItem(
-                    f"Use for {label}{needs}",
+                    f"Use in {label}{needs}",
                     callback=(lambda _, a=app_id: self.toggle_module_app(a)) if master_on else None,
                 )
                 item.state = app_id in active
@@ -1297,23 +1678,23 @@ class CodeBoneApp(rumps.App):
                 copy_menu.add(rumps.MenuItem(what, callback=lambda _, w=what, f=fn: self.copy_module_value(w, f)))
             self.modules_menu.add(copy_menu)
             self.modules_menu.add(None)
-        self.modules_menu.add(rumps.MenuItem("Add Module...", callback=self.add_module_dialog))
+        self.modules_menu.add(rumps.MenuItem("Add Model...", callback=self.add_module_dialog))
         if library:
             self.modules_menu.add(rumps.MenuItem("Test Connection", callback=self.test_selected_module))
-            remove_menu = rumps.MenuItem("Remove Module")
+            remove_menu = rumps.MenuItem("Remove Model")
             for m in library:
                 remove_menu.add(rumps.MenuItem(m["name"], callback=lambda _, mid=m["id"], n=m["name"]: self.remove_module_dialog(mid, n)))
             self.modules_menu.add(remove_menu)
 
         self.modules_menu.add(None)
-        links_menu = rumps.MenuItem("Quick Links")
+        links_menu = rumps.MenuItem("Provider Links")
         _set_symbol_icon(links_menu, "link")
         links_menu.add(rumps.MenuItem("OpenRouter Dashboard...", callback=lambda _: self.open_url("https://openrouter.ai/dashboard")))
         links_menu.add(rumps.MenuItem("OpenRouter API Keys...", callback=lambda _: self.open_url("https://openrouter.ai/keys")))
-        links_menu.add(rumps.MenuItem("Modules Help...", callback=lambda _: self.open_url("https://openrouter.ai/docs")))
+        links_menu.add(rumps.MenuItem("OpenRouter Help...", callback=lambda _: self.open_url("https://openrouter.ai/docs")))
         self.modules_menu.add(links_menu)
 
-        self.modules_menu.add(rumps.MenuItem("Fix Stuck Connection (Reset to Normal)", callback=self.reset_modules_to_normal))
+        self.modules_menu.add(rumps.MenuItem("Reset Coding Agent Connection", callback=self.reset_modules_to_normal))
 
     def open_url(self, url: str):
         try:
@@ -1330,24 +1711,23 @@ class CodeBoneApp(rumps.App):
         try:
             modules.set_modules_master(self.config, turning_on)
         except modules.SettingsUnreadable as exc:
-            rumps.alert("Modules", f"Settings file could not be read, so nothing was changed:\n{exc}")
+            rumps.alert("Coding Agent", f"Settings file could not be read, so nothing was changed:\n{exc}")
             self._sync_modules_switch()
             return
         if turning_on:
-            rumps.notification("codebone", "Modules enabled", "Previously active apps are routed through their module again.")
+            rumps.notification("codebone", "Custom Coding Model On", "Selected coding agents now use this model.")
             selected = modules.get_module(self.config, self.config.get("module_selected"))
             if selected:
                 for app_id in modules.enabled_apps(self.config):
                     self._verify_module_or_revert(app_id, selected)
         else:
-            rumps.notification("codebone", "Modules disabled", "Every app is back on its normal setup.")
+            rumps.notification("codebone", "Custom Coding Model Off", "Every coding agent is back on its normal setup.")
         self._update_modules_menu()
         self._sync_modules_switch()
 
     def _sync_modules_switch(self):
         """Keeps the switch row's visible state matching config, including when something other than
-        a direct click on the switch changed it (a per-app connection getting auto-reverted, Fix
-        Stuck Connection, etc.)."""
+        a direct click on the switch changed it (for example, an automatic connection reset)."""
         if getattr(self, "modules_switch", None) is not None:
             self.modules_switch.setState_(
                 NSControlStateValueOn if bool(self.config.get("modules_enabled")) else NSControlStateValueOff
@@ -1358,15 +1738,15 @@ class CodeBoneApp(rumps.App):
 
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         if rumps.alert(
-            "Fix Stuck Connection",
+            "Reset Coding Agent Connection",
             "This puts Claude Code and opencode back on their normal setup, whatever codebone currently "
-            "thinks their state is. Use this if a module's API key stopped working and switching it off "
+            "thinks their state is. Use this if a model's API key stopped working and switching it off "
             "didn't fix it.",
             ok="Reset to Normal", cancel="Cancel",
         ) != 1:
             return
         modules.force_restore_all(self.config)
-        rumps.notification("codebone", "Modules reset", "Claude Code and opencode are back on their normal setup.")
+        rumps.notification("codebone", "Coding Agent Reset", "Claude Code and opencode are back on their normal setup.")
         self._update_modules_menu()
         self._sync_modules_switch()
 
@@ -1379,10 +1759,10 @@ class CodeBoneApp(rumps.App):
         try:
             module = modules.set_app_enabled(self.config, app_id, turning_on)
         except modules.SettingsUnreadable as exc:
-            rumps.alert("Modules", f"{label}'s settings file could not be read, so nothing was changed:\n{exc}")
+            rumps.alert("Coding Agent", f"{label}'s settings file could not be read, so nothing was changed:\n{exc}")
             return
         except ValueError as exc:
-            rumps.alert("Modules", str(exc))
+            rumps.alert("Coding Agent", str(exc))
             return
         if module:
             rumps.notification("codebone", f"{label} now uses {module['name']}", "New sessions pick this up; running ones keep their model.")
@@ -1429,7 +1809,7 @@ class CodeBoneApp(rumps.App):
     def copy_module_value(self, what: str, getter):
         value = getter()
         if not value:
-            rumps.alert("Modules", f"This module has no {what}.")
+            rumps.alert("Coding Agent", f"This model has no {what}.")
             return
         copy_to_clipboard(value)
         rumps.notification("codebone", f"{what} copied", "Paste it into the other app's model settings.")
@@ -1440,7 +1820,7 @@ class CodeBoneApp(rumps.App):
         try:
             modules.select_module(self.config, module_id)
         except (ValueError, modules.SettingsUnreadable) as exc:
-            rumps.alert("Modules", str(exc))
+            rumps.alert("Coding Agent", str(exc))
         self._update_modules_menu()
 
     def add_module_dialog(self, _):
@@ -1451,8 +1831,8 @@ class CodeBoneApp(rumps.App):
         for i, preset in enumerate(modules.PRESETS):
             last = i == len(modules.PRESETS) - 1
             choice = rumps.alert(
-                title="Add Module",
-                message=(f"A module is a model API your coding apps can use instead of their default.\n\n"
+                title="Add Coding Model",
+                message=(f"This model API can be used by your coding agent instead of its default.\n\n"
                          f"Preset: {preset['name']}\nModel: {preset['model']}\n\n"
                          "Custom needs a base URL in Anthropic format (for Claude Code) and/or OpenAI format (for opencode)."),
                 ok=preset["name"], cancel="Cancel", other=("Custom..." if last else "Other provider..."),
@@ -1471,14 +1851,14 @@ class CodeBoneApp(rumps.App):
             for label, default in (("Name (shown in the menu)", ""), ("Model ID", ""),
                                    ("Anthropic-format base URL (optional, https://...)", ""),
                                    ("OpenAI-format base URL (optional, https://...)", "")):
-                resp = rumps.Window(message=label, title="Add Module", default_text=default, ok="Next", cancel="Cancel",
+                resp = rumps.Window(message=label, title="Add Coding Model", default_text=default, ok="Next", cancel="Cancel",
                                     dimensions=(360, 24)).run()
                 if not resp.clicked:
                     return
                 fields.append(resp.text.strip())
             name, model, anthropic_url, openai_url = fields
         resp = rumps.Window(message=f"API key for {name} (stored in your macOS Keychain)",
-                            title="Add Module", default_text="", ok="Add", cancel="Cancel", dimensions=(360, 24),
+                            title="Add Coding Model", default_text="", ok="Add", cancel="Cancel", dimensions=(360, 24),
                             secure=True).run()
         if not resp.clicked:
             return
@@ -1487,7 +1867,7 @@ class CodeBoneApp(rumps.App):
             module = modules.add_module(self.config, name, model, key, anthropic_url, openai_url)
             self.config.set("module_selected", module["id"])
         except (ValueError, RuntimeError) as exc:
-            rumps.alert("Add Module", str(exc))
+            rumps.alert("Add Coding Model", str(exc))
             return
         self._update_modules_menu()
         self._check_module(module, key)
@@ -1527,7 +1907,7 @@ class CodeBoneApp(rumps.App):
         module = modules.get_module(self.config, self.config.get("module_selected"))
         key = modules.Keychain().get(module["id"]) if module else None
         if not module or not key:
-            rumps.alert("Modules", "Select a module with a stored key first.")
+            rumps.alert("Coding Agent", "Select a model with a stored key first.")
             return
         self._check_module(module, key)
 
@@ -1535,22 +1915,31 @@ class CodeBoneApp(rumps.App):
         from . import modules
 
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-        if rumps.alert("Remove Module", f"Remove {name}, switch its apps back and delete its API key?", ok="Remove", cancel="Cancel") != 1:
+        if rumps.alert("Remove Coding Model", f"Remove {name}, switch its apps back and delete its API key?", ok="Remove", cancel="Cancel") != 1:
             return
         try:
             modules.remove_module(self.config, module_id)
         except modules.SettingsUnreadable as exc:
-            rumps.alert("Modules", str(exc))
+            rumps.alert("Coding Agent", str(exc))
         self._update_modules_menu()
 
     def clear_recent_projects(self, _):
-        """Clears the recent projects list and refreshes the submenu."""
+        """Explain the scope before clearing only the three recent main-menu shortcuts."""
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        if rumps.alert(
+            "Clear Recent Projects?",
+            "This only removes the three recent project shortcuts from the main menu.\n\n"
+            "Your Projects list, saved maps and source folders stay untouched.",
+            ok="Clear",
+            cancel="Cancel",
+        ) != 1:
+            return
         self.config.clear_recent_projects()
-        self._update_projects_menu()
-        rumps.notification("codebone", "Recent Projects Cleared", "The project history has been reset.")
+        self._update_ui_state()
+        rumps.notification("codebone", "Recent Shortcuts Cleared", "Projects and saved maps were not changed.")
 
     def choose_project(self, _):
-        paths = _choose_folders("Select Project Folders to Sniff", multi=True)
+        paths = _choose_folders("Select Project Folders to Index", multi=True)
         if not paths:
             return
         if len(paths) == 1:
@@ -1558,7 +1947,7 @@ class CodeBoneApp(rumps.App):
             self.open_project_path(Path(paths[0]))
             return
 
-        # Several folders at once: queue them all, activate the first, scan them one after another
+        # Several folders at once: add them to the workspace, activate the first, scan isolated indexes in parallel
         accessible, blocked = [], []
         for p_str in paths:
             ok, _reason = check_folder_access(Path(p_str))
@@ -1580,7 +1969,7 @@ class CodeBoneApp(rumps.App):
         self._update_ui_state()
         rumps.notification(
             "codebone", "Workspace Updated",
-            f"{len(accessible)} folders queued — scanning them one after another.",
+            f"{len(accessible)} folders queued — scanning them now.",
         )
         self._run_workspace_scan()
 
@@ -1595,7 +1984,8 @@ class CodeBoneApp(rumps.App):
 
         current_proj = self.config.project_path
         if current_proj and current_proj.resolve() == p.resolve() and self.service.watching:
-            rumps.notification("codebone", "Already Active", f"'{p.name}' is already the active project.")
+            # Scan and TLDR have their own visible actions in the Projects menu; selecting the already-active
+            # project is intentionally a no-op instead of triggering an unexpected expensive scan.
             return
 
         # Check macOS disk permissions / TCC
@@ -1643,7 +2033,7 @@ class CodeBoneApp(rumps.App):
             rumps.notification(
                 "codebone — Previous Scan Found",
                 f"{matching.get('project_name')} recognized",
-                "Reconciling project structure with AI...",
+                "Updating existing index...",
             )
 
             def _run_matched():
@@ -1655,7 +2045,7 @@ class CodeBoneApp(rumps.App):
                     added = rep.get("added_count", 0)
                     conn_count = len(self.service.storage.graph_edges(include_domains=True))
                     rumps.notification(
-                        "codebone — Baseline Reused",
+                        "codebone — Earlier Scan Reused",
                         f"{matching.get('project_name')}",
                         f"{reused} files reused, {renamed} renamed, {conn_count} connections mapped.",
                     )
@@ -1671,7 +2061,7 @@ class CodeBoneApp(rumps.App):
             rumps.notification(
                 f"codebone — Indexing Started",
                 f"{p.name} ({total} files, {langs})",
-                f"Analyzing semantic structures and building knowledge graph...",
+                f"Indexing files and connections...",
             )
 
             def _run_initial():
@@ -1687,7 +2077,7 @@ class CodeBoneApp(rumps.App):
                     rumps.notification(
                         f"codebone — Indexing Complete",
                         f"{p.name} ready ({total_scanned} files)",
-                        f"Mapped {total_scanned} nodes & {conn_count} connections in {dur}s. Live watching active.",
+                        f"Indexed {total_scanned} files & {conn_count} connections in {dur}s. Live watching active.",
                     )
                 except Exception as exc:
                     logger.exception("Initial baseline scan failed")
@@ -1699,7 +2089,7 @@ class CodeBoneApp(rumps.App):
 
     def choose_adopt_scan(self, _):
         if not self.config.is_configured:
-            path = choose_folder("Select Target Project Folder to Reconcile")
+            path = choose_folder("Select Project Folder")
             if not path:
                 return
             self.config.set("project_path", path)
@@ -1710,7 +2100,7 @@ class CodeBoneApp(rumps.App):
         source_target = None
 
         if scans:
-            msg_lines = ["Select an existing codebase scan to adopt:\n"]
+            msg_lines = ["Reuse an earlier scan for this project:\n"]
             for i, s in enumerate(scans[:8], 1):
                 name = s.get("project_name", "Unknown")
                 f_count = s.get("file_count", 0)
@@ -1720,9 +2110,9 @@ class CodeBoneApp(rumps.App):
 
             window = rumps.Window(
                 message="\n".join(msg_lines),
-                title="Adopt / Link Existing Scan",
+                title="Reuse Existing Scan",
                 default_text="1",
-                ok="Adopt",
+                ok="Reuse",
                 cancel="Cancel",
             )
             NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
@@ -1748,8 +2138,8 @@ class CodeBoneApp(rumps.App):
         def _run_adopt():
             rumps.notification(
                 "codebone",
-                "Reconciling Codebase Scan",
-                "Comparing file hash signatures & running AI reconciliation...",
+                "Reusing Earlier Scan",
+                "Comparing files with the saved index...",
             )
             try:
                 rep = self.service.adopt_scan(source_target)
@@ -1759,13 +2149,13 @@ class CodeBoneApp(rumps.App):
                 added = rep.get("added_count", 0)
                 rumps.notification(
                     "codebone",
-                    "Scan Adoption Complete!",
-                    f"{reused} files reused, {renamed} renamed, {modified} modified, {added} added. Semantic Graph synchronized!",
+                    "Scan Complete!",
+                    f"{reused} files reused, {renamed} renamed, {modified} modified, {added} added.",
                 )
                 self._on_main(self._update_ui_state)
             except Exception as exc:
                 logger.exception("Error during scan adoption: %s", exc)
-                rumps.notification("codebone", "Adoption Failed", str(exc))
+                rumps.notification("codebone", "Reuse Failed", str(exc))
 
         threading.Thread(target=_run_adopt, daemon=True, name="codebone-user-adopt").start()
 
@@ -1969,9 +2359,10 @@ class CodeBoneApp(rumps.App):
         if resp.clicked and resp.text:
             self.config.set("brain_local_url", resp.text.strip())
             self.config.set("brain_provider", "local_url")
+            self.config.set("brain_tested_signature", "")
             self._update_brain_checks()
             self.service.reload_provider()
-            rumps.notification("codebone", "Model switched", f"Local URL active: {resp.text.strip()}")
+            self._test_brain(f"Local server ({resp.text.strip()})")
 
     def select_brain_cloud(self, _):
         current_vendor = self.config.get("brain_cloud_vendor", "openai")
@@ -1988,12 +2379,18 @@ class CodeBoneApp(rumps.App):
             parts = resp.text.strip().split(":", 1)
             vendor = parts[0].lower() if len(parts) == 2 else "openai"
             api_key = parts[1].strip() if len(parts) == 2 else parts[0].strip()
+            defaults = {vendor_id: model for vendor_id, _label, model in self.BRAIN_PROFILES}
+            if vendor not in defaults:
+                rumps.alert("Cloud BYOK", "Provider must be openai, anthropic or openrouter.")
+                return
             self.config.set("brain_cloud_vendor", vendor)
+            self.config.set("brain_cloud_model", defaults[vendor])
             self.config.set("brain_cloud_api_key", api_key)
             self.config.set("brain_provider", "cloud")
+            self.config.set("brain_tested_signature", "")
             self._update_brain_checks()
             self.service.reload_provider()
-            rumps.notification("codebone", "Model switched", f"Cloud BYOK ({vendor.upper()}) active.")
+            self._test_brain(f"Cloud ({vendor.upper()})")
 
     def add_model_file(self, _):
         path = choose_file("Select .gguf Model File", ["gguf"])
@@ -2001,14 +2398,15 @@ class CodeBoneApp(rumps.App):
             entry = self.config.add_model(path)
             self.config.select_model(path)
             self.config.set("brain_provider", "builtin")
+            self.config.set("brain_tested_signature", "")
             self._update_brain_checks()
             self.service.reload_provider()
-            rumps.notification("codebone", "Model added", f"Loaded model: {entry['name']}")
+            self._test_brain(f"Local model ({entry['name']})")
 
     def reset_map(self, _):
         self.service.reset_map()
         self._update_ui_state()
-        rumps.notification("codebone", "Map reset", "Semantic knowledge graph cleared.")
+        rumps.notification("codebone", "Map reset", "Saved index cleared.")
         if self.config.is_configured:
             threading.Thread(target=self.service.rescan_all, daemon=True).start()
 

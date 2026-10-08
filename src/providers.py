@@ -17,7 +17,7 @@ except ImportError:
 
 from .config import Config
 from .imports import JS_EXT, sql_tables, supabase_tables
-from .prompts import build_prompt, build_tldr_prompt, ground_analysis, sanitize_text
+from .prompts import build_project_tldr_prompt, build_prompt, ground_analysis, sanitize_text
 
 logger = logging.getLogger("codebone.providers")
 
@@ -84,16 +84,16 @@ class Provider:
             domains = fb_domains
         return domains, summary
 
-    def tldr(self, file_path: str, code: str) -> str:
-        """Plain-English one-paragraph summary of a single file, independent of sniff()'s structured output."""
-        out = self.generate(build_tldr_prompt(file_path, code), max_tokens=180)
+    def project_tldr(self, project_name: str, files: list[dict], index: dict) -> str:
+        """Short description of a whole indexed codebase; it never re-reads arbitrary documents."""
+        out = self.generate(build_project_tldr_prompt(project_name, files, index), max_tokens=220)
         if not out:
-            return self._fallback_tldr(file_path, code)
+            return self._fallback_project_tldr(project_name, files, index)
         return sanitize_text(out)
 
-    def _fallback_tldr(self, file_path: str, code: str) -> str:
+    def _fallback_project_tldr(self, project_name: str, files: list[dict], index: dict) -> str:
         fb = getattr(self, "_fallback", None) or FastFallbackProvider()
-        return fb.tldr(file_path, code)
+        return fb.project_tldr(project_name, files, index)
 
     def _fallback_sniff(self, file_path: str, code: str) -> str:
         fb = getattr(self, "_fallback", None) or FastFallbackProvider()
@@ -224,17 +224,21 @@ class FastFallbackProvider(Provider):
             f"FLOW: {a['summary']}"
         )
 
-    def tldr(self, file_path: str, code: str) -> str:
-        """No model available: the closest thing regex extraction can say about the file."""
-        a = self.analyze(file_path, code)
-        bits = [a["summary"]] if a["summary"] else []
-        if a["domains"]:
-            bits.append(f"Part of {', '.join(a['domains'])}.")
-        if a["tables"]:
-            bits.append(f"Touches tables {', '.join(a['tables'][:5])}.")
-        if a["routes"]:
-            bits.append(f"Exposes {', '.join(a['routes'][:5])}.")
-        return " ".join(bits) or "No summary available (no local brain loaded and nothing recognizable found)."
+    def project_tldr(self, project_name: str, files: list[dict], index: dict) -> str:
+        """Deterministic whole-project overview when no model is loaded."""
+        domains = sorted(
+            index.get("domains", {}),
+            key=lambda name: (-len(index["domains"][name]), name.lower()),
+        )
+        focus = f" focused on {', '.join(domains[:3])}" if domains else ""
+        first = f"{project_name} is a {len(files)}-file software project{focus}."
+        counts = []
+        for label, key in (("data models", "tables"), ("API routes", "routes"), ("events", "events")):
+            count = len(index.get(key, {}))
+            if count:
+                counts.append(f"{count} {label}")
+        second = f"Its indexed architecture includes {', '.join(counts)}." if counts else ""
+        return " ".join(part for part in (first, second) if part)
 
 
 class BuiltinProvider(Provider):

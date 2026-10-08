@@ -10,6 +10,28 @@ logger = logging.getLogger("codebone.permissions")
 FULL_DISK_ACCESS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
 
 
+def is_protected_user_folder(path: Path) -> bool:
+    """Whether macOS protects this project root behind a privacy permission."""
+    try:
+        target = Path(path).expanduser().resolve()
+        home = Path.home().resolve()
+        protected = (home / "Desktop", home / "Documents", home / "Downloads")
+        return any(target == root or target.is_relative_to(root) for root in protected)
+    except (OSError, ValueError):
+        return False
+
+
+def has_full_disk_access() -> bool:
+    """Probe a protected system database without reading or retaining any of its contents."""
+    probe = Path("/Library/Application Support/com.apple.TCC/TCC.db")
+    try:
+        with probe.open("rb") as handle:
+            handle.read(1)
+        return True
+    except (OSError, PermissionError):
+        return False
+
+
 def trigger_full_disk_access_probe():
     """Probes protected macOS directories to register codebone with the TCC Full Disk Access subsystem.
 

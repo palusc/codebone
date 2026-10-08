@@ -152,7 +152,7 @@ def test_api_endpoints():
         assert "files" in graph_res.json()
         ui_res = client.get("/codebone/graph/ui")
         assert ui_res.status_code == 200
-        assert "codebone — Semantic Code Graph" in ui_res.text
+        assert "codebone — Code Graph" in ui_res.text
         assert "metrics-bar" in ui_res.text
 
         # 4. Test POST /codebone/scans/adopt with a new moved folder

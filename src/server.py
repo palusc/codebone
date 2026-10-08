@@ -244,24 +244,19 @@ def create_app(service: CodeBoneService, allowed_hosts: Optional[set] = None) ->
 
     @app.get("/codebone/tldr")
     @app.get("/pug/tldr")
-    def tldr(file: str = ""):
+    def tldr(project: str = ""):
         if not service.config.is_configured:
             return Response(content="codebone is not configured yet.", media_type="text/plain")
-        file = file.strip()
-        if not file:
-            raise HTTPException(status_code=400, detail="Missing 'file'")
-        root = str(service.config.project_path or "")
-        files, _ = service.storage.view()
-        low = file.lower()
-        match = next((f for f in files if f["path"].lower() == low), None) \
-            or next((f for f in files if low in f["path"].lower()), None)
-        if not match:
-            raise HTTPException(status_code=404, detail=f"No indexed file matches '{file}'")
-        code = _safe_read(root, match["path"]) if root else None
-        if code is None:
-            raise HTTPException(status_code=404, detail=f"Could not read '{match['path']}'")
-        text = service.provider.tldr(match["path"], code)
-        return Response(content=f"# {match['path']}\n\n{text}\n", media_type="text/markdown; charset=utf-8")
+        try:
+            result = service.project_tldr(project.strip() or None)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return Response(
+            content=f"# {result['project']}\n\n{result['text']}\n",
+            media_type="text/markdown; charset=utf-8",
+        )
 
     @app.get("/codebone/links")
     def links(file: str = ""):
@@ -479,4 +474,3 @@ class ServerThread:
 
     def curl_command(self, path: str = "/codebone/context") -> str:
         return f"curl {self.url}{path}"
-

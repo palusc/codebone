@@ -325,7 +325,11 @@ DEFAULTS = {
     "brain_cloud_vendor": "openai",  # "openai" | "anthropic" | "openrouter"
     "brain_cloud_api_key": "",
     "brain_cloud_model": "gpt-6",
+    "brain_tested_signature": "",  # successful connection test for the exact provider/key/url settings
     "recent_projects": [],
+    # None means an older install has not seeded its scan history from the snapshot registry yet. Once
+    # initialized this is always a list, including [] after the user deliberately clears Quick Access.
+    "recent_scanned_projects": None,
     "first_run_at": None,
     "modules": [],
     "module_selected": None,
@@ -500,7 +504,10 @@ class Config:
         elif provider == "cloud":
             vendor = self.data.get("brain_cloud_vendor", "openai")
             model = self.data.get("brain_cloud_model", "gpt-6")
-            return f"Cloud ({vendor.title()} {model})"
+            vendor_label = {"openai": "OpenAI", "anthropic": "Anthropic", "openrouter": "OpenRouter"}.get(
+                vendor.lower(), vendor.title()
+            )
+            return f"Cloud ({vendor_label} {model})"
         return "Unknown"
 
     def add_model(self, path: str, name: Optional[str] = None) -> dict:
@@ -522,6 +529,23 @@ class Config:
     @property
     def recent_projects(self) -> list[str]:
         return self.data.get("recent_projects", [])
+
+    @property
+    def recent_scanned_projects(self) -> Optional[list[str]]:
+        value = self.data.get("recent_scanned_projects")
+        return list(value) if isinstance(value, list) else None
+
+    def add_recent_scanned_project(self, project_path: str):
+        """Records a successfully scanned project for Quick Access (newest first, max 10)."""
+        resolved = self._resolved_str(project_path)
+        with self._lock:
+            recents = [
+                p for p in (self.data.get("recent_scanned_projects") or [])
+                if self._resolved_str(p) != resolved
+            ]
+            recents.insert(0, resolved)
+            self.data["recent_scanned_projects"] = recents[:10]
+            self.save()
 
     def add_recent_project(self, project_path: str):
         """Adds a project path to the MRU recent projects list (max 10)."""
@@ -545,9 +569,11 @@ class Config:
         self.save()
 
     def clear_recent_projects(self):
-        """Clears all recent projects."""
-        self.data["recent_projects"] = []
-        self.save()
+        """Clears menu history only; workspace membership, snapshots and source folders stay intact."""
+        with self._lock:
+            self.data["recent_projects"] = []
+            self.data["recent_scanned_projects"] = []
+            self.save()
 
     @staticmethod
     def _resolved_str(project_path: str) -> str:

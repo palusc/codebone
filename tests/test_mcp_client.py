@@ -15,6 +15,15 @@ def test_adopt_scan_routes_paths_under_scan_path(monkeypatch):
     assert seen["payload"] == {"scan_path": "~/scans/x.sqlite3"}
 
 
+def test_tldr_requests_a_whole_project(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(mcp_server, "_get", lambda path, params=None: seen.update(path=path, params=params) or "ok")
+    assert mcp_server.codebone_tldr() == "ok"
+    assert seen == {"path": "/codebone/tldr", "params": None}
+    assert mcp_server.codebone_tldr("askment") == "ok"
+    assert seen == {"path": "/codebone/tldr", "params": {"project": "askment"}}
+
+
 def _fake_resp(status, payload):
     class R:
         headers = {"content-type": "application/json"}

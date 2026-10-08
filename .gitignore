@@ -41,3 +41,10 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Local notes & work files (never committed)
+TODO.md
+todo.md
+*.todo.md
+scratch/
+

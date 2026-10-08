@@ -15,6 +15,13 @@ class TestUpdater(unittest.TestCase):
         self.assertTrue(parse_version("1.2.1") > parse_version("1.2.0"))
         self.assertTrue(parse_version("2.0.0") > parse_version("1.9.9"))
         self.assertFalse(parse_version("1.2.0") > parse_version("1.2.0"))
+        self.assertEqual(parse_version("1.2a"), (1, 2, 0))
+        self.assertEqual(parse_version("1.2b"), (1, 2, 1))
+        self.assertTrue(parse_version("1.2b") > parse_version("1.2a"))
+        self.assertTrue(parse_version("1.3a") > parse_version("1.2b"))
+        self.assertEqual(parse_version("1.7a"), (1, 7, 0))
+        self.assertEqual(parse_version("1.7b"), (1, 7, 1))
+        self.assertTrue(parse_version("1.7b") > parse_version("1.7a"))
 
     @patch("urllib.request.urlopen")
     def test_check_for_updates_found(self, mock_urlopen):

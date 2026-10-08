@@ -58,14 +58,18 @@ def clean_release_notes(text: str) -> str:
 
 
 def parse_version(v_str: str) -> Tuple[int, ...]:
-    """Parses a version string like 'v1.2.0' or '1.2.3-beta' into an integer tuple for comparison."""
+    """Parses a version string like 'v1.7a', '1.7b', or legacy '1.2.0' into an integer tuple for comparison."""
     clean = re.sub(r"^[vV]", "", (v_str or "").strip())
-    # Extract only the numeric dot-separated prefix
-    match = re.match(r"^(\d+(?:\.\d+)*)", clean)
+    # Extract numeric dot-separated prefix and optional letter suffix (e.g. 1.7a, 1.7b)
+    match = re.match(r"^(\d+(?:\.\d+)*)([a-z])?", clean, re.IGNORECASE)
     if not match:
         return (0, 0, 0)
-    parts = [int(p) for p in match.group(1).split(".")]
-    # Pad to at least 3 parts (major, minor, patch)
+    num_part = match.group(1)
+    letter_part = match.group(2)
+    parts = [int(p) for p in num_part.split(".")]
+    if letter_part:
+        # 'a' -> 0, 'b' -> 1, 'c' -> 2
+        parts.append(ord(letter_part.lower()) - ord("a"))
     while len(parts) < 3:
         parts.append(0)
     return tuple(parts)

@@ -287,6 +287,24 @@ Claude Code fetches the key from the Keychain on demand. opencode can only read 
 
 ---
 
+## 💻 System Requirements
+
+codebone is engineered for whisper-quiet background operation with zero fan noise, minimal CPU wakeups, and strict memory conservation.
+
+| Platform | Minimum Requirements | Recommended Specifications | Inference & Acceleration |
+|---|---|---|---|
+| **macOS** *(Current Release)* | • macOS 13 (Ventura)+<br>• Apple Silicon (M1 / M2 / M3 / M4) or Intel x86_64<br>• 8 GB Unified Memory<br>• 2 GB SSD space | • macOS 14 (Sonoma) / 15 (Sequoia)<br>• Apple Silicon M-Series (Pro / Max)<br>• 16 GB+ Unified Memory<br>• 5 GB SSD space | **Apple Metal GPU**<br>Native hardware acceleration (~1.2s per-file AST & TLDR synthesis, <30ms search). |
+| **Windows** *(codebone 2.0)* | • Windows 10 / 11 (64-bit)<br>• 4-core CPU with AVX2 support<br>• 8 GB RAM<br>• 2 GB SSD space | • Windows 11 (64-bit)<br>• 6+ cores (Intel 12th Gen+ / Ryzen 5000+)<br>• 16 GB RAM<br>• NVIDIA GPU with 4 GB+ VRAM | **DirectML / CUDA**<br>CUDA 12+ or DirectML fallback; AVX2 CPU execution supported. |
+| **Linux** *(codebone 2.0)* | • Ubuntu 22.04 LTS / Debian 12 / Arch<br>• x86_64 or aarch64 (ARM64)<br>• 2 vCPUs / 4 GB RAM (BYOK) or 8 GB (Local)<br>• 2 GB SSD space | • Ubuntu 24.04 LTS / Debian 12+<br>• 4+ physical cores<br>• 16 GB RAM<br>• NVIDIA GPU with CUDA 12+ (4 GB+ VRAM) | **CUDA / Vulkan / CPU**<br>Full headless daemon support with zero X11/Wayland dependencies. |
+
+### 🌡️ Thermal & Battery Budget ("Run Cool & Silent")
+- **Battery-Aware Debouncing**: On AC power, codebone debounces file saves to `0.5s` for instant updates. On battery, it shifts into a battery-saving `15s` cadence.
+- **Whisper-Quiet Threading**: Background indexing and AST tree-sitter walks execute at low thread priority (`nice 10`), strictly capped below 5% idle CPU to prevent thermal throttling, fan spin-up, or heating up your laptop.
+- **Zero-Waste Incremental Cache**: Only files with modified SHA-256 hashes are ever processed. Unchanged files require 0 ms of inference time.
+- **Cloud BYOK Mode**: Offload indexing to Anthropic or OpenAI API keys to drop local memory consumption to mere ~150 MB with 0% GPU load.
+
+---
+
 ## ❓ Frequently Asked Questions
 
 <details>

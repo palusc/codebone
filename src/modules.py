@@ -306,6 +306,7 @@ def apply_codex(module: dict, key: str, previous: Optional[dict] = None, home: O
     }
     if openai_url:
         shell_keys["OPENAI_BASE_URL"] = openai_url
+        shell_keys["OPENAI_API_BASE"] = openai_url
         if key:
             shell_keys["OPENAI_API_KEY"] = key
         shell_keys["OPENAI_MODEL"] = module["model"]
@@ -391,7 +392,7 @@ def restore_codex(previous: Optional[dict], home: Optional[Path] = None) -> bool
 
     result_lines = []
     in_section = False
-    codebone_keys = {"CODEBONE_MANAGED", "OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL",
+    codebone_keys = {"CODEBONE_MANAGED", "OPENAI_BASE_URL", "OPENAI_API_BASE", "OPENAI_API_KEY", "OPENAI_MODEL",
                      "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL"}
 
     for line in new_lines:

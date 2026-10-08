@@ -1523,32 +1523,38 @@ class CodeBoneApp(rumps.App):
         threading.Thread(target=_run, daemon=True, name="codebone-brain-test").start()
 
     def _update_api_keys_menu(self):
-        """Rebuilds the API Keys submenu: the cloud BYOK key and every module's key, one list instead of
-        keys hidden inside per-module dialogs. Keychain reads happen only on demand, never on the 2 s
-        menu refresh — this rebuild runs on that timer."""
+        """Rebuilds the API Keys submenu: cleanly categorized into Map Agent (Cloud BYOK) and
+        Coding Agent Models so users can manage their keys in one predictable place."""
         if getattr(self.api_keys_menu, "_menu", None) is not None:
             self.api_keys_menu.clear()
 
+        # Map Agent section
+        self.api_keys_menu.add(rumps.MenuItem("Map Agent (Knowledge Map & TLDR)", callback=None))
         provider = self.config.get("brain_provider", "builtin")
-        cloud_item = rumps.MenuItem("Paste an API key directly...", callback=self.select_brain_cloud)
+        cloud_item = rumps.MenuItem("Cloud BYOK Key...", callback=self.select_brain_cloud)
         _set_symbol_icon(cloud_item, "cloud")
         cloud_item.state = (provider == "cloud")
         if self.config.get("brain_cloud_api_key"):
             vendor = self.config.get("brain_cloud_vendor", "openai").title()
-            cloud_item.title = f"Cloud BYOK ({vendor}) — Edit..."
+            cloud_item.title = f"Cloud BYOK ({vendor}) — Edit Key..."
         self.api_keys_menu.add(cloud_item)
 
+        # Coding Agent section
+        self.api_keys_menu.add(None)
+        self.api_keys_menu.add(rumps.MenuItem("Coding Agent Models", callback=None))
         from . import modules
         library = modules.list_modules(self.config)
         if library:
-            self.api_keys_menu.add(None)
             for m in library:
                 item = rumps.MenuItem(
-                    f"{m['name']} API Key...",
+                    f"{m['name']} Key...",
                     callback=lambda _, mid=m["id"], n=m["name"]: self.edit_module_key(mid, n),
                 )
                 _set_symbol_icon(item, "key")
                 self.api_keys_menu.add(item)
+        else:
+            no_mod = rumps.MenuItem("No custom models added yet", callback=None)
+            self.api_keys_menu.add(no_mod)
 
     def edit_module_key(self, module_id: str, name: str):
         from . import modules
@@ -1884,41 +1890,64 @@ class CodeBoneApp(rumps.App):
         master_on = bool(self.config.get("modules_enabled"))
         active = set(modules.enabled_apps(self.config))
 
-        self.modules_menu.add(rumps.MenuItem("Model used by your coding agent", callback=None))
+        self.modules_menu.add(rumps.MenuItem("Custom Coding Model", callback=None))
         self.modules_menu.add(self.modules_switch_item)
         self.modules_menu.add(None)
 
-        for m in library:  # which model
-            item = rumps.MenuItem(m["name"], callback=(lambda _, mid=m["id"]: self.pick_module(mid)) if master_on else None)
+        # ── 1. Models Submenu ───────────────────────────────────────────────
+        models_menu = rumps.MenuItem("Models")
+        _set_symbol_icon(models_menu, "cpu")
+        for m in library:
+            item = rumps.MenuItem(
+                m["name"],
+                callback=(lambda _, mid=m["id"]: self.pick_module(mid)) if master_on else None,
+            )
             item.state = bool(selected and selected["id"] == m["id"])
-            self.modules_menu.add(item)
+            models_menu.add(item)
         if library:
-            self.modules_menu.add(None)
-            for app_id, (label, fmt) in modules.APPS.items():  # which apps use it
-                needs = "" if (selected is None or modules.supports(selected, app_id)) else f"  (needs {modules.FORMAT_NAMES[fmt]} URL)"
-                item = rumps.MenuItem(
-                    f"Use in {label}{needs}",
-                    callback=(lambda _, a=app_id: self.toggle_module_app(a)) if master_on else None,
-                )
-                item.state = app_id in active
-                self.modules_menu.add(item)
-            copy_menu = rumps.MenuItem("Copy for Other Apps")
+            models_menu.add(None)
+        models_menu.add(rumps.MenuItem("Add Model...", callback=self.add_module_dialog))
+        if library:
+            models_menu.add(rumps.MenuItem("Test Connection", callback=self.test_selected_module))
+            if selected:
+                models_menu.add(rumps.MenuItem(
+                    f"Edit API Key ({selected['name']})...",
+                    callback=lambda _, mid=selected["id"], n=selected["name"]: self.edit_module_key(mid, n),
+                ))
+            remove_menu = rumps.MenuItem("Remove Model")
+            for m in library:
+                remove_menu.add(rumps.MenuItem(
+                    m["name"],
+                    callback=lambda _, mid=m["id"], n=m["name"]: self.remove_module_dialog(mid, n),
+                ))
+            models_menu.add(remove_menu)
+        self.modules_menu.add(models_menu)
+
+        # ── 2. Use in Coding Agent Submenu ──────────────────────────────────
+        agents_menu = rumps.MenuItem("Use in Coding Agent")
+        _set_symbol_icon(agents_menu, "arrow.triangle.branch")
+        for app_id, (label, fmt) in modules.APPS.items():
+            needs = "" if (selected is None or modules.supports(selected, app_id)) else f"  (needs {modules.FORMAT_NAMES[fmt]} URL)"
+            item = rumps.MenuItem(
+                f"Use in {label}{needs}",
+                callback=(lambda _, a=app_id: self.toggle_module_app(a)) if master_on else None,
+            )
+            item.state = app_id in active
+            agents_menu.add(item)
+        self.modules_menu.add(agents_menu)
+
+        # ── 3. Endpoints & Credentials Submenu ──────────────────────────────
+        if library:
+            copy_menu = rumps.MenuItem("Endpoints & Credentials")
+            _set_symbol_icon(copy_menu, "doc.on.clipboard")
             for what, fn in (
                 ("Model ID", lambda: (selected or {}).get("model")),
-                ("API key", lambda: modules.Keychain().get(selected["id"]) if selected else None),
+                ("API Key", lambda: modules.Keychain().get(selected["id"]) if selected else None),
                 ("OpenAI Base URL", lambda: (selected or {}).get("openai_url") or (modules._url(selected, "openai") if selected else None)),
                 ("Anthropic Base URL", lambda: (selected or {}).get("anthropic_url") or (modules._url(selected, "anthropic") if selected else None)),
             ):
-                copy_menu.add(rumps.MenuItem(what, callback=lambda _, w=what, f=fn: self.copy_module_value(w, f)))
+                copy_menu.add(rumps.MenuItem(f"Copy {what}", callback=lambda _, w=what, f=fn: self.copy_module_value(w, f)))
             self.modules_menu.add(copy_menu)
-            self.modules_menu.add(None)
-        self.modules_menu.add(rumps.MenuItem("Add Model...", callback=self.add_module_dialog))
-        if library:
-            self.modules_menu.add(rumps.MenuItem("Test Connection", callback=self.test_selected_module))
-            remove_menu = rumps.MenuItem("Remove Model")
-            for m in library:
-                remove_menu.add(rumps.MenuItem(m["name"], callback=lambda _, mid=m["id"], n=m["name"]: self.remove_module_dialog(mid, n)))
-            self.modules_menu.add(remove_menu)
 
         self.modules_menu.add(None)
         links_menu = rumps.MenuItem("Provider Links")
@@ -1928,7 +1957,7 @@ class CodeBoneApp(rumps.App):
         links_menu.add(rumps.MenuItem("OpenRouter Help...", callback=lambda _: self.open_url("https://openrouter.ai/docs")))
         self.modules_menu.add(links_menu)
 
-        self.modules_menu.add(rumps.MenuItem("Reset Coding Agent Connection", callback=self.reset_modules_to_normal))
+        self.modules_menu.add(rumps.MenuItem("Reset All Coding Agents to Normal", callback=self.reset_modules_to_normal))
 
     def open_url(self, url: str):
         try:
@@ -2006,8 +2035,9 @@ class CodeBoneApp(rumps.App):
         self._update_modules_menu()
 
     def _verify_module_or_revert(self, app_id: str, module: dict):
-        """After switching an app onto a module, confirms the endpoint actually answers. If it doesn't, the app
-        is switched straight back to normal instead of being left pointed at a dead API."""
+        """After switching an app onto a module, confirms the endpoint answers in the background.
+        If it doesn't, it alerts the user with diagnostic advice, but does NOT silently uncheck
+        or revert the user's setting."""
         from . import modules
 
         label = modules.APPS[app_id][0]
@@ -2025,18 +2055,13 @@ class CodeBoneApp(rumps.App):
             if ok:
                 return
 
-            def _revert():
-                try:
-                    modules.set_app_enabled(self.config, app_id, False)
-                except (modules.SettingsUnreadable, ValueError):
-                    pass
+            def _warn():
                 rumps.notification(
-                    "codebone", f"{label} switched back to normal",
-                    f"{module['name']} did not respond ({msg}); reverted so {label} keeps working.",
+                    "codebone", f"{label}: Connection Warning",
+                    f"{module['name']} did not answer ({msg}). Check your key in Settings > API Keys.",
                 )
-                self._update_modules_menu()
 
-            self._on_main(_revert)
+            self._on_main(_warn)
 
         threading.Thread(target=_run, daemon=True, name="codebone-module-verify").start()
 

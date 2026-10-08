@@ -10,6 +10,13 @@ Incremental updates within each series are documented as distinct letter release
 
 ## [Unreleased]
 
+### Added
+- **Restructured Coding Agent Menu**: Organized into dedicated, clear submenus: `Models` (with active model selection, connection testing, direct API key editing, model management), `Use in Coding Agent` (individual agent routing for Claude Code, Codex, Cursor, Antigravity/Gemini, opencode), and `Endpoints & Credentials` (instant clipboard copy of Model ID, API Key, and base URLs).
+- **Categorized API Keys Settings**: Explicitly partitioned into `Map Agent (Cloud BYOK)` and `Coding Agent Models` for intuitive, centralized credential management.
+- **Resilient Agent Routing & Verification**: Eliminated silent auto-unchecking/reverting when toggling coding agents; transient connection checks or expired keys now issue non-intrusive diagnostic warnings without fighting the user or disabling preferences.
+- **Enhanced Codex Integration**: Dual injection of `OPENAI_BASE_URL` and `OPENAI_API_BASE` in Codex config for broader CLI and tool compatibility.
+- **Documented System Requirements & Thermal Profile**: Added comprehensive minimum and recommended specifications across macOS, Windows, and Linux, including battery-aware debouncing and passive thermal cooling guidelines.
+
 ### Changed
 - **Cleaner project navigation**: The three most recently scanned projects are full project menus directly in the main menu. `Projects` lists only the remaining folders, so no project is duplicated; every project menu contains Index, TLDR, map statistics, Finder and removal actions.
 - **Clear model roles**: Settings now separates codebone's **Map Model** from the optional **Coding Agent** model. MCP setup and common support destinations moved into **Help & Quick Links**.
@@ -29,7 +36,7 @@ Incremental updates within each series are documented as distinct letter release
 ## [1.5d] - 2026-09-26
 
 ### Added
-- **Project TLDR via MCP, API and Projects menu**: `codebone_tldr` and `/codebone/tldr` now explain an entire indexed project—its purpose, responsibilities and main architecture—instead of summarizing individual documents or source files. The active project is the default; another workspace project can be selected by name.
+- **Architectural Project TLDR via MCP, API and Projects menu**: `codebone_tldr` and `/codebone/tldr` synthesize a concise architectural executive summary of an entire indexed codebase—its core purpose, key domain boundaries, and structural architecture. The active project is the default; another workspace project can be selected by name.
 
 ---
 

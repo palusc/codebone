@@ -2,11 +2,14 @@
 
 # 🦴 codebone
 
+**The official repository for [codebone (codeb.one)](https://codeb.one)** — Real-time architecture intelligence & Model Context Protocol (MCP) server for AI coding agents.
+
 ### Your codebase has a structure. Give your AI access to it!
 **Stop dumping dozens of files into your prompt. Let the dog sniff it.** 🐾
 
 <br>
 
+[![Website](https://img.shields.io/badge/website-codeb.one-151719?style=flat-square&logo=safari)](https://codeb.one)
 [![macOS](https://img.shields.io/badge/platform-macOS-black?logo=apple&style=flat-square)](#)
 [![Metal GPU](https://img.shields.io/badge/inference-Apple%20Silicon%20Metal-purple?style=flat-square)](#)
 [![MCP](https://img.shields.io/badge/protocol-MCP%20Native-blue?style=flat-square)](#)

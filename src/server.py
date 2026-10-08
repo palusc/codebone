@@ -19,6 +19,7 @@ from . import anthropic_bridge, codesearch, context_format
 from .config import find_free_port
 from .feedback import list_recent_feedback, record_feedback
 from .graph_ui import build_live_graph_html
+from .imports import _safe_read
 from .service import CodeBoneService, PugService
 
 logger = logging.getLogger("codebone.server")
@@ -216,7 +217,7 @@ def create_app(service: CodeBoneService, allowed_hosts: Optional[set] = None) ->
 
     @app.get("/codebone/context")
     @app.get("/pug/context")
-    def context(format: str = "markdown", domain: str = "", file: str = "", query: str = "", assets: bool = False):
+    def context(format: str = "markdown", domain: str = "", file: str = "", query: str = "", assets: bool = False, offer: bool = False):
         if not service.config.is_configured:
             msg = "codebone is not configured yet. Please select a project folder in the menu bar."
             return Response(content=msg, media_type="text/plain")
@@ -234,9 +235,33 @@ def create_app(service: CodeBoneService, allowed_hosts: Optional[set] = None) ->
                 return context_format.search_json(name, files, index, storage.revision, domain, file, query, texts, assets)
             return context_format.overview_json(name, files, index, storage.revision)
         fresh = codesearch.freshness(root, files) if root else ""
+        if offer and query and format != "json":
+            text = context_format.offer(name, files, index, domain, file, query, texts, assets, fresh, storage.source_facts())
+            return Response(content=text, media_type="text/markdown; charset=utf-8")
         text = (context_format.search(name, files, index, domain, file, query, texts, assets, fresh, storage.source_facts())
                 if filtered else context_format.overview(name, files, index, fresh))
         return Response(content=text, media_type="text/markdown; charset=utf-8")
+
+    @app.get("/codebone/tldr")
+    @app.get("/pug/tldr")
+    def tldr(file: str = ""):
+        if not service.config.is_configured:
+            return Response(content="codebone is not configured yet.", media_type="text/plain")
+        file = file.strip()
+        if not file:
+            raise HTTPException(status_code=400, detail="Missing 'file'")
+        root = str(service.config.project_path or "")
+        files, _ = service.storage.view()
+        low = file.lower()
+        match = next((f for f in files if f["path"].lower() == low), None) \
+            or next((f for f in files if low in f["path"].lower()), None)
+        if not match:
+            raise HTTPException(status_code=404, detail=f"No indexed file matches '{file}'")
+        code = _safe_read(root, match["path"]) if root else None
+        if code is None:
+            raise HTTPException(status_code=404, detail=f"Could not read '{match['path']}'")
+        text = service.provider.tldr(match["path"], code)
+        return Response(content=f"# {match['path']}\n\n{text}\n", media_type="text/markdown; charset=utf-8")
 
     @app.get("/codebone/links")
     def links(file: str = ""):

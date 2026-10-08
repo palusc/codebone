@@ -63,3 +63,22 @@ def test_word_search_symbols_assets_grouping_and_domain_boost(tmp_path):
     assert "asset files also match" in cf.search("p", files, idx, query="logo", texts=texts)
     shown = cf.search("p", files, idx, query="logo", texts=texts, assets=True)
     assert shown.count("### apps") == 1 and "Same file in 2 more places" in shown
+
+
+def test_offer_is_short_and_points_to_the_full_answer(tmp_path):
+    (tmp_path / "billing").mkdir()
+    (tmp_path / "billing" / "webhook.py").write_text("def handle_webhook(event):\n    return event\n")
+    files = [{"path": "billing/webhook.py", "summary": "Stripe webhook", "tables": [], "routes": [], "events": [],
+              "domains": ["Payment"], "source": "model"},
+             *({"path": f"apps/w{i}/webhook_{i}.py", "summary": "webhook handler " * 12, "tables": [], "routes": [],
+                "events": [], "domains": [], "source": "model"} for i in range(9)),
+             {"path": "tests/test_webhook.py", "summary": "webhook tests", "tables": [], "routes": [], "events": [],
+              "domains": [], "source": "model"}]
+    idx = index_of(files)
+    texts = codesearch.read_texts(str(tmp_path), files)
+    out = cf.offer("p", files, idx, query="webhook", texts=texts)
+    assert "Top: billing/webhook.py:1 def handle_webhook" in out and "Tests: tests/test_webhook.py" in out
+    assert "whisper=true" in out and len(out) < len(cf.search("p", files, idx, query="webhook", texts=texts)) + 200
+    assert "No match" in cf.offer("p", files, idx, query="zzzzqq", texts=texts)
+    small = cf.offer("p", files[:1] + files[-1:], index_of(files[:1] + files[-1:]), query="webhook", texts=texts)
+    assert "whisper" not in small and "### billing/webhook.py" in small  # small answers skip the offer step

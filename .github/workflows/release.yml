@@ -1,13 +1,19 @@
-name: Release patch on merge to main
+name: Release codebone
 
-# Every push to main gets its own patch release: version bump, signed DMG/ZIP build,
-# Homebrew formula update, git tag and a GitHub Release. This is what the in-app
-# updater (src/updater.py) polls, so merging to main is what ships an update — no
-# separate manual release step needed.
+# Releases are built and published when a release tag is pushed (e.g. `git tag v1.8.0 && git push origin v1.8.0`)
+# or manually triggered via GitHub Actions (workflow_dispatch).
+# Normal commits and pushes to main do NOT create automated releases.
 
 on:
   push:
-    branches: [main]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.8.0) - leave empty to use tag or src/__init__.py'
+        required: false
+        type: string
 
 concurrency:
   group: release
@@ -18,8 +24,6 @@ permissions:
 
 jobs:
   release:
-    # A push made by this workflow's own release commit must not trigger another release.
-    if: "!contains(github.event.head_commit.message, 'chore(release):')"
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -38,32 +42,21 @@ jobs:
           path: ~/Library/Caches/codebone-build
           key: codebone-model-${{ hashFiles('scripts/download_model.py') }}
 
-      - name: Sync to latest main
-        # Two pushes to main queued back-to-back both trigger a run, but the concurrency group only
-        # lets one run at a time; the second run's checkout is still pinned to the older commit that
-        # triggered it, so bumping from that stale version and pushing would be rejected as
-        # non-fast-forward once the first run's release commit has landed. Reset to the real tip first.
-        run: |
-          set -euo pipefail
-          git fetch origin main
-          git reset --hard origin/main
-
-      - name: Bump version
+      - name: Determine release version
         id: bump
         run: |
           set -euo pipefail
-          current="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/__init__.py)"
-          latest="$(git describe --tags --abbrev=0 2>/dev/null || echo "v${current}")"
-          if [ "v${current}" != "${latest}" ]; then
-            # A human already bumped past the last tag (minor/major): ship that version as-is.
-            next="${current}"
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            version="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF#refs/tags/v}"
           else
-            IFS='.' read -r major minor patch <<< "$current"
-            next="${major}.${minor}.$((patch + 1))"
+            version="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/__init__.py)"
           fi
-          sed -i '' "s/^__version__ = \".*\"/__version__ = \"${next}\"/" src/__init__.py
-          echo "version=${next}" >> "$GITHUB_OUTPUT"
-          echo "Bumping ${current} -> ${next}"
+          version="${version#v}"
+          sed -i '' "s/^__version__ = \".*\"/__version__ = \"${version}\"/" src/__init__.py
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Releasing version ${version}"
 
       - name: Build DMG + ZIP (scripts/build_dmg.sh)
         run: ./scripts/build_dmg.sh
@@ -85,36 +78,39 @@ jobs:
           sed -i '' "s#Version%20[0-9][0-9.]*-#Version%20${version}-#" README.md
           sed -i '' "s#!\[Version [0-9][0-9.]*\]#![Version ${version}]#" README.md
 
-      - name: Commit version bump + formula
+      - name: Commit version bump + formula (if on branch or manual)
         run: |
-          git add src/__init__.py Formula/codebone.rb package.json README.md
-          git commit -m "chore(release): bump version to ${{ steps.bump.outputs.version }}"
-          git push origin HEAD:main
+          set -euo pipefail
+          if git diff --quiet src/__init__.py Formula/codebone.rb package.json README.md; then
+            echo "No changes to commit"
+          else
+            git add src/__init__.py Formula/codebone.rb package.json README.md
+            git commit -m "chore(release): bump version to ${{ steps.bump.outputs.version }}"
+            git push origin HEAD:main || true
+          fi
 
-      - name: Tag release
+      - name: Ensure git tag exists
         run: |
-          git tag "v${{ steps.bump.outputs.version }}"
-          git push origin "v${{ steps.bump.outputs.version }}"
+          set -euo pipefail
+          version="${{ steps.bump.outputs.version }}"
+          if ! git rev-parse "v${version}" >/dev/null 2>&1; then
+            git tag "v${version}"
+            git push origin "v${version}"
+          fi
 
       - name: Build release notes
         id: notes
         run: |
           set -euo pipefail
           version="${{ steps.bump.outputs.version }}"
-          # Prefer the version's own CHANGELOG.md section (curated, human-written); fall back to the
-          # merge commit's PR title so a release never ships with no notes at all. Match the heading
-          # by string prefix — as a regex, "## [1.4.0]" is a bracket expression and never matches.
           section="$(awk -v ver="## [$version]" '
             index($0, ver) == 1 { found=1; next }
             found && /^## \[/ { exit }
             found { print }
           ' CHANGELOG.md)"
-          section="$(printf '%s\n' "$section" | sed -e '/./,$!d')"  # drop leading blank lines
+          section="$(printf '%s\n' "$section" | sed -e '/./,$!d')"
           if [ -z "$(echo "$section" | tr -d '[:space:]')" ]; then
-            # By this point HEAD is our own just-created "chore(release): ..." commit, which has no
-            # useful body — the commit that actually triggered this run is ${{ github.sha }}.
-            # Start after the subject line only; leading blanks are dropped right below.
-            section="$(git log -1 --pretty=%B ${{ github.sha }} | tail -n +2 | sed -e '/./,$!d')"
+            section="$(git log -1 --pretty=%B | sed -e '/./,$!d')"
           fi
           {
             echo "$section"

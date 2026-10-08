@@ -19,6 +19,7 @@ MAX_ENTITIES = 15
 MAX_MATCHES = 8              # result groups rendered in full by search()
 MAX_SUMMARY = 110
 MAX_JSON_FILES = 200
+OFFER_MIN_CHARS = 1600       # a full answer below this (~400 tokens) is returned directly, no offer step
 
 _TOKEN = re.compile(r"[a-z0-9_./&-]+")
 
@@ -299,6 +300,37 @@ def search(project_name: str, files: List[dict], index: dict, domain: str = "", 
     if len(groups) > len(shown):
         rest = [g[0]["path"] for g in groups[len(shown): len(shown) + 10]]
         lines += ["", f"(+{len(groups) - len(shown)} more: {', '.join(rest)}{' ...' if len(groups) - len(shown) > 10 else ''})"]
+    return "\n".join(lines)
+
+
+def offer(project_name: str, files: List[dict], index: dict, domain: str = "", file: str = "", query: str = "",
+          texts: Optional[Dict[str, str]] = None, assets: bool = False, fresh: str = "",
+          facts: Optional[dict] = None) -> str:
+    """The short first answer to a query: best file, confidence, a size estimate of the full answer and how to
+    ask for it. Enough to finish a small change; the caller decides whether the full search is worth its tokens."""
+    ranked, partial, _ = _match_files(files, index, domain, file, query, texts, assets)
+    full = search(project_name, files, index, domain, file, query, texts, assets, fresh, facts)
+    if not ranked or len(full) < OFFER_MIN_CHARS:
+        return full
+    top = ranked[0]
+    lead = top[1] >= 2 * ranked[1][1] if len(ranked) > 1 else True
+    conf = "low" if partial else "high" if lead else "medium"
+    head = top[0]["path"]
+    if texts and top[0]["path"] in texts:
+        best = text_score(texts[top[0]["path"]], _tokens(query))[1]
+        if best:
+            head += f":{best[0][1]} {_clip(best[0][2], 90)}"
+    lines = [f'# codebone: {project_name} | query="{query}" | {len(ranked)} match{"es" if len(ranked) != 1 else ""}, confidence {conf}']
+    if fresh:
+        lines.append(fresh)
+    lines.append(f"Top: {head}")
+    others = [f["path"] for f, _ in ranked[1:4] if "test" not in f["path"].lower()]
+    tests = [f["path"] for f, _ in ranked if "test" in f["path"].lower()][:2]
+    if others:
+        lines.append("Also: " + ", ".join(others))
+    if tests:
+        lines.append("Tests: " + ", ".join(tests))
+    lines.append(f"Tip ~{len(full) // 4} tokens (references, imports, matching lines): repeat the call with whisper=true.")
     return "\n".join(lines)
 
 

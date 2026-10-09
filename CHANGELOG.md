@@ -352,7 +352,7 @@ Reduzierung des RAM-Footprints auf Apple Silicon durch Standardisierung auf Qwen
 
 ---
 
-## [1.0] - 2026-09-22
+## [1.0] - 2026-09-21
 *Official Milestone Release*
 
 ### 🎯 Ziel dieser Version
@@ -374,7 +374,7 @@ Markteinführung von codebone als 24/7 lokaler macOS-Hintergrundassistent mit Me
 
 ---
 
-## [1.0b] - 2026-09-22
+## [1.0b] - 2026-09-21
 *Pre-Release*
 
 ### Added
@@ -386,7 +386,7 @@ Markteinführung von codebone als 24/7 lokaler macOS-Hintergrundassistent mit Me
 
 ---
 
-## [1.0a] - 2026-09-22
+## [1.0a] - 2026-09-21
 *Pre-Release*
 
 ### Added

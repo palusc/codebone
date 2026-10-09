@@ -662,8 +662,8 @@ class CodeBoneApp(rumps.App):
         self.api_keys_menu = self.models_menu
 
         # Settings Items
-        self.adopt_scan_item = rumps.MenuItem("Match a Previous Scan...", callback=self.choose_adopt_scan)
-        _set_symbol_icon(self.adopt_scan_item, "link")
+        self.adopt_scan_item = rumps.MenuItem("Merge with Previous Scan...", callback=self.choose_adopt_scan)
+        _set_symbol_icon(self.adopt_scan_item, "arrow.triangle.merge")
 
         self.copy_curl_item = rumps.MenuItem("Copy AI Context (curl)", callback=self.copy_curl)
         _set_symbol_icon(self.copy_curl_item, "doc.on.clipboard")
@@ -1411,7 +1411,7 @@ class CodeBoneApp(rumps.App):
         # Submenu items
         _set_symbol_icon(self.open_map_item, "point.3.connected.trianglepath.dotted")
         _set_symbol_icon(self.documentation_item, "book")
-        _set_symbol_icon(self.adopt_scan_item, "link")
+        _set_symbol_icon(self.adopt_scan_item, "arrow.triangle.merge")
         _set_symbol_icon(self.copy_curl_item, "doc.on.clipboard")
         _set_symbol_icon(self.view_logs_item, "doc.text")
         _set_symbol_icon(self.full_disk_access_item, "lock.shield")
@@ -1447,17 +1447,26 @@ class CodeBoneApp(rumps.App):
         the updater run on background threads and hop over with this."""
         AppHelper.callAfter(fn, *args)
 
-    def reopen_menu(self, delay: float = 0.05):
-        """Re-opens the status item menu automatically so the user is not kicked out after selecting an option."""
+    def reopen_menu(self, submenu: Optional[rumps.MenuItem] = None, delay: float = 0.05):
+        """Re-opens the status item menu automatically so the user is not kicked out after selecting an option.
+        If a submenu is provided, directly pops up that submenu under the status item button."""
         def _reopen():
             try:
                 button = getattr(self._nsapp, "nsstatusitem", None)
-                if button and hasattr(button, "button"):
-                    btn = button.button()
-                    if btn:
-                        btn.performClick_(None)
-            except Exception:
-                pass
+                if not button or not hasattr(button, "button"):
+                    return
+                btn = button.button()
+                if not btn:
+                    return
+
+                sub_nsmenu = getattr(submenu, "_menu", None) if submenu else None
+                if sub_nsmenu is not None:
+                    pt = (0, btn.bounds().size.height + 2)
+                    sub_nsmenu.popUpMenuPositioningItem_atLocation_inView_(None, pt, btn)
+                else:
+                    btn.performClick_(None)
+            except Exception as exc:
+                logger.debug("reopen_menu exception: %s", exc)
 
         try:
             from Foundation import NSTimer
@@ -1616,7 +1625,7 @@ class CodeBoneApp(rumps.App):
         self._update_models_menu()
         self._sync_map_switch()
         rumps.notification("codebone", "Map Agent Model Updated", f"Map Agent now uses {modules.format_model_name(mod)}.")
-        self.reopen_menu()
+        self.reopen_menu(submenu=self.brain_menu)
 
     def select_builtin_map_model(self):
         self.config.set("brain_selected_module", None)
@@ -1625,7 +1634,7 @@ class CodeBoneApp(rumps.App):
         self._update_models_menu()
         self._sync_map_switch()
         rumps.notification("codebone", "Map Agent Model Updated", "Map Agent now uses Built-in (Qwen 0.5B) on Apple Metal.")
-        self.reopen_menu()
+        self.reopen_menu(submenu=self.brain_menu)
 
     def set_map_master(self, turning_on: bool):
         from . import modules
@@ -1750,9 +1759,25 @@ class CodeBoneApp(rumps.App):
             return
         self.test_selected_module(None, target_mod=mod)
 
+    def _copy_text(self, text: str, label: str):
+        if not text:
+            rumps.alert("Copy", f"No {label} available to copy.")
+            return
+        copy_to_clipboard(text)
+        rumps.notification("codebone", f"{label} Copied", f"Copied '{text}' to clipboard.")
+
+    def _copy_module_key(self, module_id: str):
+        from . import modules
+        key = modules.Keychain().get(module_id)
+        if not key:
+            rumps.alert("API Key", "No API key stored for this model.")
+            return
+        copy_to_clipboard(key)
+        rumps.notification("codebone", "API Key Copied", "API key copied to clipboard.")
+
     def _update_models_menu(self):
         """Rebuilds the Models... menu: list of all configured models, Add Model,
-        per-model rename, key editing, and removal."""
+        per-model rename, key editing, copy endpoints, and removal."""
         from . import modules
 
         if getattr(self.models_menu, "_menu", None) is not None:
@@ -1760,6 +1785,25 @@ class CodeBoneApp(rumps.App):
 
         # Header info
         self.models_menu.add(make_info_item("Models & APIs"))
+        self.models_menu.add(None)
+
+        # 1. Built-in Local Model (Apple Silicon Metal)
+        builtin_item = rumps.MenuItem("Built-in Qwen 0.5B (Metal GPU) — Ready (Map Agent)")
+        _set_symbol_icon(builtin_item, "cpu")
+        builtin_info = rumps.MenuItem("Engine: Local Apple Silicon Metal (GGUF)", callback=None)
+        _set_symbol_icon(builtin_info, "info.circle")
+        builtin_item.add(builtin_info)
+        builtin_scope = rumps.MenuItem("Scope: Knowledge Graph & Architecture Indexing", callback=None)
+        _set_symbol_icon(builtin_scope, "sparkles")
+        builtin_item.add(builtin_scope)
+        builtin_privacy = rumps.MenuItem("Privacy: Fully Local (No API Key Required)", callback=None)
+        _set_symbol_icon(builtin_privacy, "lock.shield")
+        builtin_item.add(builtin_privacy)
+        builtin_item.add(None)
+        builtin_test = rumps.MenuItem("Test Local Inference", callback=self.test_selected_brain)
+        _set_symbol_icon(builtin_test, "bolt")
+        builtin_item.add(builtin_test)
+        self.models_menu.add(builtin_item)
         self.models_menu.add(None)
 
         library = modules.list_modules(self.config)
@@ -1770,7 +1814,38 @@ class CodeBoneApp(rumps.App):
                 has_key = bool(modules.Keychain().get(m["id"]))
                 key_text = "Key Set ✓" if has_key else "No Key"
                 item = rumps.MenuItem(f"{m_label} — {key_text}")
-                _set_symbol_icon(item, "cpu")
+                _set_symbol_icon(item, "network" if "local" in m_label.lower() else "cloud")
+
+                # Copy Endpoints & Credentials directly in model settings
+                model_id_val = m.get("model", "")
+                copy_id_item = rumps.MenuItem(f"Copy Model ID ({model_id_val})", callback=lambda _, val=model_id_val: self._copy_text(val, "Model ID"))
+                _set_symbol_icon(copy_id_item, "doc.on.clipboard")
+                item.add(copy_id_item)
+
+                copy_key_item = rumps.MenuItem("Copy API Key", callback=lambda _, mid=m["id"]: self._copy_module_key(mid))
+                _set_symbol_icon(copy_key_item, "key")
+                item.add(copy_key_item)
+
+                openai_url = m.get("openai_url")
+                if openai_url:
+                    copy_openai = rumps.MenuItem("Copy OpenAI Base URL", callback=lambda _, val=openai_url: self._copy_text(val, "OpenAI URL"))
+                    _set_symbol_icon(copy_openai, "link")
+                    item.add(copy_openai)
+
+                anthropic_url = m.get("anthropic_url")
+                if anthropic_url:
+                    copy_anthropic = rumps.MenuItem("Copy Anthropic Base URL", callback=lambda _, val=anthropic_url: self._copy_text(val, "Anthropic URL"))
+                    _set_symbol_icon(copy_anthropic, "link")
+                    item.add(copy_anthropic)
+
+                item.add(None)
+
+                edit_key_item = rumps.MenuItem(
+                    "Edit API Key...",
+                    callback=lambda _, mid=m["id"], n=m["name"]: self.edit_module_key(mid, n),
+                )
+                _set_symbol_icon(edit_key_item, "key.fill")
+                item.add(edit_key_item)
 
                 rename_item = rumps.MenuItem(
                     "Rename Model...",
@@ -1778,13 +1853,6 @@ class CodeBoneApp(rumps.App):
                 )
                 _set_symbol_icon(rename_item, "pencil")
                 item.add(rename_item)
-
-                edit_key_item = rumps.MenuItem(
-                    "Edit API Key...",
-                    callback=lambda _, mid=m["id"], n=m["name"]: self.edit_module_key(mid, n),
-                )
-                _set_symbol_icon(edit_key_item, "key")
-                item.add(edit_key_item)
 
                 test_item = rumps.MenuItem(
                     "Test Connection",
@@ -2222,10 +2290,17 @@ class CodeBoneApp(rumps.App):
                 self.modules_menu.add(item)
         else:
             builtin_hint = rumps.MenuItem(
-                "Built-in Qwen 0.5B (Metal GPU)",
-                callback=None,
+                "Built-in Qwen 0.5B (Metal GPU) — Map Only",
+                callback=self.explain_builtin_coding_agent,
             )
             _set_symbol_icon(builtin_hint, "cpu")
+            try:
+                builtin_hint._menuitem.setToolTip_(
+                    "Built-in Qwen 0.5B is dedicated to Map Agent graph indexing on Apple Metal. "
+                    "For coding agents, connect a coding model (e.g. MiMo, Ollama, Claude, or OpenAI) in Models..."
+                )
+            except Exception:
+                pass
             self.modules_menu.add(builtin_hint)
 
         self.modules_menu.add(None)
@@ -2261,20 +2336,21 @@ class CodeBoneApp(rumps.App):
             agents_menu.add(item)
         self.modules_menu.add(agents_menu)
 
-        if library:
-            copy_menu = rumps.MenuItem("Endpoints & Credentials")
-            _set_symbol_icon(copy_menu, "doc.on.clipboard")
-            for what, fn in (
-                ("Model ID", lambda: (selected or {}).get("model")),
-                ("API Key", lambda: modules.Keychain().get(selected["id"]) if selected else None),
-                ("OpenAI Base URL", lambda: (selected or {}).get("openai_url") or (modules._url(selected, "openai") if selected else None)),
-                ("Anthropic Base URL", lambda: (selected or {}).get("anthropic_url") or (modules._url(selected, "anthropic") if selected else None)),
-            ):
-                copy_menu.add(rumps.MenuItem(f"Copy {what}", callback=lambda _, w=what, f=fn: self.copy_module_value(w, f)))
-            self.modules_menu.add(copy_menu)
-
         self.modules_menu.add(None)
         self.modules_menu.add(rumps.MenuItem("Reset Agent Routing", callback=self.reset_modules_to_normal))
+
+    def explain_builtin_coding_agent(self, _):
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        rumps.alert(
+            title="Built-in Model (Map Agent Only)",
+            message=(
+                "The built-in Qwen 0.5B model runs directly on your Mac using Apple Silicon Metal "
+                "specifically to index file structures and build the knowledge map.\n\n"
+                "Coding agents (Claude Code, Cursor, Codex, Antigravity, OpenCode) require full coding models. "
+                "You can add an online model or local server (e.g. Ollama qwen2.5-coder) via the 'Models...' menu."
+            ),
+            ok="Got it",
+        )
 
     def _add_local_ollama_module(self):
         from . import modules
@@ -2409,7 +2485,7 @@ class CodeBoneApp(rumps.App):
         else:
             rumps.notification("codebone", f"{label} is back on its normal model", "New sessions use your usual setup again.")
         self._update_modules_menu()
-        self.reopen_menu()
+        self.reopen_menu(submenu=self.modules_menu)
 
     def _verify_module_or_revert(self, app_id: str, module: dict):
         """After switching an app onto a module, confirms the endpoint answers in the background.
@@ -2460,7 +2536,7 @@ class CodeBoneApp(rumps.App):
             rumps.alert("Coding Agent", str(exc))
         self._update_modules_menu()
         self._update_models_menu()
-        self.reopen_menu()
+        self.reopen_menu(submenu=self.modules_menu)
 
     def add_module_dialog(self, _):
         from . import modules
@@ -2785,7 +2861,7 @@ class CodeBoneApp(rumps.App):
         source_target = None
 
         if scans:
-            msg_lines = ["Reuse an earlier scan for this project:\n"]
+            msg_lines = ["Merge files, connections, and architectural domains from an earlier scan into the current project:\n"]
             for i, s in enumerate(scans[:8], 1):
                 name = s.get("project_name", "Unknown")
                 f_count = s.get("file_count", 0)
@@ -2795,9 +2871,9 @@ class CodeBoneApp(rumps.App):
 
             window = rumps.Window(
                 message="\n".join(msg_lines),
-                title="Reuse Existing Scan",
+                title="Merge with Previous Scan",
                 default_text="1",
-                ok="Reuse",
+                ok="Merge Scan",
                 cancel="Cancel",
             )
             NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
@@ -2815,7 +2891,7 @@ class CodeBoneApp(rumps.App):
                         break
 
         if not source_target:
-            f_path = choose_file("Select Existing Scan Database (.sqlite3)", ["sqlite3", "db", "sqlite"])
+            f_path = choose_file("Select Existing Scan Database to Merge (.sqlite3)", ["sqlite3", "db", "sqlite"])
             if not f_path:
                 return
             source_target = f_path
@@ -2823,8 +2899,8 @@ class CodeBoneApp(rumps.App):
         def _run_adopt():
             rumps.notification(
                 "codebone",
-                "Reusing Earlier Scan",
-                "Comparing files with the saved index...",
+                "Merging Previous Scan",
+                "Comparing files and merging saved graph insights...",
             )
             try:
                 rep = self.service.adopt_scan(source_target)
@@ -2834,13 +2910,13 @@ class CodeBoneApp(rumps.App):
                 added = rep.get("added_count", 0)
                 rumps.notification(
                     "codebone",
-                    "Scan Complete!",
-                    f"{reused} files reused, {renamed} renamed, {modified} modified, {added} added.",
+                    "Scan Merged Successfully",
+                    f"{reused} files merged, {renamed} renamed, {modified} modified, {added} added.",
                 )
                 self._on_main(self._update_ui_state)
             except Exception as exc:
-                logger.exception("Error during scan adoption: %s", exc)
-                rumps.notification("codebone", "Reuse Failed", str(exc))
+                logger.exception("Error during scan merge: %s", exc)
+                rumps.notification("codebone", "Merge Failed", str(exc))
 
         threading.Thread(target=_run_adopt, daemon=True, name="codebone-user-adopt").start()
 

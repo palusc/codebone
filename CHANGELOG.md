@@ -3,14 +3,21 @@
 All notable changes to codebone will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Official release downloads on GitHub are the base `.a` versions (`1.0a`, `1.1a`, `1.2a`, `1.3a`, `1.4a`, `1.5a`, `1.6a`).
+Official release downloads on GitHub are the base `.a` versions (`1.0a`, `1.1a`, `1.2a`, `1.3a`, `1.4a`, `1.5a`, `1.6a`, `1.7a`).
 Incremental updates within each series are documented as distinct letter releases (`.b`, `.c`, `.d`, ...).
 
 ---
 
 ## [Unreleased]
 
+---
+
+## [1.7a] - 2026-10-09
+*Official release download on GitHub*
+
 ### Added
+- **True Hybrid Architecture**: Combines deterministic multi-language structural static scanning (Python, TS/JS, Go, Rust, Ruby, PHP, Java, C/C++) with local and BYOK LLM semantic synthesis. Added scanner process pipeline alongside LLM inference for rich symbol, dependency, and architecture indexing.
+- **Live Scan Controls**: Added pause, resume, and cancel controls for running indexing passes, featuring real-time ETA calculation and active phase indicators.
 - **Restructured Coding Agent Menu**: Organized into dedicated, clear submenus: `Models` (with active model selection, connection testing, direct API key editing, model management), `Use in Coding Agent` (individual agent routing for Claude Code, Codex, Cursor, Antigravity/Gemini, opencode), and `Endpoints & Credentials` (instant clipboard copy of Model ID, API Key, and base URLs).
 - **Categorized API Keys Settings**: Explicitly partitioned into `Map Agent (Cloud BYOK)` and `Coding Agent Models` for intuitive, centralized credential management.
 - **Resilient Agent Routing & Verification**: Eliminated silent auto-unchecking/reverting when toggling coding agents; transient connection checks or expired keys now issue non-intrusive diagnostic warnings without fighting the user or disabling preferences.
@@ -18,6 +25,7 @@ Incremental updates within each series are documented as distinct letter release
 - **Documented System Requirements & Thermal Profile**: Added comprehensive minimum and recommended specifications across macOS, Windows, and Linux, including battery-aware debouncing and passive thermal cooling guidelines.
 
 ### Changed
+- **Menu Hierarchy Flattening & UI Bugfixes**: Eliminated macOS Cocoa submenu overlap and stuck floating tooltips by flattening complex nested menus into accessible direct submenus and stripping problematic Cocoa tooltip handlers.
 - **Cleaner project navigation**: The three most recently scanned projects are full project menus directly in the main menu. `Projects` lists only the remaining folders, so no project is duplicated; every project menu contains Index, TLDR, map statistics, Finder and removal actions.
 - **Clear model roles**: Settings now separates codebone's **Map Model** from the optional **Coding Agent** model. MCP setup and common support destinations moved into **Help & Quick Links**.
 - **Safer recent-history cleanup**: Clear Recent Projects now explains that it only removes recent shortcuts and leaves workspace projects, saved maps and source folders untouched.

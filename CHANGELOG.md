@@ -4,7 +4,7 @@ All notable changes to codebone will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Official milestone releases are clean numbers (`1.0`, `1.5`, `1.6`, `1.7`, `1.8`).
-Incremental updates and development drops within each cycle use letter releases (`.a`, `.b`, `.c`, ...).
+Iterative updates and development drops within each release series use letter releases (`.a`, `.b`).
 
 ---
 
@@ -45,325 +45,144 @@ Incremental updates and development drops within each cycle use letter releases 
 
 ---
 
-## [1.7c] - 2026-10-09
-
-### Added
-- **Per-Project Auto-Scan Toggle**: Added `Auto-Scan on Save` setting directly in each project's menu. Defaults to enabled (`ON`), allowing developers to easily disable automatic scanning on file saves per project for high-churn or mass-editing sessions.
-- **Cancelable Scan Controls**: Enhanced scan management with instant `Cancel Scan` and `Pause Scanning`/`Resume Scanning` controls, featuring live `(Scanning…)` and ETA feedback in the macOS menu bar and header.
-
-### Changed
-- **Terminology Standardization ("Scan" instead of "Index")**: Standardized all UI labels, menus, alerts, and notifications from "Index / Indexing / Indexed" to "Scan / Scanning / Scanned" throughout the app and graph dashboard.
-
----
-
-## [1.7b] - 2026-10-09
-
-### Fixed
-- **App Startup & Menu Bar Crash**: Fixed `AttributeError: 'CodeBoneApp' object has no attribute 'open_map_item'` and missing `time` import that prevented codebone from starting up in the macOS menu bar after menu flattening.
-- **Menu Items Restoration**: Restored explicit instantiations for `open_map_item`, `documentation_item`, `feedback_item`, `check_updates_item`, and `uninstall_item`.
-- **Startup Regression Protection**: Added automated menu item initialization and structure test in test suite to prevent any future menu bar app launch failures.
-
----
-
 ## [1.7a] - 2026-10-09
-*Official release download on GitHub*
+*Hybrid Engine & Flattened UI Preview*
 
 ### Added
-- **True Hybrid Architecture**: Combines deterministic multi-language structural static scanning (Python, TS/JS, Go, Rust, Ruby, PHP, Java, C/C++) with local and BYOK LLM semantic synthesis. Added scanner process pipeline alongside LLM inference for rich symbol, dependency, and architecture indexing.
-- **Live Scan Controls**: Added pause, resume, and cancel controls for running indexing passes, featuring real-time ETA calculation and active phase indicators.
-- **Restructured Coding Agent Menu**: Organized into dedicated, clear submenus: `Models` (with active model selection, connection testing, direct API key editing, model management), `Use in Coding Agent` (individual agent routing for Claude Code, Codex, Cursor, Antigravity/Gemini, opencode), and `Endpoints & Credentials` (instant clipboard copy of Model ID, API Key, and base URLs).
-- **Categorized API Keys Settings**: Explicitly partitioned into `Map Agent (Cloud BYOK)` and `Coding Agent Models` for intuitive, centralized credential management.
-- **Resilient Agent Routing & Verification**: Eliminated silent auto-unchecking/reverting when toggling coding agents; transient connection checks or expired keys now issue non-intrusive diagnostic warnings without fighting the user or disabling preferences.
-- **Enhanced Codex Integration**: Dual injection of `OPENAI_BASE_URL` and `OPENAI_API_BASE` in Codex config for broader CLI and tool compatibility.
-- **Documented System Requirements & Thermal Profile**: Added comprehensive minimum and recommended specifications across macOS, Windows, and Linux, including battery-aware debouncing and passive thermal cooling guidelines.
-
-### Changed
-- **Menu Hierarchy Flattening & UI Bugfixes**: Eliminated macOS Cocoa submenu overlap and stuck floating tooltips by flattening complex nested menus into accessible direct submenus and stripping problematic Cocoa tooltip handlers.
-- **Cleaner project navigation**: The three most recently scanned projects are full project menus directly in the main menu. `Projects` lists only the remaining folders, so no project is duplicated; every project menu contains Index, TLDR, map statistics, Finder and removal actions.
-- **Clear model roles**: Settings now separates codebone's **Map Model** from the optional **Coding Agent** model. MCP setup and common support destinations moved into **Help & Quick Links**.
-- **Safer recent-history cleanup**: Clear Recent Projects now explains that it only removes recent shortcuts and leaves workspace projects, saved maps and source folders untouched.
+- **True Hybrid Architecture Preview**: Multi-language structural static scanning with local & BYOK LLM semantic synthesis.
+- **Resilient Agent Routing & Verification**: Non-intrusive diagnostic warnings for transient connection failures without disabling user preferences.
+- **Enhanced Codex Integration**: Dual injection of `OPENAI_BASE_URL` and `OPENAI_API_BASE` in Codex config for broader CLI compatibility.
+- **Thermal Profile & System Specs**: Battery-aware debouncing and passive thermal cooling guidelines documented.
 
 ---
 
 ## [1.6a] - 2026-10-08
-*Official release download on GitHub*
+*Release Automation & Milestone Consolidation*
 
 ### Added
-- **Release workflow automation & letter versioning**: Release pipeline gated to explicit tags (`v*`) or manual triggers to prevent automated release spam on main; letter-based version comparison in native in-app auto-updater (`src/updater.py`).
-- **Milestone consolidation**: Streamlined release hierarchy into full generations with granular `.b`, `.c`, `.d` interim tracking.
-
----
-
-## [1.5d] - 2026-09-26
-
-### Added
-- **Architectural Project TLDR via MCP, API and Projects menu**: `codebone_tldr` and `/codebone/tldr` synthesize a concise architectural executive summary of an entire indexed codebase—its core purpose, key domain boundaries, and structural architecture. The active project is the default; another workspace project can be selected by name.
-
----
-
-## [1.5c] - 2026-09-26
-
-### Changed
-- **`cb(query=...)` answers in two steps**: The first call returns a short offer: best file with line, confidence (high / medium / low), related files and tests, and the token size of the full answer. `whisper=true` on the same call returns the full ranked answer. A small change usually needs only the offer. HTTP: `offer=true` on `/codebone/context`.
+- **Release Workflow Automation**: Release pipeline gated to explicit tags (`v*`) or manual triggers with automated artifact verification.
+- **Letter-Based Auto-Updater**: Native comparison in `src/updater.py` with SHA256 checksum validation.
 
 ---
 
 ## [1.5b] - 2026-09-26
+*Ranked Search, 2-Step Offers & Project TLDR*
 
 ### Added
-- **Ranked word and meaning search**: `cb(query=...)` searches symbol names, comments, code lines, file names and summaries; the best 8 come back with a score and matching lines (`L79: ...`). A symbol name in the query also lists where it is defined and every other file:line that references it. Same-named files in several places collapse into one entry.
-- **Smart filters**: `domain` and `file` no longer hide hits when a query is given. They boost, and the result says how many hits are inside the domain and how many elsewhere. With no query, a domain that matches nothing lists the domains that exist.
-- **Asset filtering**: Image, font and other asset files are hidden unless `assets=true`; a note says how many more matched.
-- **One MCP tool for lookup**: `cb` now includes imports / imported by for each hit; `codebone_context` and `codebone_graph` are removed from the MCP server (the HTTP endpoints stay).
-- **Index freshness indicator**: Shown on every result: time since the last update and how many files changed on disk since.
+- **Architectural Project TLDR**: `codebone_tldr` tool synthesizing concise architectural executive summaries of indexed codebases via MCP and HTTP API.
+- **Ranked Search & Smart Filters**: `cb(query=...)` searches symbol names, comments, and summaries with confidence scoring; smart domain and asset filters.
+- **2-Step Context Offer**: Initial call returns lightweight ranked offer with confidence and token estimate; `whisper=true` expands the full context.
 
 ---
 
 ## [1.5a] - 2026-09-26
-*Official release download on GitHub*
+*Graph Performance & Star Topology*
 
 ### Changed
-- **The graph no longer fragments on big groups**: Up to 10 files sharing a table, route or event are still drawn pairwise; a larger group collapses into a star through its most-connected member, so every member stays linked at n-1 edges instead of the ~6n the peer window spent, and the global edge cap no longer truncates whatever comes after.
-- **Files nothing connects to are no longer islands**: Docs, config and assets that share no table, route or event with anyone get one directory link to a neighbour in their own folder.
-
----
-
-## [1.4c] - 2026-09-25
-
-### Added
-- **Multi-folder project workspace**: "Projects" replaces the single folder picker; multiple folders join the workspace and "Scan Project Now" walks them sequentially with rolling snapshots.
-- **Unified Settings**: Modules, Model, API Keys, MCP, Project and Scan Data unified into one Settings menu.
-
-### Changed
-- **Pruned scan trees**: `node_modules`, `.git`, virtualenvs and `dist` are pruned from indexing.
-- **Graph spatial layout**: Jittered-grid initialization with capped per-tick speed preventing empty graph viewports.
+- **Optimized Graph Density**: Large file groups sharing entities collapse into star topologies around central structural hubs, preventing edge budget exhaustion.
+- **Neighbor Linking for Standalone Files**: Unconnected config and asset files link to nearest folder neighbours to eliminate isolated islands in the graph.
 
 ---
 
 ## [1.4b] - 2026-09-25
+*Multi-Folder Workspace & Deepening Maps*
 
-### Fixed
-- **Scan adoption from MCP clients**: Paths travel under `scan_path`; the `/pug/` alias fallback only fires when the route itself is missing.
-- **Template route depths**: Template fetches keep their depth (`/api/users/[*]/posts`), and DDL/`.sql` tables are recognised without phantom entries.
-- **Error tolerance**: Linking a project after startup serves refreshed view; Test Connection and Update Installation tolerate truncated error bodies.
+### Added
+- **Multi-Folder Project Workspace**: Support for multiple project folders in workspace with sequential indexing and rolling snapshots.
+- **Dynamic Map Deepening**: Call edges, import edges, SQL tables, and Supabase references folded into results at query time.
+- **Unified Settings Window**: Consolidated modules, model configuration, API keys, and workspace management into a unified settings interface.
 
 ---
 
 ## [1.4a] - 2026-09-25
-*Official release download on GitHub*
+*Call Chains & Route Tracing*
 
 ### Added
-- **Dynamic map deepening at query time**: Sources are re-read when context is requested (`src/imports.py: source_facts`): import edges, `fetch('/api/...')` call edges to route handlers, SQL DDL and Supabase `.from('table')` references, file roles (`route POST /api/subs`, `page /subs`) and a one-line content record for files without a stored summary are folded into the rows at read time. Existing indexes pick this up on the next query.
-- **Call chains in context and links**: Search results and `/codebone/links` show `Calls: /api/subs -> app/api/subs/route.ts (tables: customers)`; the graph draws call edges solid green and import edges dashed grey.
-
----
-
-## [1.3j] - 2026-09-24
-
-### Added
-- **Import graph edges**: Files connected through Python and JS/TS imports (`src/imports.py`) in addition to shared entities.
-
----
-
-## [1.3i] - 2026-09-24
-
-### Added
-- **Local translation bridge**: Direct Anthropic ↔ OpenAI message translation bridge allowing Claude Code to speak to any OpenAI-compatible module.
-
----
-
-## [1.3h] - 2026-09-24
-
-### Added
-- **OpenRouter integration**: Native support for OpenRouter across Cloud BYOK and Modules presets.
-
----
-
-## [1.3g] - 2026-09-24
-
-### Added
-- **Graph Community Clustering**: `Storage.communities()` runs Louvain modularity-based community detection (via `networkx`) over the co-occurrence graph; clusters are labelled after their highest-degree structural hub.
-
----
-
-## [1.3f] - 2026-09-24
-
-### Changed
-- **Lightweight delta updates**: Published `*-update.zip` strips the ~490 MB base model, saving bandwidth and disk writes on code updates.
-- **Full file coverage**: Assets, lockfiles, images, binaries and archives catalogued with size and extension tags.
-
-### Fixed
-- **Connectivity reporting**: Fix under-reported node and connection counts by including domain-shared edges.
-
----
-
-## [1.3e] - 2026-09-24
-
-### Changed
-- **Grouped Settings**: Model moved into Settings, submenus for "Project" and "Scan Data", release race condition fixes.
-
----
-
-## [1.3d] - 2026-09-24
-
-### Added
-- **Modules switch row**: Dedicated master on/off switch row in the menu bar instead of nested checkboxes.
-
----
-
-## [1.3c] - 2026-09-24
-
-### Fixed
-- **Routing stabilization**: Fix modules getting stuck routing Claude Code/opencode off their normal API.
-- **Curated release notes**: Human-curated changelog sections used in release notifications.
+- **Live Call Chains**: Visual call edges from API endpoints to backend route handlers and database tables.
+- **Pruned Scan Trees**: Automatic exclusion of `node_modules`, `.git`, virtualenvs, and `dist` build folders.
 
 ---
 
 ## [1.3b] - 2026-09-24
+*Graph Intelligence, Bridges & OpenRouter*
 
 ### Added
-- **Relaunch detection**: Launching an already running instance brings its menu forward instead of exiting silently.
-- **Release CI automation**: GitHub Actions release pipeline building signed DMGs and updating Homebrew formulas.
+- **Import Graph Edges**: Cross-file dependency edges for Python and JS/TS imports.
+- **Graph Community Clustering**: Louvain modularity clustering over co-occurrence graphs with structural hub labels.
+- **Local Translation Bridge**: Anthropic ↔ OpenAI message translation bridge for multi-agent CLI interoperability.
+- **OpenRouter Integration**: Native support for OpenRouter in Cloud BYOK and module presets.
+- **Lightweight Delta Updates**: Delta update packages stripping base model files for instant bandwidth-friendly updates.
 
 ---
 
 ## [1.3a] - 2026-09-24
-*Official release download on GitHub*
+*Modules Library & Multi-Agent Routing*
 
 ### Added
-- **Modules model library**: Model APIs (preset for MiMo V2.6 Pro, or any Anthropic- or OpenAI-format endpoint) with per-app routing switches. Claude Code and opencode are configured directly with keys stored in macOS Keychain.
-- **Reliable indexing & compact context**: Incremental cooperative scans with per-file locks; hardened local API with DNS rebinding protection and CORS guards.
-- **In-app Uninstaller**: Settings > Uninstall codebone... cleanly removes application, data, models, logs, caches, preferences, login items and MCP client entries.
-
----
-
-## [1.2i] - 2026-09-23
-
-### Added
-- **Native Mach-O launcher**: Native launcher binary ensuring menu bar icon visibility and macOS Gatekeeper compatibility.
-- **Reopen handler**: Application reopen handler support.
-
----
-
-## [1.2h] - 2026-09-23
-
-### Added
-- **Direct `cb` tool shortcut**: Established concise MCP tool for LLM context queries and agent rules.
-
----
-
-## [1.2g] - 2026-09-23
-
-### Added
-- **Robust installer preflight**: 8-point dependency check verifying Python >= 3.10, Homebrew, CLT, cmake, git, curl, Node.js with automated fallbacks.
-
----
-
-## [1.2f] - 2026-09-23
-
-### Added
-- **Multi-client MCP auto-registration**: Automatic registration for Gemini / Antigravity IDE alongside Claude Desktop and Cursor.
-- **Setup banner**: Initial-days setup ping banner.
-
----
-
-## [1.2e] - 2026-09-23
-
-### Added
-- **Full Disk Access automation**: Automatic preflight check with direct link to macOS Privacy & Security preferences.
-
----
-
-## [1.2d] - 2026-09-23
-
-### Added
-- **Recent Projects history**: 1-click project switching in the main menu; expanded README FAQ section.
-
----
-
-## [1.2c] - 2026-09-23
-
-### Fixed
-- **Bundle code signing**: Resolved bundle symlinks and codesigned DMG/ZIP archives; NSOpenPanel runloop dismissal fix.
+- **Modules Model Library**: Pluggable models (MiMo V2.6 Pro, local/cloud endpoints) with per-app routing switches and macOS Keychain storage.
+- **In-App Uninstaller**: Clean removal of application, models, caches, and LaunchAgent plists from Settings.
+- **Relaunch Detection**: Smart single-instance management bringing existing menu forward.
+- **Hardened Local API**: DNS rebinding protection and strict CORS guards.
 
 ---
 
 ## [1.2b] - 2026-09-23
+*Multi-Client MCP Ecosystem & Native Launcher*
 
 ### Added
-- **Zero-config MCP setup**: `codebone-mcp` npm package published for running the MCP bridge via `npx -y codebone-mcp`.
+- **Zero-Config MCP Package**: `codebone-mcp` on npm allowing instant bridge invocation via `npx -y codebone-mcp`.
+- **Multi-Client MCP Auto-Registration**: Automatic registration for Gemini / Antigravity IDE, Claude Desktop, and Cursor.
+- **Native Mach-O Launcher**: Standalone binary ensuring instant menu bar icon visibility and Gatekeeper compatibility.
+- **Concise `cb` MCP Tool**: Streamlined context query tool for LLM agent rules.
+- **Automated Dependency Preflight**: 8-point system check (Python, Homebrew, CLT, cmake, git, Node.js).
 
 ---
 
 ## [1.2a] - 2026-09-23
-*Official release download on GitHub*
+*Live Graph UI, In-App Updater & macOS Integration*
 
 ### Added
-- **In-app auto-updater**: Automated check, download, codesign verification, atomic bundle swap and restart.
-- **Built-in feedback & bug reporting**: Menu bar dialog and modal in Live Graph UI with automated credential redaction.
-- **Live Graph UI redesign**: Slate-and-iris dark glassmorphism, category filter pills, hover tooltips, interactive inspector drawer.
-- **Apple SF Symbols**: Native macOS icons throughout the menu bar and application controls.
-- **macOS Full Disk Access**: TCC permission probing and system settings guidance.
-
----
-
-## [1.1d] - 2026-09-22
-
-### Fixed
-- **Live Graph resilience**: Fix infinite loading spinner, add knowledge graph tile in header, prominent "Scan Project Now" button.
-
----
-
-## [1.1c] - 2026-09-22
-
-### Added
-- **Tailscale-style popover header**: Toggle switch, status indicator dot, active model selector in Settings, and dedicated SF Symbols.
+- **Live Graph UI Redesign**: Slate-and-iris dark glassmorphism interface with category filter pills, tooltips, and interactive inspector drawer.
+- **Native macOS Auto-Updater**: Automated update checking, downloading, codesign validation, and atomic bundle replacement.
+- **SF Symbols & Full Disk Access Automation**: Native AppKit icons and automated privacy preflight checks.
+- **Recent Projects History**: 1-click project switching directly in the main menu bar.
 
 ---
 
 ## [1.1b] - 2026-09-22
+*Status Popover & Live Graph Polish*
 
 ### Added
-- **Native Cocoa menu bar**: 100% native AppKit interface with functional Settings, streamlined stats and clean header.
+- **Tailscale-Style Popover Header**: Master toggle switch, live status indicator dot, active model selector, and native symbols.
+- **Live Graph Resilience**: Infinite loading spinner fixes and prominent "Scan Project Now" trigger.
 
 ---
 
 ## [1.1a] - 2026-09-22
-*Official release download on GitHub*
+*Apple Silicon Local Model & Native Cocoa Menu Bar*
 
 ### Added
-- **Qwen 0.5B unification**: Standardized local model architecture with sub-second inference and ~390 MB RAM footprint.
-- **Project baseline overview**: Initial load time estimation and live ETA progress tracking for large codebases.
-
----
-
-## [1.0d] - 2026-09-22
-
-### Added
-- **Deep Scan Mode**: Background 7B model re-analysis option and live menu bar dashboard.
-
----
-
-## [1.0c] - 2026-09-22
-
-### Changed
-- **Rebranding**: Package, app bundle, MCP tools, strings, and LaunchAgent plists standardized from PUG to CodeBone.
+- **Qwen 0.5B Architecture Unification**: Sub-second local inference with ~390 MB RAM footprint on Apple Silicon Metal.
+- **Native Cocoa Menu Bar**: 100% native AppKit interface with settings, live stats, and ETA calculation.
 
 ---
 
 ## [1.0b] - 2026-09-22
+*Deep Scan Mode & CodeBone Rebranding*
 
-### Fixed
-- **Day-One Patch**: Live Graph UI, Level-of-Detail context filtering, batch burst protection, WAL+RLock, .gitignore respect, move detection.
+### Added
+- **Deep Scan Mode**: Background 7B model re-analysis option with live menu bar progress reporting.
+- **Brand Standardization**: Application bundle, CLI, MCP tools, and plists unified under the CodeBone name.
+- **Day-One Performance Patch**: Level-of-detail filtering, WAL+RLock concurrency, and `.gitignore` respect.
 
 ---
 
 ## [1.0a] - 2026-09-22
-*Official release download on GitHub*
+*Initial Launch — Real-Time Architecture Intelligence*
 
 ### Added
-- **24/7 background engine**: macOS menu bar assistant watching project files on save with battery-aware debouncing (0.5s AC, 15s battery).
-- **Apple Silicon Metal GPU inference**: Local LLM inference via `llama-cpp-python` with Metal acceleration.
+- **24/7 Background Engine**: macOS menu bar assistant watching project files on save with battery-aware debouncing.
+- **Apple Silicon Metal GPU Inference**: Local LLM inference via `llama-cpp-python` with Metal acceleration.
 - **Semantic System Graph**: Real-time mapping of business domains and cross-module relationships.
-- **Model Context Protocol**: MCP server for Claude Desktop, Cursor, Gemini and Codex.
-- **Security & Sandboxing**: Untrusted source wrapped in isolated XML containers with anti-jailbreak directives.
+- **Model Context Protocol (MCP)**: Native server for Claude Desktop, Cursor, Gemini, and Codex.
+- **Secure Sandboxing**: Isolated XML container parsing with anti-jailbreak directives.

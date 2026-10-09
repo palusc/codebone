@@ -7,21 +7,24 @@ from src.updater import parse_version, check_for_updates
 
 class TestUpdater(unittest.TestCase):
     def test_parse_version(self):
-        self.assertEqual(parse_version("1.2.0"), (1, 2, 0))
-        self.assertEqual(parse_version("v1.2.0"), (1, 2, 0))
-        self.assertEqual(parse_version("V2.0.1"), (2, 0, 1))
-        self.assertEqual(parse_version("1.3"), (1, 3, 0))
-        self.assertEqual(parse_version("1.2.0-beta.1"), (1, 2, 0))
+        self.assertEqual(parse_version("1.2.0"), (1, 2, 0, 999))
+        self.assertEqual(parse_version("v1.2.0"), (1, 2, 0, 999))
+        self.assertEqual(parse_version("V2.0.1"), (2, 0, 1, 999))
+        self.assertEqual(parse_version("1.3"), (1, 3, 0, 999))
+        self.assertEqual(parse_version("1.2.0-beta.1"), (1, 2, 0, 999))
         self.assertTrue(parse_version("1.2.1") > parse_version("1.2.0"))
         self.assertTrue(parse_version("2.0.0") > parse_version("1.9.9"))
         self.assertFalse(parse_version("1.2.0") > parse_version("1.2.0"))
-        self.assertEqual(parse_version("1.2a"), (1, 2, 0))
-        self.assertEqual(parse_version("1.2b"), (1, 2, 1))
+        self.assertEqual(parse_version("1.2a"), (1, 2, 0, 1))
+        self.assertEqual(parse_version("1.2b"), (1, 2, 0, 2))
         self.assertTrue(parse_version("1.2b") > parse_version("1.2a"))
         self.assertTrue(parse_version("1.3a") > parse_version("1.2b"))
-        self.assertEqual(parse_version("1.7a"), (1, 7, 0))
-        self.assertEqual(parse_version("1.7b"), (1, 7, 1))
+        self.assertEqual(parse_version("1.7a"), (1, 7, 0, 1))
+        self.assertEqual(parse_version("1.7b"), (1, 7, 0, 2))
         self.assertTrue(parse_version("1.7b") > parse_version("1.7a"))
+        self.assertTrue(parse_version("1.7") > parse_version("1.7c"))
+        self.assertTrue(parse_version("1.8a") > parse_version("1.7"))
+        self.assertTrue(parse_version("1.8") > parse_version("1.8a"))
 
     @patch("urllib.request.urlopen")
     def test_check_for_updates_found(self, mock_urlopen):

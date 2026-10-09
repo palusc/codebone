@@ -721,21 +721,8 @@ class CodeBoneApp(rumps.App):
         container = NSView.alloc().initWithFrame_(NSRect(NSPoint(0, 0), NSSize(w, h)))
         delegate = HeaderActionDelegate.alloc().initWithApp_(self)
 
-        # 1. Top row title: icon + "codebone" (bold 15pt) + LED status dot
-        icon_path = _get_icon(ICON_ACTIVE)
-        bone_img = None
-        if Path(icon_path).exists():
-            bone_img = NSImage.alloc().initWithContentsOfFile_(icon_path)
-        if not bone_img:
-            bone_img = NSImage.imageWithSystemSymbolName_accessibilityDescription_("point.3.connected.trianglepath.dotted", None)
-        if bone_img:
-            bone_img.setSize_(NSSize(16, 16))
-            bone_img.setTemplate_(True)
-            logo_iv = NSImageView.alloc().initWithFrame_(NSRect(NSPoint(14, 49), NSSize(16, 16)))
-            logo_iv.setImage_(bone_img)
-            container.addSubview_(logo_iv)
-
-        title_lbl = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(34, 47), NSSize(180, 20)))
+        # 1. Top row title: "codebone" (bold 15pt) + LED status dot
+        title_lbl = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(14, 47), NSSize(200, 20)))
         title_lbl.setStringValue_("codebone")
         title_lbl.setFont_(NSFont.boldSystemFontOfSize_(15.0))
         title_lbl.setTextColor_(NSColor.labelColor())

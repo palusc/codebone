@@ -26,3 +26,22 @@ def test_sql_tables_mixed_ddl_ctas_and_prose():
     assert {"audit_log", "report", "mv_totals", "tmp_batch", "events", "invoices"} <= set(got)
     # prose never does: "backups" would match a bare " AS " alternation, stopwords are dropped
     assert not ({"backups", "for", "the", "public"} & set(got))
+
+
+def test_app_structure_and_menu_items(monkeypatch):
+    from unittest.mock import MagicMock
+    import src.app as app_mod
+    import src.server as server_mod
+    import src.service as service_mod
+    monkeypatch.setattr(app_mod.rumps, "Timer", MagicMock())
+    monkeypatch.setattr(server_mod.ServerThread, "start", MagicMock())
+    monkeypatch.setattr(service_mod.CodeBoneService, "start", MagicMock())
+    monkeypatch.setattr(service_mod.CodeBoneService, "ensure_builtin_model", MagicMock())
+    app = app_mod.CodeBoneApp()
+    assert hasattr(app, "open_map_item")
+    assert hasattr(app, "documentation_item")
+    assert hasattr(app, "feedback_item")
+    assert hasattr(app, "check_updates_item")
+    assert hasattr(app, "uninstall_item")
+    assert hasattr(app, "help_menu")
+    assert hasattr(app, "scan_data_menu")

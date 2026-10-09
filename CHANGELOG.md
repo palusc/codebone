@@ -12,6 +12,15 @@ Incremental updates within each series are documented as distinct letter release
 
 ---
 
+## [1.7b] - 2026-10-09
+
+### Fixed
+- **App Startup & Menu Bar Crash**: Fixed `AttributeError: 'CodeBoneApp' object has no attribute 'open_map_item'` and missing `time` import that prevented codebone from starting up in the macOS menu bar after menu flattening.
+- **Menu Items Restoration**: Restored explicit instantiations for `open_map_item`, `documentation_item`, `feedback_item`, `check_updates_item`, and `uninstall_item`.
+- **Startup Regression Protection**: Added automated menu item initialization and structure test in test suite to prevent any future menu bar app launch failures.
+
+---
+
 ## [1.7a] - 2026-10-09
 *Official release download on GitHub*
 

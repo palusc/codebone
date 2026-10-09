@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -612,6 +613,24 @@ class CodeBoneApp(rumps.App):
             None,
             self.reset_map_item,
         ])
+
+        self.open_map_item = rumps.MenuItem("Open Knowledge Map...", callback=self.view_live_graph)
+        _set_symbol_icon(self.open_map_item, "point.3.connected.trianglepath.dotted")
+
+        self.documentation_item = rumps.MenuItem(
+            "Documentation...",
+            callback=lambda _: self.open_url("https://github.com/palusc/codebone"),
+        )
+        _set_symbol_icon(self.documentation_item, "book")
+
+        self.feedback_item = rumps.MenuItem("Feedback & Bug Report...", callback=self.open_feedback_dialog)
+        _set_symbol_icon(self.feedback_item, "exclamationmark.bubble")
+
+        self.check_updates_item = rumps.MenuItem("Check for Updates...", callback=self.check_updates)
+        _set_symbol_icon(self.check_updates_item, "arrow.triangle.2.circlepath")
+
+        self.uninstall_item = rumps.MenuItem("Uninstall codebone...", callback=self.confirm_uninstall)
+        _set_symbol_icon(self.uninstall_item, "trash")
 
         self.help_menu = rumps.MenuItem("Help & Quick Links")
         _set_symbol_icon(self.help_menu, "questionmark.circle")

@@ -1670,6 +1670,13 @@ class CodeBoneApp(rumps.App):
             pass
         item.add(info_item)
 
+        tldr_item = rumps.MenuItem(
+            "TLDR...",
+            callback=lambda _, target=project: self._run_project_tldr(target),
+        )
+        _set_symbol_icon(tldr_item, "text.quote")
+        item.add(tldr_item)
+
         item.add(None)
         scan_item = rumps.MenuItem(
             "Scan",
@@ -1677,13 +1684,6 @@ class CodeBoneApp(rumps.App):
         )
         _set_symbol_icon(scan_item, "arrow.clockwise")
         item.add(scan_item)
-
-        tldr_item = rumps.MenuItem(
-            "TLDR",
-            callback=lambda _, target=project: self._run_project_tldr(target),
-        )
-        _set_symbol_icon(tldr_item, "text.quote")
-        item.add(tldr_item)
 
         auto_scan_on = self.config.is_auto_scan_enabled(project)
         auto_scan_item = rumps.MenuItem(
@@ -1883,13 +1883,12 @@ class CodeBoneApp(rumps.App):
             message=msg,
             ok="Open in Finder",
             cancel="Close",
-            other="Copy Path",
+            other="View TLDR",
         )
         if res == 1:
             self.reveal_project(p)
         elif res == -1:
-            copy_to_clipboard(path_str)
-            rumps.notification("codebone", "Path Copied", path_str)
+            self._run_project_tldr(p)
 
     def reveal_project(self, p: Path):
         try:

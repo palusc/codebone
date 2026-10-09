@@ -713,6 +713,9 @@ class CodeBoneApp(rumps.App):
         self.check_updates_item = rumps.MenuItem("Check for Updates...", callback=self.check_updates)
         _set_symbol_icon(self.check_updates_item, "arrow.triangle.2.circlepath")
 
+        self.about_item = rumps.MenuItem("About codebone...", callback=self.show_about)
+        _set_symbol_icon(self.about_item, "info.circle")
+
         self.uninstall_item = rumps.MenuItem("Uninstall codebone...", callback=self.confirm_uninstall)
         _set_symbol_icon(self.uninstall_item, "trash")
 
@@ -726,13 +729,12 @@ class CodeBoneApp(rumps.App):
             self.view_logs_item,
             self.full_disk_access_item,
             None,
+            self.feedback_item,
             self.check_updates_item,
+            self.about_item,
             None,
             self.uninstall_item,
         ])
-
-        self.about_item = rumps.MenuItem("About codebone...", callback=self.show_about)
-        _set_symbol_icon(self.about_item, "info.circle")
 
         self.quit_item = rumps.MenuItem("Quit codebone", callback=self.quit_app)
         _set_symbol_icon(self.quit_item, "power")
@@ -753,8 +755,6 @@ class CodeBoneApp(rumps.App):
             self.scan_data_menu,
             self.help_menu,
             None,
-            self.feedback_item,
-            self.about_item,
             self.quit_item,
         ]
 

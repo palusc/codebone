@@ -20,14 +20,20 @@ Echtes Hybrid-Scanning aus statischem Multi-Language AST-Scan und LLM-Synthese e
 
 ### Added
 - **True Hybrid Scan Engine**: Kombiniert deterministisches statisches Multi-Language AST-Scanning (Python, TS/JS, Go, Rust, Ruby, PHP, Java, C/C++) mit lokaler und BYOK-LLM-Semantik für tiefgehendes Symbol-, Abhängigkeits- und Architektur-Indexing.
-- **Aus 1.7c – Cancelable & Resumable Scanning**: Erweiterte Scan-Steuerung mit sofortigem `Cancel Scan` sowie `Pause Scanning`/`Resume Scanning` inklusive Live-ETA-Berechnung und Phasenanzeigen.
-- **Aus 1.7c – Per-Project Auto-Scan Toggle**: Neuer `Auto-Scan on Save`-Schalter direkt in jedem Projektmenü (`ON` by default), um automatisches Re-Scanning bei Massenbearbeitungen temporär abzuschalten.
-- **Aus 1.7b – Re-architected Project TL;DR**: Vollständig überarbeitete Projekt-Zusammenfassungen ohne Prompt-Echo für kleine lokale Modelle; automatische Anhänge für **💻 Tech Stack & Scale**, **🏛️ Key Domains** und **📊 Entities**.
-- **Aus 1.7b – Interaktiver TL;DR Dialog**: Integrierter **Copy TLDR**-Button (1-Klick Markdown-Kopie ins Clipboard mit macOS-Mitteilung) und **Open Map**-Verknüpfung direkt in den Architektur-Graphen.
-- **Aus 1.7a – 1-Klick Model-Synchronisation**: Automatische Erkennung bereits konfigurierter Cloud-BYOK-Schlüssel im Map Agent mit 1-Klick-Übernahme in die Coding Agents.
-- **Aus 1.7a – Erweiterte Coding Presets**: Presets für Claude (Anthropic), OpenAI, OpenRouter und Local Server (Ollama) neben MiMo V2.6 Pro.
-- **Aus 1.7a – Dediziertes Agent-Routing**: Klare Routing-Schalter für Claude Code, Cursor, Codex, Gemini/Antigravity und opencode.
-- **Aus 1.7a – Kategoriertes API-Key Management**: Saubere Trennung in `Map Agent (Cloud BYOK)` und `Coding Agent Models`.
+
+**a:**
+- **1-Klick Model-Synchronisation**: Automatische Erkennung bereits konfigurierter Cloud-BYOK-Schlüssel im Map Agent mit 1-Klick-Übernahme in die Coding Agents.
+- **Erweiterte Coding Presets**: Presets für Claude (Anthropic), OpenAI, OpenRouter und Local Server (Ollama) neben MiMo V2.6 Pro.
+- **Dediziertes Agent-Routing**: Klare Routing-Schalter für Claude Code, Cursor, Codex, Gemini/Antigravity und opencode.
+- **Kategoriertes API-Key Management**: Saubere Trennung in `Map Agent (Cloud BYOK)` und `Coding Agent Models`.
+
+**b:**
+- **Re-architected Project TL;DR**: Vollständig überarbeitete Projekt-Zusammenfassungen ohne Prompt-Echo für kleine lokale Modelle; automatische Anhänge für **💻 Tech Stack & Scale**, **🏛️ Key Domains** und **📊 Entities**.
+- **Interaktiver TL;DR Dialog**: Integrierter **Copy TLDR**-Button (1-Klick Markdown-Kopie ins Clipboard mit macOS-Mitteilung) und **Open Map**-Verknüpfung direkt in den Architektur-Graphen.
+
+**c:**
+- **Cancelable & Resumable Scanning**: Erweiterte Scan-Steuerung mit sofortigem `Cancel Scan` sowie `Pause Scanning`/`Resume Scanning` inklusive Live-ETA-Berechnung und Phasenanzeigen.
+- **Per-Project Auto-Scan Toggle**: Neuer `Auto-Scan on Save`-Schalter direkt in jedem Projektmenü (`ON` by default), um automatisches Re-Scanning bei Massenbearbeitungen temporär abzuschalten.
 
 ### Changed
 - **Abgeflachte Menüstruktur**: Beseitigung von Cocoa-Submenu-Überlagerungen und hängenden Tooltips durch übersichtliche Hauptmenüs.
@@ -36,8 +42,8 @@ Echtes Hybrid-Scanning aus statischem Multi-Language AST-Scan und LLM-Synthese e
 - **Direktes Projektmenü**: Die drei zuletzt gescannten Projekte sind direkte Menüs in der Hauptleiste.
 
 ### Fixed
-- **Aus 1.7b – Menüleisten-Startabsturz behoben**: Fehlende Menü-Instanziierungen und `time`-Import nach der Menüabflachung korrigiert; Absicherung durch automatisierte Regressionstests.
-- **Aus 1.7a – Resilientes Routing**: Transiente Verbindungsfehler deaktivieren ausgewählte Agenten nicht mehr automatisch.
+- **Menüleisten-Startabsturz behoben**: Fehlende Menü-Instanziierungen und `time`-Import nach der Menüabflachung korrigiert; Absicherung durch automatisierte Regressionstests.
+- **Resilientes Routing**: Transiente Verbindungsfehler deaktivieren ausgewählte Agenten nicht mehr automatisch.
 - **Verständliche Netzwerk-Meldungen**: Klare Fehlermeldungen im Auto-Updater bei unterbrochener Internetverbindung.
 
 ---
@@ -89,9 +95,14 @@ Vollautomatisierung der Release-Pipeline für GitHub Actions, Einführung des na
 
 ### Added
 - **GitHub Actions Release Pipeline**: Automatisierter Workflow zur Erstellung signierter macOS DMGs und ZIP-Archive bei Push von Versions-Tags (`v*`).
-- **Aus 1.6a – Nativer In-App Auto-Updater**: Robuste Versionsvergleichslogik in `src/updater.py` mit Unterstützung für Meilensteine und Buchstaben-Pre-Releases (`1.6a < 1.6b < 1.6`).
-- **Aus 1.6a – Prüfsummen-Validierung**: Automatische Erstellung und Verifikation von SHA256-Prüfsummen für alle Release-Artefakte.
-- **Aus 1.6b – Homebrew Formula Synchronisation**: Automatisches Update von Download-URL und Checksum in `Formula/codebone.rb`.
+
+**a:**
+- **Nativer In-App Auto-Updater**: Robuste Versionsvergleichslogik in `src/updater.py` mit Unterstützung für Meilensteine und Buchstaben-Pre-Releases (`1.6a < 1.6b < 1.6`).
+- **Prüfsummen-Validierung**: Automatische Erstellung und Verifikation von SHA256-Prüfsummen für alle Release-Artefakte.
+
+**b:**
+- **Homebrew Formula Synchronisation**: Automatisches Update von Download-URL und Checksum in `Formula/codebone.rb`.
+- **Release CI Automation**: GitHub Actions Pipeline zum Erstellen signierter DMG-Dateien und Bereitstellen der Release-Assets.
 
 ### Changed
 - **Gating von Releases**: Trennung von normalen `main`-Pushes und Veröffentlichungen; Releases werden ausschließlich durch explizite Tags ausgelöst.
@@ -127,14 +138,19 @@ Vollautomatisierung der Release-Pipeline für GitHub Actions, Einführung des na
 Skalierbare Graph-Performance für große Repositories durch Star-Topologien, Einführung semantischer Ranked Search und automatisierte Architektur-Zusammenfassungen via MCP.
 
 ### Added
-- **Aus 1.5c – Architectural Project TL;DR**: `codebone_tldr` MCP-Tool und `/codebone/tldr` HTTP-Endpoint für prägnante Architektur-Zusammenfassungen ganzer Repositories.
-- **Aus 1.5b – Ranked Search**: `cb(query=...)` durchsucht Symbolnamen, Kommentare und Codezeilen mit Konfidenz-Scoring (`high` / `medium` / `low`).
-- **Aus 1.5b – 2-Step Context Offer Protokoll**: Zweistufige Context-Bereitstellung; erste Anfrage liefert Trefferübersicht, `whisper=true` expandiert den vollständigen Token-Kontext.
-- **Aus 1.5b – Smarte Filter & Frischeanzeige**: Domänen- und Asset-Filterung (`assets=true`) sowie Anzeige der Aktualität des Graphen (`Index freshness indicator`).
-- **Aus 1.5a – Standalone File Linking**: Unverknüpfte Dokumentations- und Konfigurationsdateien werden an benachbarte Ordner gebunden, um isolierte Knoten zu vermeiden.
+**a:**
+- **Standalone File Linking**: Unverknüpfte Dokumentations- und Konfigurationsdateien werden an benachbarte Ordner gebunden, um isolierte Knoten zu vermeiden.
+- **Stern-Topologie im Graphen**: Große Entitätsgruppen kollabieren zu Stern-Topologien um zentrale Hubs, wodurch das Kanten-Budget nicht mehr erschöpft wird.
+
+**b:**
+- **Ranked Search**: `cb(query=...)` durchsucht Symbolnamen, Kommentare und Codezeilen mit Konfidenz-Scoring (`high` / `medium` / `low`).
+- **2-Step Context Offer Protokoll**: Zweistufige Context-Bereitstellung; erste Anfrage liefert Trefferübersicht, `whisper=true` expandiert den vollständigen Token-Kontext.
+- **Smarte Filter & Frischeanzeige**: Domänen- und Asset-Filterung (`assets=true`) sowie Anzeige der Aktualität des Graphen (`Index freshness indicator`).
+
+**c:**
+- **Architectural Project TL;DR**: `codebone_tldr` MCP-Tool und `/codebone/tldr` HTTP-Endpoint für prägnante Architektur-Zusammenfassungen ganzer Repositories.
 
 ### Changed
-- **Aus 1.5a – Stern-Topologie im Graphen**: Große Entitätsgruppen kollabieren zu Stern-Topologien um zentrale Hubs, wodurch das Kanten-Budget nicht mehr erschöpft wird.
 - **Konsolidiertes MCP-Tooling**: `cb` fasst Importe und Querverweise zusammen; Entfernung redundanter Einzel-Tools.
 
 ### Fixed
@@ -176,17 +192,20 @@ Skalierbare Graph-Performance für große Repositories durch Star-Topologien, Ei
 Unterstützung echter Multi-Folder Projekt-Workspaces und Vertiefung des System-Graphen durch dynamische Call-Chains und SQL/Route-Erkennung.
 
 ### Added
-- **Aus 1.4b – Multi-Folder Project Workspaces**: Verwaltung mehrerer Projektordner in einem gemeinsamen Workspace mit sequenziellem Hintergrund-Scan und rollierenden Snapshots.
-- **Aus 1.4a – Live Call Chains**: Visuelle Aufruf-Kanten von Frontend-Routen zu Backend-Handlern und Supabase/SQL-Tabellen (`Calls: /api/... -> ...`).
-- **Aus 1.4a – Dynamische Map-Vertiefung**: Re-Evaluation von Importen, DDL-Tabellen und Dateifunktionen zur Abfragezeit (`source_facts`).
-- **Aus 1.4b – Vereinheitlichtes Einstellungsfenster**: Zentrales Settings-Menü für Module, Modelle, API-Keys und Workspace-Pfade.
+**a:**
+- **Live Call Chains**: Visuelle Aufruf-Kanten von Frontend-Routen zu Backend-Handlern und Supabase/SQL-Tabellen (`Calls: /api/... -> ...`).
+- **Dynamische Map-Vertiefung**: Re-Evaluation von Importen, DDL-Tabellen und Dateifunktionen zur Abfragezeit (`source_facts`).
+
+**b:**
+- **Multi-Folder Project Workspaces**: Verwaltung mehrerer Projektordner in einem gemeinsamen Workspace mit sequenziellem Hintergrund-Scan und rollierenden Snapshots.
+- **Vereinheitlichtes Einstellungsfenster**: Zentrales Settings-Menü für Module, Modelle, API-Keys und Workspace-Pfade.
 
 ### Changed
-- **Aus 1.4a – Bereinigte Scan-Bäume**: Automatisches Pruning von `node_modules`, `.git`, Virtualenvs und Build-Verzeichnissen (`dist`).
+- **Bereinigte Scan-Bäume**: Automatisches Pruning von `node_modules`, `.git`, Virtualenvs und Build-Verzeichnissen (`dist`).
 - **Graph-Layout-Stabilität**: Jittered-Grid Initialisierung verhindert leere Viewports beim Öffnen des Graphen.
 
 ### Fixed
-- **Aus 1.4b – MCP Scan-Adoption**: Pfad-Auflösung unter `scan_path` stabilisiert und Routen-Tiefen beibehalten.
+- **MCP Scan-Adoption**: Pfad-Auflösung unter `scan_path` stabilisiert und Routen-Tiefen beibehalten.
 - **Fehlertoleranz bei Server-Antworten**: Verbindungstests tolerieren abgeschnittene Fehler-Bodys robuster.
 
 ---
@@ -219,20 +238,25 @@ Unterstützung echter Multi-Folder Projekt-Workspaces und Vertiefung des System-
 Bereitstellung einer flexiblen Modell-Bibliothek mit Keychain-Sicherheit, Multi-Agenten-Routing und fortgeschrittener Graph-Analyse mittels Louvain-Community-Erkennung.
 
 ### Added
-- **Aus 1.3a – Modul-Modell-Bibliothek**: Unterstützung für beliebige Anthropic- und OpenAI-kompatible Endpunkte (inkl. MiMo V2.6 Pro) mit Speicherung von Schlüsseln im macOS Keychain.
-- **Aus 1.3b – Import Graph Edges**: Statische Querverbindungen für Python- und TypeScript/JavaScript-Importe im Systemgraphen.
-- **Aus 1.3b – Louvain Community Clustering**: Modularity-basierte Community-Erkennung (`networkx`) über dem Co-Occurrence-Graphen mit Labeln nach strukturellen Hubs.
-- **Aus 1.3c – Lokale Translation Bridge**: Übersetzung zwischen Anthropic- und OpenAI-Nachrichtenformaten zur nahtlosen CLI-Anbindung.
-- **Aus 1.3c – OpenRouter Integration**: Native Unterstützung für OpenRouter in allen Modul- und Routing-Bereichen.
-- **Aus 1.3c – Leichtgewichtige Delta-Updates**: Bereitstellung von Update-ZIPs ohne Basis-Modell für minimale Downloadgrößen.
-- **Aus 1.3a – In-App Uninstaller**: Sauberes Entfernen von App, Modellen, Caches, Preferences und MCP-Einträgen direkt aus den Einstellungen.
+**a:**
+- **Modul-Modell-Bibliothek**: Unterstützung für beliebige Anthropic- und OpenAI-kompatible Endpunkte (inkl. MiMo V2.6 Pro) mit Speicherung von Schlüsseln im macOS Keychain.
+- **In-App Uninstaller**: Sauberes Entfernen von App, Modellen, Caches, Preferences und MCP-Einträgen direkt aus den Einstellungen.
+
+**b:**
+- **Import Graph Edges**: Statische Querverbindungen für Python- und TypeScript/JavaScript-Importe im Systemgraphen.
+- **Louvain Community Clustering**: Modularity-basierte Community-Erkennung (`networkx`) über dem Co-Occurrence-Graphen mit Labeln nach strukturellen Hubs.
+
+**c:**
+- **Lokale Translation Bridge**: Übersetzung zwischen Anthropic- und OpenAI-Nachrichtenformaten zur nahtlosen CLI-Anbindung.
+- **OpenRouter Integration**: Native Unterstützung für OpenRouter in allen Modul- und Routing-Bereichen.
+- **Leichtgewichtige Delta-Updates**: Bereitstellung von Update-ZIPs ohne Basis-Modell für minimale Downloadgrößen.
 
 ### Changed
 - **Modul-Schnellschalter**: Dedizierte Schalterreihe in der Menüleiste für Coding-Agenten.
 - **Gehärtete lokale Schnittstelle**: DNS-Rebinding-Schutz und strikte CORS-Guards auf allen lokalen Endpunkten.
 
 ### Fixed
-- **Aus 1.3c – Routing-Stabilisierung**: Behebung von Fehlern beim Umschalten von Claude Code und opencode.
+- **Routing-Stabilisierung**: Behebung von Fehlern beim Umschalten von Claude Code und opencode.
 - **Wiederanlauf-Erkennung**: Das erneute Starten einer laufenden Instanz bringt die Menüleiste in den Vordergrund, statt lautlos zu beenden.
 
 ---
@@ -275,20 +299,23 @@ Bereitstellung einer flexiblen Modell-Bibliothek mit Keychain-Sicherheit, Multi-
 Vollständige Überarbeitung der Live-Graph-Benutzeroberfläche auf modernes Dark-Glassmorphism, Zero-Config MCP-Verteilung über npm und tiefere macOS-Systemintegration.
 
 ### Added
-- **Aus 1.2a – Live Graph UI Redesign**: Modernes Slate-and-Iris Dark-Glassmorphism Interface mit Kategorie-Filter-Pills, Hover-Tooltips und interaktiver Detailansicht.
-- **Aus 1.2b – Zero-Config MCP Package**: Veröffentlichung von `codebone-mcp` auf npm für sofortige Bridge-Nutzung via `npx -y codebone-mcp`.
-- **Aus 1.2b – Multi-Client MCP Auto-Registration**: Automatische Konfiguration für Gemini / Antigravity IDE, Claude Desktop und Cursor.
-- **Aus 1.2b – Nativer Mach-O Launcher**: Eigenständiges Launcher-Binary zur garantierten Menüleisten-Sichtbarkeit und Gatekeeper-Kompatibilität.
-- **Aus 1.2b – Direktes `cb` MCP-Tool**: Schlankes Lookup-Tool zur Integration in Agenten-Systemprompts.
-- **Aus 1.2a – Nativer macOS Auto-Updater**: Vollautomatischer Download, Signaturprüfung und atomarer Bundle-Tausch mit Neustart.
-- **Aus 1.2a – Zuletzt geöffnete Projekte**: Schneller Projektwechsel direkt im Hauptmenü.
+**a:**
+- **Live Graph UI Redesign**: Modernes Slate-and-Iris Dark-Glassmorphism Interface mit Kategorie-Filter-Pills, Hover-Tooltips und interaktiver Detailansicht.
+- **Nativer macOS Auto-Updater**: Vollautomatischer Download, Signaturprüfung und atomarer Bundle-Tausch mit Neustart.
+- **Zuletzt geöffnete Projekte**: Schneller Projektwechsel direkt im Hauptmenü.
+
+**b:**
+- **Zero-Config MCP Package**: Veröffentlichung von `codebone-mcp` auf npm für sofortige Bridge-Nutzung via `npx -y codebone-mcp`.
+- **Multi-Client MCP Auto-Registration**: Automatische Konfiguration für Gemini / Antigravity IDE, Claude Desktop und Cursor.
+- **Nativer Mach-O Launcher**: Eigenständiges Launcher-Binary zur garantierten Menüleisten-Sichtbarkeit und Gatekeeper-Kompatibilität.
+- **Direktes `cb` MCP-Tool**: Schlankes Lookup-Tool zur Integration in Agenten-Systemprompts.
 
 ### Changed
 - **Apple SF Symbols**: Verwendung nativer AppKit-Symbole in der gesamten Menüleiste.
 - **Full Disk Access Automation**: Automatisierte TCC-Berechtigungsprüfung mit direkter Systemeinstellungs-Verlinkung.
 
 ### Fixed
-- **Aus 1.2a – Signatur- und Bundle-Struktur**: Behebung von Symlink-Problemen in signierten DMGs und NSOpenPanel Runloop-Korrekturen.
+- **Signatur- und Bundle-Struktur**: Behebung von Symlink-Problemen in signierten DMGs und NSOpenPanel Runloop-Korrekturen.
 
 ---
 
@@ -321,16 +348,20 @@ Vollständige Überarbeitung der Live-Graph-Benutzeroberfläche auf modernes Dar
 Reduzierung des RAM-Footprints auf Apple Silicon durch Standardisierung auf Qwen 0.5B und Bereitstellung eines rein nativen macOS AppKit Menüleisten-Erlebnisses.
 
 ### Added
-- **Aus 1.1a – Qwen 0.5B Modell-Standardisierung**: Sub-Sekunden-Inferenz mit Apple Silicon Metal-Beschleunigung und nur ca. 390 MB RAM-Bedarf.
-- **Aus 1.1a – Native Cocoa Menüleiste**: 100% native AppKit Benutzeroberfläche mit Status, Einstellungen und Live-ETA-Berechnung.
-- **Aus 1.1b – Tailscale-Style Popover Header**: Master-Kippschalter, Status-LED, Modellwähler und native Symbole im Popover.
-- **Aus 1.1a – Projekt-Baseline Übersicht**: Schätzung der Initial-Ladezeit und Fortschrittsanzeige für große Codebasen.
+**a:**
+- **Qwen 0.5B Modell-Standardisierung**: Sub-Sekunden-Inferenz mit Apple Silicon Metal-Beschleunigung und nur ca. 390 MB RAM-Bedarf.
+- **Native Cocoa Menüleiste**: 100% native AppKit Benutzeroberfläche mit Status, Einstellungen und Live-ETA-Berechnung.
+- **Projekt-Baseline Übersicht**: Schätzung der Initial-Ladezeit und Fortschrittsanzeige für große Codebasen.
+
+**b:**
+- **Tailscale-Style Popover Header**: Master-Kippschalter, Status-LED, Modellwähler und native Symbole im Popover.
+- **Live Graph Resilienz**: Schnelle Fehlerbehebung bei Lade-Animationen.
 
 ### Changed
 - **Verbesserte Dashboard-Bedienung**: Prominenter „Scan Project Now“-Button im Dashboard-Header.
 
 ### Fixed
-- **Aus 1.1b – Live Graph Resilienz**: Behebung unendlicher Lade-Spinner im Knowledge-Graph-Dashboard.
+- **Live Graph Resilienz**: Behebung unendlicher Lade-Spinner im Knowledge-Graph-Dashboard.
 
 ---
 
@@ -359,18 +390,21 @@ Reduzierung des RAM-Footprints auf Apple Silicon durch Standardisierung auf Qwen
 Markteinführung von codebone als 24/7 lokaler macOS-Hintergrundassistent mit Metal-GPU-Inferenz und nativer MCP-Schnittstelle für KI-Coding-Tools.
 
 ### Added
+**a:**
 - **24/7 Hintergrund-Engine**: Menüleisten-Assistent zur kontinuierlichen Dateiüberwachung mit batteriefreundlichem Debouncing (0.5s Netzteil, 15s Akku).
 - **Apple Silicon Metal GPU Inferenz**: Lokale Modell-Ausführung via `llama-cpp-python` mit Metal-Hardwarebeschleunigung.
 - **Semantischer System-Graph**: Echtzeit-Kartierung von Geschäftsdomänen, Querverbindungen und Modulabhängigkeiten.
 - **Model Context Protocol (MCP)**: Nativer Server für Claude Desktop, Cursor, Gemini und Codex.
-- **Aus 1.0b – Deep Scan Modus**: Hintergrund-Tiefenanalyse mit optionalem 7B-Modell und Live-Menüleisten-Dashboard.
 - **Sicherheits-Sandbox**: Quellcode-Kapselung in isolierten XML-Containern mit Anti-Prompt-Injection Direktiven.
+
+**b:**
+- **Deep Scan Modus**: Hintergrund-Tiefenanalyse mit optionalem 7B-Modell und Live-Menüleisten-Dashboard.
 
 ### Changed
 - **Marken-Harmonisierung**: Vereinheitlichung aller Bundles, LaunchAgent-Plists, CLI-Befehle und MCP-Namen unter „CodeBone“.
 
 ### Fixed
-- **Aus 1.0b – Day-One Stabilitäts-Patch**: Concurrency mit WAL+RLock, Level-of-Detail Filterung, Move-Erkennung und strikte `.gitignore`-Einhaltung.
+- **Day-One Stabilitäts-Patch**: Concurrency mit WAL+RLock, Level-of-Detail Filterung, Move-Erkennung und strikte `.gitignore`-Einhaltung.
 
 ---
 

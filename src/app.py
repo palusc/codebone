@@ -371,7 +371,6 @@ class FolderButton(NSTextField):
         self.cell().setLineBreakMode_(NSLineBreakByTruncatingTail)
         self.setFont_(NSFont.systemFontOfSize_(11.5))
         self.setTextColor_(NSColor.secondaryLabelColor())
-        self.setToolTip_("Click to reveal project folder in Finder")
 
         tracking = NSTrackingArea.alloc().initWithRect_options_owner_userInfo_(
             self.bounds(),
@@ -602,49 +601,20 @@ class CodeBoneApp(rumps.App):
         self.reset_map_item = rumps.MenuItem("Reset Knowledge Map", callback=self.reset_map)
         _set_symbol_icon(self.reset_map_item, "trash")
 
-        self.settings_menu = rumps.MenuItem("Settings")
-        _set_symbol_icon(self.settings_menu, "gearshape")
-
-        self.help_menu = rumps.MenuItem("Help & Quick Links")
-        _set_symbol_icon(self.help_menu, "questionmark.circle")
-
-        self.open_map_item = rumps.MenuItem("Open Knowledge Map...", callback=self.view_live_graph)
-        _set_symbol_icon(self.open_map_item, "point.3.connected.trianglepath.dotted")
-
-        self.documentation_item = rumps.MenuItem(
-            "Documentation...",
-            callback=lambda _: self.open_url("https://github.com/palusc/codebone"),
-        )
-        _set_symbol_icon(self.documentation_item, "book")
-
-        self.feedback_item = rumps.MenuItem("Feedback & Bug Report...", callback=self.open_feedback_dialog)
-        _set_symbol_icon(self.feedback_item, "exclamationmark.bubble")
-
-        self.check_updates_item = rumps.MenuItem("Check for Updates...", callback=self.check_updates)
-        _set_symbol_icon(self.check_updates_item, "arrow.triangle.2.circlepath")
-
-        self.uninstall_item = rumps.MenuItem("Uninstall codebone...", callback=self.confirm_uninstall)
-        _set_symbol_icon(self.uninstall_item, "trash")
-
-        # Settings is grouped into sub-sections so it's clear at a glance where a given
-        # setting lives, instead of one long flat list. The Finder jump is not repeated here:
-        # clicking the project name in the header reveals the folder (the one entry point).
-        self.project_settings_menu = rumps.MenuItem("Project")
-        _set_symbol_icon(self.project_settings_menu, "folder.badge.gearshape")
-        self.project_settings_menu.update([
-            self.adopt_scan_item,
-            self.copy_curl_item,
-        ])
-
         self.scan_data_menu = rumps.MenuItem("Scan Data")
         _set_symbol_icon(self.scan_data_menu, "externaldrive")
         self.scan_data_menu.update([
+            self.adopt_scan_item,
+            self.copy_curl_item,
+            None,
             self.export_scan_item,
             self.import_scan_item,
             None,
             self.reset_map_item,
         ])
 
+        self.help_menu = rumps.MenuItem("Help & Quick Links")
+        _set_symbol_icon(self.help_menu, "questionmark.circle")
         self.help_menu.update([
             self.mcp_setup_item,
             self.open_map_item,
@@ -652,20 +622,6 @@ class CodeBoneApp(rumps.App):
             None,
             self.view_logs_item,
             self.full_disk_access_item,
-        ])
-
-        # The two agent roles are adjacent and plainly named: Map Agent belongs to codebone; Coding Agent
-        # controls the optional model used by Claude Code/opencode. Setup links are kept in Help.
-        self.settings_menu.update([
-            self.brain_menu,
-            self.modules_menu,
-            None,
-            self.api_keys_menu,
-            None,
-            self.project_settings_menu,
-            self.scan_data_menu,
-            None,
-            self.help_menu,
             None,
             self.check_updates_item,
             None,
@@ -678,7 +634,8 @@ class CodeBoneApp(rumps.App):
         self.quit_item = rumps.MenuItem("Quit codebone", callback=self.quit_app)
         _set_symbol_icon(self.quit_item, "power")
 
-        # Reading order: live status → scan controls (when active) → latest work → all projects → settings → fixed footer.
+        # Flat, 1-level-deep menu hierarchy: live status → scan controls → projects → agents → data & help → footer.
+        # Eliminates nested submenus (no Level 3) so submenus can never overlap the main menu on macOS.
         self.menu = [
             self.header_item,
             self.pause_scan_item,
@@ -686,7 +643,12 @@ class CodeBoneApp(rumps.App):
             *self.quick_access_items,
             self.projects_menu,
             None,
-            self.settings_menu,
+            self.brain_menu,
+            self.modules_menu,
+            self.api_keys_menu,
+            None,
+            self.scan_data_menu,
+            self.help_menu,
             None,
             self.feedback_item,
             self.about_item,
@@ -746,7 +708,6 @@ class CodeBoneApp(rumps.App):
         card = CardRowView.alloc().initWithFrame_(NSRect(NSPoint(6, 5), NSSize(264, 32)))
         card.setTarget_(delegate)
         card.setAction_(objc.selector(delegate.cardClicked_, signature=b"v@:@"))
-        card.setToolTip_("Click to open interactive Live Graph in browser")
 
         # 3a. Clean Apple SF Symbol vector icon
         graph_img = _create_clean_graph_icon(18.0)
@@ -1279,18 +1240,16 @@ class CodeBoneApp(rumps.App):
         for item in self.quick_access_items:
             _set_symbol_icon(item, "clock.arrow.circlepath")
         _set_symbol_icon(self.projects_menu, "folder")
-        _set_symbol_icon(self.settings_menu, "gearshape")
+        _set_symbol_icon(self.brain_menu, "brain")
+        _set_symbol_icon(self.modules_menu, "square.stack.3d.up")
+        _set_symbol_icon(self.api_keys_menu, "key")
+        _set_symbol_icon(self.scan_data_menu, "externaldrive")
+        _set_symbol_icon(self.help_menu, "questionmark.circle")
         _set_symbol_icon(self.feedback_item, "exclamationmark.bubble")
         _set_symbol_icon(self.about_item, "info.circle")
         _set_symbol_icon(self.quit_item, "power")
 
-        # Settings submenu items
-        _set_symbol_icon(self.modules_menu, "square.stack.3d.up")
-        _set_symbol_icon(self.brain_menu, "brain")
-        _set_symbol_icon(self.api_keys_menu, "key")
-        _set_symbol_icon(self.project_settings_menu, "folder.badge.gearshape")
-        _set_symbol_icon(self.scan_data_menu, "externaldrive")
-        _set_symbol_icon(self.help_menu, "questionmark.circle")
+        # Submenu items
         _set_symbol_icon(self.open_map_item, "point.3.connected.trianglepath.dotted")
         _set_symbol_icon(self.documentation_item, "book")
         _set_symbol_icon(self.adopt_scan_item, "link")

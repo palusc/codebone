@@ -16,7 +16,7 @@ except ImportError:
     requests = None
 
 from .config import Config
-from .imports import JS_EXT, sql_tables, supabase_tables
+from .imports import JS_EXT, ROUTE_FILES, VERB_CONST, VERB_FN, _route_url, sql_tables, supabase_tables
 from .prompts import build_project_tldr_prompt, build_prompt, ground_analysis, sanitize_text
 
 logger = logging.getLogger("codebone.providers")
@@ -52,9 +52,9 @@ PATH_DOMAINS = [
 
 
 class Provider:
-    # Which analyser produced the last sniff() result: "model" or "regex" (the fallback). Stored per file so rows
-    # written without a model can be re-analysed once one is available.
-    last_source = "model"
+    # Which analyser produced the last sniff() result: "hybrid", "model" or "regex" (the fallback). Stored per file
+    # so rows written without a model can be re-analysed once one is available.
+    last_source = "hybrid"
 
     @property
     def ready(self) -> bool:
@@ -104,7 +104,7 @@ class Provider:
     def _model_result(self, out: str, file_path: str, code: str) -> str:
         if not out:
             return self._fallback_sniff(file_path, code)
-        self.last_source = "model"
+        self.last_source = "hybrid"
         return self._ground(out, file_path, code)
 
     def _ground(self, out: str, file_path: str, code: str) -> str:
@@ -156,8 +156,8 @@ class FastFallbackProvider(Provider):
         """Deterministic extraction straight from the code: tables, routes, events, domains, a one-line summary."""
         tables, routes, events = set(), set(), set()
 
-        # Database tables / models (Django, SQLAlchemy, Prisma, TypeORM, Mongoose, Sequelize, Rails, plain SQL)
-        for m in re.finditer(r"class\s+([A-Za-z0-9_]+)\s*\([^)]*(?:Model|Base|Document|Entity)[^)]*\)", code):
+        # Database tables / models across Python, TypeScript/JS, Go, Rust, Java, C#, PHP, Ruby, and SQL
+        for m in re.finditer(r"class\s+([A-Za-z0-9_]+)\s*\([^)]*(?:Model|Base|Document|Entity|SQLModel|Table)[^)]*\)", code):
             tables.add(m.group(1))
         for m in re.finditer(r"__tablename__\s*=\s*['\"]([^'\"]+)['\"]", code):
             tables.add(m.group(1))
@@ -168,28 +168,81 @@ class FastFallbackProvider(Provider):
             tables.add(m.group(1))
         for m in re.finditer(r"(?:mongoose\.model|sequelize\.define|\bTable)\(\s*['\"]([A-Za-z0-9_]+)['\"]", code):
             tables.add(m.group(1))
+        for m in re.finditer(r"(?:pgTable|sqliteTable|mysqlTable)\s*\(\s*['\"]([A-Za-z0-9_]+)['\"]", code):  # Drizzle ORM
+            tables.add(m.group(1))
         for m in re.finditer(r"create_table\s*[(:]?\s*['\":]?([A-Za-z0-9_]+)", code):
             tables.add(m.group(1))
-        for m in re.finditer(r"@Entity\([^)]*\)\s*(?:export\s+)?class\s+([A-Za-z0-9_]+)", code):
+        for m in re.finditer(r"@Entity\s*(?:\(\s*['\"]([A-Za-z0-9_]+)['\"]|[^)]*\))?\s*(?:export\s+|public\s+|open\s+|data\s+)?class\s+([A-Za-z0-9_]+)", code):
+            tables.add(m.group(1) or m.group(2))
+        for m in re.finditer(r"@Table\s*\(\s*(?:name\s*=\s*)?['\"]([A-Za-z0-9_]+)['\"]", code):  # JPA / Hibernate
+            tables.add(m.group(1))
+        for m in re.finditer(r"type\s+([A-Za-z0-9_]+)\s+struct\s*\{[^}]*\b(?:gorm\.Model|ent\.Schema)\b", code):  # Go GORM/Ent
+            tables.add(m.group(1))
+        for m in re.finditer(r"func\s*\([^)]+\)\s*TableName\s*\(\s*\)\s*string\s*\{\s*return\s*['\"]([A-Za-z0-9_]+)['\"]", code):  # Go TableName()
+            tables.add(m.group(1))
+        for m in re.finditer(r"table!\s*\{\s*([A-Za-z0-9_]+)\s*\(", code):  # Rust Diesel
+            tables.add(m.group(1))
+        for m in re.finditer(r"DbSet<\s*([A-Za-z0-9_]+)\s*>", code):  # C# Entity Framework
+            tables.add(m.group(1))
+        for m in re.finditer(r"\[Table\s*\(\s*['\"]([A-Za-z0-9_]+)['\"]", code):  # C# Table attr
+            tables.add(m.group(1))
+        for m in re.finditer(r"class\s+([A-Za-z0-9_]+)\s+extends\s+(?:Model|Authenticatable)\b", code):  # PHP Laravel
+            tables.add(m.group(1))
+        for m in re.finditer(r"protected\s+\$table\s*=\s*['\"]([A-Za-z0-9_]+)['\"]", code):  # PHP Eloquent $table
+            tables.add(m.group(1))
+        for m in re.finditer(r"class\s+([A-Za-z0-9_]+)\s*<\s*(?:ApplicationRecord|ActiveRecord::Base)\b", code):  # Ruby Rails
             tables.add(m.group(1))
 
         # API routes (a real route starts with "/", which keeps dict.get('key') out)
-        verbs = r"(get|post|put|delete|patch)"
+        verbs = r"(get|post|put|delete|patch|options|head)"
         for m in re.finditer(rf"@[A-Za-z_][\w.]*\.{verbs}\s*\(\s*['\"](/[^'\"]*)['\"]", code, re.IGNORECASE):
             routes.add(f"{m.group(1).upper()} {m.group(2)}")
-        for m in re.finditer(rf"\b(?:app|router|api|server)\.{verbs}\s*\(\s*['\"](/[^'\"]*)['\"]", code, re.IGNORECASE):
+        for m in re.finditer(rf"\b(?:app|router|api|server|fastify|hono|bot|routes)\.{verbs}\s*\(\s*['\"](/[^'\"]*)['\"]", code, re.IGNORECASE):
             routes.add(f"{m.group(1).upper()} {m.group(2)}")
         for m in re.finditer(r"@[A-Za-z_][\w.]*\.route\s*\(\s*['\"](/[^'\"]*)['\"]", code):
             routes.add(f"ROUTE {m.group(1)}")
-        for m in re.finditer(r"@(Get|Post|Put|Delete|Patch)Mapping\s*\(\s*(?:value\s*=\s*)?['\"](/[^'\"]*)['\"]", code):
+        for m in re.finditer(r"@(Get|Post|Put|Delete|Patch)Mapping\s*\(\s*(?:(?:value|path)\s*=\s*)?['\"](/[^'\"]*)['\"]", code):  # Spring
             routes.add(f"{m.group(1).upper()} {m.group(2)}")
-        for m in re.finditer(r"\.(?:HandleFunc|Handle)\(\s*\"(/[^\"]*)\"", code):
+        for m in re.finditer(r"@(?:Get|Post|Put|Delete|Patch)\s*\(\s*['\"](/[^'\"]*)['\"]", code):  # NestJS
             routes.add(f"ROUTE {m.group(1)}")
+        for m in re.finditer(r"\.(?:HandleFunc|Handle)\(\s*\"(/[^\"]*)\"", code):  # Go stdlib
+            routes.add(f"ROUTE {m.group(1)}")
+        for m in re.finditer(rf"\.(GET|POST|PUT|DELETE|PATCH)\s*\(\s*['\"](/[^'\"]*)['\"]", code):  # Go Gin/Fiber
+            routes.add(f"{m.group(1).upper()} {m.group(2)}")
+        for m in re.finditer(r"#\[(?:get|post|put|delete|patch)\s*\(\s*['\"](/[^'\"]*)['\"]", code, re.IGNORECASE):  # Rust Actix/Rocket
+            routes.add(f"ROUTE {m.group(1)}")
+        for m in re.finditer(r"\[Http(Get|Post|Put|Delete|Patch)\s*\(\s*['\"](/?[^'\"]+)['\"]", code):  # C# ASP.NET
+            p = m.group(2) if m.group(2).startswith("/") else "/" + m.group(2)
+            routes.add(f"{m.group(1).upper()} {p}")
+        for m in re.finditer(r"Route::(get|post|put|delete|patch)\s*\(\s*['\"](/?[^'\"]+)['\"]", code, re.IGNORECASE):  # PHP Laravel
+            p = m.group(2) if m.group(2).startswith("/") else "/" + m.group(2)
+            routes.add(f"{m.group(1).upper()} {p}")
 
-        # Events
-        for m in re.finditer(r"\b(?:emit|dispatch|trigger|publish)\s*\(\s*['\"]([^'\"]+)['\"]", code):
+        # Next.js App Router (app/api/.../route.ts)
+        norm_path = file_path.replace("\\", "/")
+        if norm_path.rsplit("/", 1)[-1] in ROUTE_FILES:
+            next_url = _route_url(norm_path)
+            if next_url:
+                for vm in VERB_FN.finditer(code):
+                    routes.add(f"{vm.group(1).upper()} {next_url}")
+                for vm in VERB_CONST.finditer(code):
+                    routes.add(f"{vm.group(1).upper()} {next_url}")
+
+        # Events & Queues (EventEmitters, Webhooks, Kafka, RabbitMQ, BullMQ, Celery, Redis)
+        for m in re.finditer(r"\b(?:emit|dispatch|trigger|publish|broadcast|produce)\s*\(\s*['\"]([^'\"]+)['\"]", code):
             events.add(m.group(1))
-        for m in re.finditer(r"\.on\(\s*['\"]([^'\"]+)['\"]", code):
+        for m in re.finditer(r"\.(?:on|addListener)\s*\(\s*['\"]([^'\"]+)['\"]", code):
+            events.add(m.group(1))
+        for m in re.finditer(r"\b\w*(?:queue|worker)\.add\s*\(\s*['\"]([^'\"]+)['\"]", code, re.IGNORECASE):  # BullMQ
+            events.add(m.group(1))
+        for m in re.finditer(r"topic:\s*['\"]([^'\"]+)['\"]", code):  # Kafka topic
+            events.add(m.group(1))
+        for m in re.finditer(r"@(?:Kafka|Rabbit)Listener\s*\(\s*(?:topics|queues)\s*=\s*['\"]([^'\"]+)['\"]", code):  # Spring Kafka/Rabbit
+            events.add(m.group(1))
+        for m in re.finditer(r"@(?:app|celery)\.task\s*(?:\([^)]*name\s*=\s*['\"]([^'\"]+)['\"])?", code):  # Celery
+            if m.group(1):
+                events.add(m.group(1))
+        for m in re.finditer(r"(?:redis|client)\.(?:publish|subscribe)\s*\(\s*['\"]([^'\"]+)['\"]", code):  # Redis pub/sub
             events.add(m.group(1))
 
         path_domains = [name for name, pattern in PATH_DOMAINS if pattern.search(file_path)]
@@ -205,7 +258,15 @@ class FastFallbackProvider(Provider):
 
         defs = re.findall(r"(?:def|class|function|const)\s+([A-Za-z0-9_]+)", code)
         consts = re.findall(r"^([A-Z][A-Z0-9_]{2,})\s*=", code, re.MULTILINE)
-        if defs:
+        if tables and routes:
+            summary = f"Declares {', '.join(sorted(tables)[:3])}; handles {', '.join(sorted(routes)[:3])}."
+        elif routes:
+            summary = f"Implements API endpoints: {', '.join(sorted(routes)[:4])}."
+        elif tables:
+            summary = f"Declares models: {', '.join(sorted(tables)[:4])}."
+        elif events:
+            summary = f"Dispatches events: {', '.join(sorted(events)[:4])}."
+        elif defs:
             summary = f"Defines {', '.join(defs[:6])}" + (f"; constants {', '.join(consts[:6])}" if consts else "") + "."
         else:
             summary = ""  # nothing worth saying (empty __init__.py, data file): keep it out of the context

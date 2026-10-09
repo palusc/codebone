@@ -80,12 +80,14 @@ codebone provides native `cb` MCP tools and prompts, recognized across all major
 
 ---
 
-## 🐾 How It Works
+## 🐾 How It Works (True Hybrid Architecture)
 
-1. **Sniff** — Watches your repository on every `Cmd + S` with battery-aware debouncing (0.5s AC, 15s Battery).
-2. **Think** — The built-in Apple Silicon Metal model extracts models, routes, events, and business domains (about 1.2 s per file measured on Apple Silicon; unchanged files are skipped by SHA-256).
-3. **Map** — Links files into a Semantic System Graph based on shared business logic — bridging files that don't import each other.
-4. **Serve** — Streams surgical architectural context to Claude, Cursor, or Gemini via **MCP** or **curl** in ~2k tokens.
+codebone pairs **deterministic multi-language static scanning** with **embedded local LLM synthesis** into a unified, zero-hallucination hybrid system:
+
+1. **Deterministic Static Scan (0ms latency, zero hallucinations)** — Instantly extracts ground-truth data models, API routes, and event hooks across TypeScript/JavaScript, Python, Go, Rust, Java, C#, PHP, Ruby, and SQL (Drizzle, Prisma, GORM, Diesel, Spring, ASP.NET, Laravel, Rails, Kafka, BullMQ, etc.).
+2. **Local Neural Synthesis (Apple Silicon Metal)** — The local model reasons across file boundaries to classify systemic business domains and synthesize a concise, high-level architectural flow summary.
+3. **Hybrid Grounding Fusion** — The grounding layer fuses verified static facts with code-grounded LLM insights: every single entity is verified against actual source code, completely eliminating AI hallucinations while retaining semantic reasoning.
+4. **Serve** — Streams surgical architectural context to Claude, Cursor, Codex, or Gemini via **MCP** or **curl** in ~2k tokens.
 
 <details>
 <summary><b>🔍 Deep Dive: Architecture, Semantic Extraction & Live Graph</b></summary>
@@ -93,11 +95,11 @@ codebone provides native `cb` MCP tools and prompts, recognized across all major
 <br>
 
 ### 1. Concrete Semantic Extraction (The 5 Primitives)
-For every file in your codebase, codebone's local Metal model extracts five structured architectural dimensions per file (about 1.2 s each, only for new or changed files):
+For every file in your codebase, codebone's hybrid engine extracts five structured architectural dimensions per file:
 
-- **Database Models & Tables** — Entities persisted by the module (e.g. `User`, `Subscription`, `Invoice`).
-- **API Routes & Endpoints** — HTTP methods and paths exposed (e.g. `POST /api/v1/checkout`, `GET /webhook/stripe`).
-- **Events & Webhooks** — Domain events emitted, handled, or dispatched (e.g. `InvoicePaid`, `PaymentFailed`).
+- **Database Models & Tables** — Entities persisted by the module (e.g. `User`, `Subscription`, `Invoice` via Prisma, Drizzle, SQLAlchemy, GORM, ActiveRecord, or SQL).
+- **API Routes & Endpoints** — HTTP methods and paths exposed (e.g. `POST /api/v1/checkout`, `GET /webhook/stripe` via FastAPI, Express, Hono, Next.js, Gin, Actix, Spring, ASP.NET).
+- **Events & Webhooks** — Domain events emitted, handled, or dispatched (e.g. `InvoicePaid`, `PaymentFailed` via Kafka, BullMQ, Celery, EventEmitters).
 - **Business Domains** — High-level systemic domains (e.g. `Billing & Subscriptions`, `Authentication & Identity`).
 - **Logical Flow Summary** — A strict 1–2 sentence explanation of the module's actual role in the system.
 

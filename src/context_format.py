@@ -41,10 +41,10 @@ def _more(items: List[str], cap: int) -> str:
 def _analysis_label(files: List[dict]) -> str:
     regex = sum(1 for f in files if f.get("source") == "regex")
     if not files or not regex:
-        return "model analysis"
+        return "hybrid analysis"
     if regex == len(files):
         return "heuristic analysis (no model)"
-    return f"model analysis, {regex} files heuristic"
+    return f"hybrid analysis, {regex} files heuristic"
 
 
 def _layout(files: List[dict]) -> str:

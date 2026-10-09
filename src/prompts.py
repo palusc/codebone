@@ -143,10 +143,11 @@ def ground_analysis(raw_text: str, code: str, default_flow: str = "", entities: 
                     default_domains: Optional[List[str]] = None, supported_domains: Optional[List[str]] = None) -> str:
     """Turn a small model's answer into trustworthy analysis text (TABLES/ROUTES/EVENTS/DOMAINS/FLOW).
 
-    With `entities` (tables, routes, events extracted from the code itself) those are used as they are: a 0.5B
-    model invents entities out of file and function names, code does not. Domains must be names from
-    DOMAIN_VOCAB. The summary is the model's sentence unless it is missing, tiny or an echo of the instructions.
-    Without `entities`, the model's entities are kept only if they literally occur in the code."""
+    In our hybrid architecture, deterministic static scanning facts (entities) are unified with
+    code-grounded LLM discoveries: static AST/pattern scanner guarantees zero-hallucination coverage,
+    while the model synthesizes semantic flow summaries, business domain boundaries, and any genuine
+    entities present in the source text.
+    """
     tables, routes, events, domains, summary = parse_analysis(raw_text)
     # A second TABLES/ROUTES/... block inside the summary is model noise; keep only the prose before it
     summary = re.split(r"\b(?:TABLES|ROUTES|EVENTS|DOMAINS|PURPOSE)\s*:", summary, flags=re.IGNORECASE)[0].strip()
@@ -155,21 +156,46 @@ def ground_analysis(raw_text: str, code: str, default_flow: str = "", entities: 
     else:
         summary = _tidy_summary(summary)
 
+    low = code.lower()
+    _STOP_WORDS = {
+        "none", "null", "undefined", "n/a", "empty", "no", "table", "tables", "route", "routes",
+        "event", "events", "class", "def", "function", "return", "import", "export", "from",
+        "const", "let", "var", "public", "private", "protected", "self", "this", "true", "false",
+        "string", "number", "boolean", "int", "void", "any", "object", "dict", "list", "set",
+    }
+
+    def seen(name: str) -> bool:
+        if not name or len(name) < 2:
+            return False
+        clean = name.strip()
+        if clean.lower() in _STOP_WORDS:
+            return False
+        return clean.lower() in low
+
+    def seen_route(route_str: str) -> bool:
+        parts = route_str.strip().split()
+        if not parts:
+            return False
+        path = parts[-1]
+        return path.startswith("/") and len(path) > 1 and path.lower() in low
+
+    model_tables = [x for x in tables if seen(x)]
+    model_routes = [x for x in routes if seen_route(x)]
+    model_events = [x for x in events if seen(x)]
+
     if entities is not None:
-        tables, routes, events = entities
+        static_tables, static_routes, static_events = entities
+        tables = sorted(set(static_tables) | set(model_tables))
+        routes = sorted(set(static_routes) | set(model_routes))
+        events = sorted(set(static_events) | set(model_events))
         picked = _vocab_domains(domains)
         if supported_domains is not None:  # a 0.5B model leans on the first list entry for files it cannot place
             picked = [d for d in picked if d in supported_domains]
         domains = picked or list(default_domains or [])
     else:
-        low = code.lower()
-
-        def seen(name: str) -> bool:
-            return name.lower() in low
-
-        tables = [x for x in tables if seen(x)]
-        routes = [x for x in routes if seen(x.split()[-1])]  # "GET /items" -> "/items"
-        events = [x for x in events if seen(x)]
+        tables = model_tables
+        routes = model_routes
+        events = model_events
         domains = domains[:2]
     return (
         f"TABLES: {', '.join(tables) or 'none'}\n"

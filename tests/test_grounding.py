@@ -50,3 +50,95 @@ def test_unsupported_model_domains_and_instruction_echoes_are_dropped():
     tidy = g("DOMAINS: Utilities\nPURPOSE: The file `x.py` is a Python script that loads customers from disk.",
              "x", entities=([], [], []), supported_domains=["Utilities"])
     assert "FLOW: Loads customers from disk." in tidy
+
+
+def test_hybrid_fusion_merges_scanner_facts_and_verified_model_discoveries():
+    from src.prompts import ground_analysis
+    code = (
+        "from fastapi import FastAPI\n"
+        "app = FastAPI()\n"
+        "@app.get('/users')\n"
+        "def list_users(): return []\n"
+        "class UserRecord(Model): pass\n"
+        "emitter.emit('user_registered')\n"
+    )
+    # Deterministic scanner found UserRecord and GET /users
+    static_entities = (["UserRecord"], ["GET /users"], [])
+    # Model hallucinated FakeTable, but legitimately noticed user_registered and an extra verified route
+    raw_model = (
+        "TABLES: UserRecord, FakeTable\n"
+        "ROUTES: GET /users\n"
+        "EVENTS: user_registered, fake_event\n"
+        "DOMAINS: Authentication & Identity\n"
+        "FLOW: Handles user listing and emits registration events."
+    )
+    out = ground_analysis(raw_model, code, default_flow="Defines UserRecord.", entities=static_entities,
+                          default_domains=["Configuration & Core"])
+    # FakeTable and fake_event dropped (not in code), UserRecord and user_registered kept!
+    assert "TABLES: UserRecord" in out and "FakeTable" not in out
+    assert "ROUTES: GET /users" in out
+    assert "EVENTS: user_registered" in out and "fake_event" not in out
+    assert "DOMAINS: Authentication & Identity" in out
+    assert "FLOW: Handles user listing and emits registration events." in out
+
+
+def test_multilanguage_deterministic_scanner_covers_modern_frameworks():
+    from src.providers import FastFallbackProvider
+    scanner = FastFallbackProvider()
+
+    # TypeScript / Drizzle ORM & BullMQ & Hono
+    ts_code = (
+        "import { pgTable, text } from 'drizzle-orm/pg-core';\n"
+        "export const customers = pgTable('customers', { id: text('id') });\n"
+        "app.post('/api/checkout', (c) => c.text('ok'));\n"
+        "emailQueue.add('welcome_email', { to: 'a@b.com' });\n"
+    )
+    a_ts = scanner.analyze("src/checkout.ts", ts_code)
+    assert "customers" in a_ts["tables"]
+    assert "POST /api/checkout" in a_ts["routes"]
+    assert "welcome_email" in a_ts["events"]
+
+    # Go GORM & Gin & Kafka
+    go_code = (
+        "type Order struct {\n"
+        "    gorm.Model\n"
+        "}\n"
+        "r.GET(\"/orders\", handleOrders)\n"
+        "msg := kafka.Message{topic: \"orders.created\"}\n"
+    )
+    a_go = scanner.analyze("handlers/order.go", go_code)
+    assert "Order" in a_go["tables"]
+    assert "GET /orders" in a_go["routes"]
+    assert "orders.created" in a_go["events"]
+
+    # Rust Actix-web
+    rust_code = (
+        "#[get(\"/healthz\")]\n"
+        "async fn health() -> impl Responder { \"ok\" }\n"
+        "table! { products (id) { id -> Integer, } }\n"
+    )
+    a_rs = scanner.analyze("src/main.rs", rust_code)
+    assert "products" in a_rs["tables"]
+    assert "ROUTE /healthz" in a_rs["routes"]
+
+    # C# ASP.NET & Entity Framework
+    cs_code = (
+        "public class AppDbContext : DbContext {\n"
+        "    public DbSet<Invoice> Invoices { get; set; }\n"
+        "}\n"
+        "[HttpGet(\"/invoices/summary\")]\n"
+        "public IActionResult Get() { return Ok(); }\n"
+    )
+    a_cs = scanner.analyze("Controllers/InvoiceController.cs", cs_code)
+    assert "Invoice" in a_cs["tables"]
+    assert "GET /invoices/summary" in a_cs["routes"]
+
+    # PHP Laravel
+    php_code = (
+        "class Subscription extends Model {}\n"
+        "Route::post('/subscribe', [SubController::class, 'store']);\n"
+    )
+    a_php = scanner.analyze("routes/web.php", php_code)
+    assert "Subscription" in a_php["tables"]
+    assert "POST /subscribe" in a_php["routes"]
+

@@ -1088,14 +1088,14 @@ class CodeBoneService:
 
             provider = self.provider
             model_backed = not isinstance(provider, FastFallbackProvider)
-            if row and force and row["source"] == "model" and not (model_backed and self._model_ready()):
-                return "skipped"  # never replace model output with regex output
+            if row and force and row["source"] in ("model", "hybrid") and not (model_backed and self._model_ready()):
+                return "skipped"  # never replace model/hybrid output with regex output
 
         # Inference (a network call for local-URL and cloud brains) runs without the service lock, so the menu bar
         # thread can switch brains and the watcher can proceed while it is busy.
         try:
             raw_output = provider.sniff(rel_path, code)
-            source = getattr(provider, "last_source", "model" if model_backed else "regex")
+            source = getattr(provider, "last_source", "hybrid" if model_backed else "regex")
         except (SyntaxError, ValueError) as exc:
             logger.debug("Tolerated parsing error in %s (preserved previous state): %s", rel_path, exc)
             return "skipped"

@@ -337,6 +337,7 @@ DEFAULTS = {
     "module_backups": {},
     "modules_enabled": False,
     "modules_paused_apps": [],
+    "disabled_auto_scan_projects": [],
 }
 
 
@@ -613,3 +614,24 @@ class Config:
         load_gitignore_spec. Nothing is excluded any more — saved ignore lists from older versions are
         ignored too — except codebone's own data folder, which would otherwise index its own index."""
         return {".codebone", ".pug"}
+
+    def is_auto_scan_enabled(self, project_path: Optional[Path | str] = None) -> bool:
+        """Returns True by default. Returns False only if auto-scan has been explicitly turned off for this project."""
+        p = project_path or self.project_path
+        if not p:
+            return True
+        resolved = self._resolved_str(p)
+        disabled = {self._resolved_str(x) for x in self.data.get("disabled_auto_scan_projects", [])}
+        return resolved not in disabled
+
+    def set_auto_scan_enabled(self, project_path: Path | str, enabled: bool):
+        """Enable or disable automatic scanning on file save for a project folder."""
+        resolved = self._resolved_str(project_path)
+        with self._lock:
+            disabled = {self._resolved_str(x) for x in self.data.get("disabled_auto_scan_projects", [])}
+            if enabled:
+                disabled.discard(resolved)
+            else:
+                disabled.add(resolved)
+            self.data["disabled_auto_scan_projects"] = sorted(list(disabled))
+            self.save()

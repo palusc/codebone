@@ -12,6 +12,17 @@ Incremental updates within each series are documented as distinct letter release
 
 ---
 
+## [1.7c] - 2026-10-09
+
+### Added
+- **Per-Project Auto-Scan Toggle**: Added `Auto-Scan on Save` setting directly in each project's menu. Defaults to enabled (`ON`), allowing developers to easily disable automatic scanning on file saves per project for high-churn or mass-editing sessions.
+- **Cancelable Scan Controls**: Enhanced scan management with instant `Cancel Scan` and `Pause Scanning`/`Resume Scanning` controls, featuring live `(Scanning…)` and ETA feedback in the macOS menu bar and header.
+
+### Changed
+- **Terminology Standardization ("Scan" instead of "Index")**: Standardized all UI labels, menus, alerts, and notifications from "Index / Indexing / Indexed" to "Scan / Scanning / Scanned" throughout the app and graph dashboard.
+
+---
+
 ## [1.7b] - 2026-10-09
 
 ### Fixed

@@ -440,7 +440,7 @@ def create_app(service: CodeBoneService, allowed_hosts: Optional[set] = None) ->
         service.reset_map()
         if service.config.is_configured:
             threading.Thread(target=service.rescan_all, daemon=True, name="codebone-api-reset-rescan").start()
-        return {"status": "reset", "message": "Knowledge graph reset and re-indexing initiated."}
+        return {"status": "reset", "message": "Knowledge graph reset and re-scanning initiated."}
 
     anthropic_bridge.register(app, service.config)
 

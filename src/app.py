@@ -526,9 +526,9 @@ class CodeBoneApp(rumps.App):
 
         self._last_completed_scans: dict[str, float] = {}
 
-        self.pause_scan_item = rumps.MenuItem("Pause Indexing", callback=self.toggle_pause_indexing)
+        self.pause_scan_item = rumps.MenuItem("Pause Scanning", callback=self.toggle_pause_indexing)
         _set_symbol_icon(self.pause_scan_item, "pause.fill")
-        self.cancel_scan_item = rumps.MenuItem("Cancel Indexing", callback=self.cancel_indexing)
+        self.cancel_scan_item = rumps.MenuItem("Cancel Scan", callback=self.cancel_indexing)
         _set_symbol_icon(self.cancel_scan_item, "xmark.circle")
         try:
             self.pause_scan_item._menuitem.setHidden_(True)
@@ -584,7 +584,7 @@ class CodeBoneApp(rumps.App):
         self.copy_curl_item = rumps.MenuItem("Copy AI Context (curl)", callback=self.copy_curl)
         _set_symbol_icon(self.copy_curl_item, "doc.on.clipboard")
 
-        self.rescan_item = rumps.MenuItem("Index Project Now", callback=self.rescan_workspace)
+        self.rescan_item = rumps.MenuItem("Scan Project Now", callback=self.rescan_workspace)
         _set_symbol_icon(self.rescan_item, "arrow.clockwise")
 
         self.view_logs_item = rumps.MenuItem("View Logs...", callback=self.view_logs)
@@ -998,7 +998,7 @@ class CodeBoneApp(rumps.App):
         threading.Thread(target=_run, daemon=True, name="codebone-workspace-scan").start()
 
     def _run_single_scan(self, p: Path):
-        """Reindexes exactly one workspace folder and keeps the current project active."""
+        """Scans exactly one workspace folder and keeps the current project active."""
         def _run():
             def _on_prog(cur, tot, f):
                 self._on_main(self._push_stats)
@@ -1007,12 +1007,12 @@ class CodeBoneApp(rumps.App):
                 self._last_completed_scans[str(p.resolve())] = time.time()
                 rumps.notification(
                     "codebone",
-                    "Indexing Complete",
+                    "Scan Complete",
                     f"{p.name}: {result['total']} files mapped.",
                 )
             except Exception as exc:
                 logger.exception("Single project scan failed")
-                rumps.notification("codebone", "Indexing Failed", str(exc))
+                rumps.notification("codebone", "Scan Failed", str(exc))
             finally:
                 self._on_main(self._update_ui_state)
 
@@ -1047,7 +1047,7 @@ class CodeBoneApp(rumps.App):
                 self.toggle_pause_indexing()
             return
 
-        # 2. Guard against redundant indexing (< 120s ago with no changes)
+        # 2. Guard against redundant scanning (< 120s ago with no changes)
         target_str = str(p)
         last_done = self._last_completed_scans.get(target_str)
         if not last_done:
@@ -1067,19 +1067,19 @@ class CodeBoneApp(rumps.App):
                 ago_str = f"{elapsed_sec}s ago" if elapsed_sec > 1 else "just now"
                 NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
                 alert = NSAlert.alloc().init()
-                alert.setMessageText_("Project Recently Indexed")
+                alert.setMessageText_("Project Recently Scanned")
                 alert.setInformativeText_(
-                    f"'{p.name}' was already indexed {ago_str}.\n\n"
-                    "Re-indexing right away consumes unnecessary CPU and battery power without finding new changes.\n\n"
-                    "Do you want to re-index anyway?"
+                    f"'{p.name}' was already scanned {ago_str}.\n\n"
+                    "Re-scanning right away consumes unnecessary CPU and battery power without finding new changes.\n\n"
+                    "Do you want to re-scan anyway?"
                 )
                 alert.addButtonWithTitle_("Skip (Keep Current Map)")
-                alert.addButtonWithTitle_("Re-index Anyway")
+                alert.addButtonWithTitle_("Re-scan Anyway")
                 response = alert.runModal()
                 if response != 1001:
                     return
 
-        rumps.notification("codebone", "Indexing Started", f"Indexing '{p.name}'...")
+        rumps.notification("codebone", "Scan Started", f"Scanning '{p.name}'...")
         self._run_single_scan(p)
 
     def _run_project_tldr(self, p: Path):
@@ -1089,7 +1089,7 @@ class CodeBoneApp(rumps.App):
                 try:
                     result = self.service.project_tldr(p)
                 except FileNotFoundError:
-                    # A newly added workspace folder has no snapshot yet. Index it once, then summarize it.
+                    # A newly added workspace folder has no snapshot yet. Scan it once, then summarize it.
                     self.service.scan_project(p)
                     result = self.service.project_tldr(p)
 
@@ -1097,7 +1097,7 @@ class CodeBoneApp(rumps.App):
                     NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
                     rumps.alert(
                         title=f"TLDR — {result['project']}",
-                        message=f"{result['text']}\n\n{result['file_count']} indexed files",
+                        message=f"{result['text']}\n\n{result['file_count']} scanned files",
                         ok="Done",
                     )
 
@@ -1134,8 +1134,8 @@ class CodeBoneApp(rumps.App):
         self._last_stats_signature = signature
 
         # 0. Update macOS menubar title (e.g. " (~14s)" or " (Paused)" next to icon during scan)
-        if configured and sniffing and scan_progress:
-            eta_str = scan_progress.get("eta_str", "")
+        if configured and sniffing:
+            eta_str = scan_progress.get("eta_str", "") if scan_progress else ""
             if is_paused:
                 self.title = " (Paused)"
             elif eta_str:
@@ -1187,11 +1187,11 @@ class CodeBoneApp(rumps.App):
                     else:
                         eta_part = f"  ·  {eta_str} left" if eta_str else ""
                         if short_f:
-                            stats_text = f"Indexing {short_f} ({curr}/{tot}){eta_part}"
+                            stats_text = f"Scanning {short_f} ({curr}/{tot}){eta_part}"
                         else:
-                            stats_text = f"Indexing ({curr}/{tot}){eta_part}"
+                            stats_text = f"Scanning ({curr}/{tot}){eta_part}"
                 elif sniffing:
-                    stats_text = "Indexing codebase..."
+                    stats_text = "Scanning codebase..."
                 else:
                     stats_text = f"{_fmt_count(file_count)} Nodes  ·  {_fmt_count(connection_count)} Connections"
             else:
@@ -1207,11 +1207,13 @@ class CodeBoneApp(rumps.App):
                 except Exception:
                     pass
                 if is_paused:
-                    self.pause_scan_item.title = "Resume Indexing"
+                    self.pause_scan_item.title = "Resume Scanning"
                     _set_symbol_icon(self.pause_scan_item, "play.fill")
                 else:
-                    self.pause_scan_item.title = "Pause Indexing"
+                    self.pause_scan_item.title = "Pause Scanning"
                     _set_symbol_icon(self.pause_scan_item, "pause.fill")
+                self.cancel_scan_item.title = "Cancel Scan"
+                _set_symbol_icon(self.cancel_scan_item, "xmark.circle")
             else:
                 try:
                     self.pause_scan_item._menuitem.setHidden_(True)
@@ -1219,33 +1221,41 @@ class CodeBoneApp(rumps.App):
                 except Exception:
                     pass
 
-    def toggle_pause_indexing(self, _sender=None):
+    def toggle_pause_scanning(self, _sender=None):
         """Toggle scan pause/resume state with immediate notification and UI refresh."""
         paused = self.service.toggle_pause_scan()
         if paused:
-            rumps.notification("codebone", "Indexing Paused", "Indexing paused. Background CPU usage suspended.")
+            rumps.notification("codebone", "Scan Paused", "Scanning paused. Background CPU usage suspended.")
         else:
-            rumps.notification("codebone", "Indexing Resumed", "Indexing resumed.")
+            rumps.notification("codebone", "Scan Resumed", "Scanning resumed.")
         self._push_stats()
 
-    def pause_indexing(self, _sender=None):
-        """Pause active indexing."""
+    toggle_pause_indexing = toggle_pause_scanning
+
+    def pause_scanning(self, _sender=None):
+        """Pause active scanning."""
         self.service.pause_scan()
-        rumps.notification("codebone", "Indexing Paused", "Indexing paused. Background CPU usage suspended.")
+        rumps.notification("codebone", "Scan Paused", "Scanning paused. Background CPU usage suspended.")
         self._push_stats()
 
-    def resume_indexing(self, _sender=None):
-        """Resume paused indexing."""
+    pause_indexing = pause_scanning
+
+    def resume_scanning(self, _sender=None):
+        """Resume paused scanning."""
         self.service.resume_scan()
-        rumps.notification("codebone", "Indexing Resumed", "Indexing resumed.")
+        rumps.notification("codebone", "Scan Resumed", "Scanning resumed.")
         self._push_stats()
 
-    def cancel_indexing(self, _sender=None):
-        """Cancel ongoing indexing and release CPU resources immediately."""
+    resume_indexing = resume_scanning
+
+    def cancel_scanning(self, _sender=None):
+        """Cancel ongoing scan and release CPU resources immediately."""
         self.service.cancel_scan()
-        rumps.notification("codebone", "Indexing Cancelled", "Scan cancelled. Background CPU load stopped.")
+        rumps.notification("codebone", "Scan Cancelled", "Scan cancelled. Background CPU load stopped.")
         self._push_stats()
         self._update_ui_state()
+
+    cancel_indexing = cancel_scanning
 
     def _apply_all_icons(self):
         """Applies native Apple SF Symbol vector icons across the entire menu hierarchy."""
@@ -1366,7 +1376,7 @@ class CodeBoneApp(rumps.App):
         if getattr(self.brain_menu, "_menu", None) is not None:
             self.brain_menu.clear()
 
-        purpose_item = rumps.MenuItem("Used for maps, indexing & TLDRs", callback=None)
+        purpose_item = rumps.MenuItem("Used for maps, scanning & TLDRs", callback=None)
         self.brain_menu.add(purpose_item)
         self.brain_menu.add(None)
 
@@ -1629,7 +1639,7 @@ class CodeBoneApp(rumps.App):
         elif active_str == str(project):
             item.add(rumps.MenuItem("Current Project", callback=None))
         else:
-            item.add(rumps.MenuItem("Index this project to activate it", callback=None))
+            item.add(rumps.MenuItem("Scan this project to activate it", callback=None))
 
         info_item = rumps.MenuItem(
             "Info...",
@@ -1644,7 +1654,7 @@ class CodeBoneApp(rumps.App):
 
         item.add(None)
         scan_item = rumps.MenuItem(
-            "Index",
+            "Scan",
             callback=lambda _, target=project: self.start_project_scan(target),
         )
         _set_symbol_icon(scan_item, "arrow.clockwise")
@@ -1657,6 +1667,15 @@ class CodeBoneApp(rumps.App):
         _set_symbol_icon(tldr_item, "text.quote")
         item.add(tldr_item)
 
+        auto_scan_on = self.config.is_auto_scan_enabled(project)
+        auto_scan_item = rumps.MenuItem(
+            "Auto-Scan on Save",
+            callback=lambda _, target=project: self.toggle_project_auto_scan(target),
+        )
+        auto_scan_item.state = auto_scan_on
+        _set_symbol_icon(auto_scan_item, "bolt.badge.automatic")
+        item.add(auto_scan_item)
+
         item.add(None)
         if info:
             nodes = rumps.MenuItem(
@@ -1667,7 +1686,7 @@ class CodeBoneApp(rumps.App):
             item.add(nodes)
             item.add(rumps.MenuItem(f"{_fmt_count(info['connections'])} Connections", callback=None))
         else:
-            item.add(rumps.MenuItem("Not Indexed Yet", callback=None))
+            item.add(rumps.MenuItem("Not Scanned Yet", callback=None))
 
         reveal = rumps.MenuItem(
             "Show in Finder...",
@@ -1727,6 +1746,20 @@ class CodeBoneApp(rumps.App):
             clear_item = rumps.MenuItem("Clear Recent Projects...", callback=self.clear_recent_projects)
             _set_symbol_icon(clear_item, "trash")
             self.projects_menu.add(clear_item)
+
+    def toggle_project_auto_scan(self, project: Path):
+        """Toggle automatic scanning on file save for the given project folder."""
+        is_enabled = self.config.is_auto_scan_enabled(project)
+        new_state = not is_enabled
+        self.config.set_auto_scan_enabled(project, new_state)
+        state_word = "enabled" if new_state else "disabled"
+        rumps.notification(
+            "codebone",
+            f"Auto-Scan {state_word.capitalize()}",
+            f"Auto-scan on save is now {state_word} for '{project.name}'.",
+        )
+        self._update_projects_menu()
+        self._update_quick_access_items()
 
     def remove_from_workspace(self, p: Path):
         """Remove a project from the workspace without deleting its folder or saved map."""
@@ -1818,11 +1851,13 @@ class CodeBoneApp(rumps.App):
         if info:
             stats_line = f"Knowledge Graph: {_fmt_count(info['nodes'])} Nodes · {_fmt_count(info['connections'])} Connections"
         else:
-            stats_line = "Knowledge Graph: Not indexed yet"
+            stats_line = "Knowledge Graph: Not scanned yet"
 
+        auto_scan_str = "Enabled (watching on save)" if self.config.is_auto_scan_enabled(p) else "Disabled (manual scan only)"
         msg = (
             f"Directory:\n{path_str}\n\n"
             f"Status: {status_line}\n"
+            f"Auto-Scan on Save: {auto_scan_str}\n\n"
             f"{stats_line}"
         )
         res = rumps.alert(
@@ -2163,7 +2198,7 @@ class CodeBoneApp(rumps.App):
         rumps.notification("codebone", "Recent Shortcuts Cleared", "Projects and saved maps were not changed.")
 
     def choose_project(self, _):
-        paths = _choose_folders("Select Project Folders to Index", multi=True)
+        paths = _choose_folders("Select Project Folders to Scan", multi=True)
         if not paths:
             return
         if len(paths) == 1:
@@ -2283,9 +2318,9 @@ class CodeBoneApp(rumps.App):
         else:
             # Baseline Overview Notification
             rumps.notification(
-                f"codebone — Indexing Started",
+                f"codebone — Scan Started",
                 f"{p.name} ({total} files, {langs})",
-                f"Indexing files and connections...",
+                f"Scanning files and connections...",
             )
 
             def _run_initial():
@@ -2299,9 +2334,9 @@ class CodeBoneApp(rumps.App):
                     dur = max(1, round(time.time() - t0))
                     conn_count = len(self.service.storage.graph_edges(include_domains=True))
                     rumps.notification(
-                        f"codebone — Indexing Complete",
+                        f"codebone — Scan Complete",
                         f"{p.name} ready ({total_scanned} files)",
-                        f"Indexed {total_scanned} files & {conn_count} connections in {dur}s. Live watching active.",
+                        f"Scanned {total_scanned} files & {conn_count} connections in {dur}s. Live watching active.",
                     )
                 except Exception as exc:
                     logger.exception("Initial baseline scan failed")

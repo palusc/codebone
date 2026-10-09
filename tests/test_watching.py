@@ -125,3 +125,31 @@ def test_more_secret_shaped_files_and_credential_directories_are_skipped(tmp_pat
     (tmp_path / "app.py").write_text("x = 1\n")
     # All files are listed as watched nodes; content reading is skipped at sniff time
     assert len(list_watched_files(tmp_path)) == 13
+
+
+def test_auto_scan_config_and_behavior(tmp_path):
+    config_file = tmp_path / "config.json"
+    cfg = Config(config_file)
+    proj1 = tmp_path / "proj1"
+    proj2 = tmp_path / "proj2"
+    proj1.mkdir()
+    proj2.mkdir()
+
+    # 1. Standard is ON by default for any project
+    assert cfg.is_auto_scan_enabled(proj1) is True
+    assert cfg.is_auto_scan_enabled(proj2) is True
+
+    # 2. Can be disabled per project
+    cfg.set_auto_scan_enabled(proj1, False)
+    assert cfg.is_auto_scan_enabled(proj1) is False
+    assert cfg.is_auto_scan_enabled(proj2) is True
+
+    # 3. Setting persists across reloads
+    cfg_reloaded = Config(config_file)
+    assert cfg_reloaded.is_auto_scan_enabled(proj1) is False
+    assert cfg_reloaded.is_auto_scan_enabled(proj2) is True
+
+    # 4. Can be re-enabled
+    cfg.set_auto_scan_enabled(proj1, True)
+    assert cfg.is_auto_scan_enabled(proj1) is True
+

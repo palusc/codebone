@@ -176,7 +176,7 @@ class CodeBoneService:
             on_batch=self._handle_batch,
         )
         self.sniffer.start()
-        if auto_scan:
+        if auto_scan and self.config.is_auto_scan_enabled(project_path):
             threading.Thread(
                 target=self.rescan_all,
                 args=(on_progress,),
@@ -1023,6 +1023,9 @@ class CodeBoneService:
         return None
 
     def _handle_change(self, path: Path):
+        project_path = self.config.project_path
+        if not project_path or not self.config.is_auto_scan_enabled(project_path):
+            return
         self._begin()
         try:
             self._sniff_file(path, live=True)
@@ -1147,7 +1150,7 @@ class CodeBoneService:
     def _handle_batch(self, changed: set[Path], deleted: set[Path]):
         """Handles burst changes (e.g. git checkout, branch switch, mass file moves/refactors)."""
         project_path = self.config.project_path
-        if not project_path:
+        if not project_path or not self.config.is_auto_scan_enabled(project_path):
             return
 
         self._begin()
@@ -1209,6 +1212,9 @@ class CodeBoneService:
             self._end()
 
     def _handle_delete(self, path: Path):
+        project_path = self.config.project_path
+        if not project_path or not self.config.is_auto_scan_enabled(project_path):
+            return
         rel = self._rel(path)
         if rel is None:
             return

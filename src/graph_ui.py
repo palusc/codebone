@@ -984,7 +984,7 @@ async function loadAll() {
     const [graph, status] = await Promise.all([fetchJSON('/codebone/graph'), fetchJSON('/codebone/status')]);
     updateHud(status, graph);
     if (!status.configured) { showEmpty('No project selected. Pick a folder from the codebone menu bar icon.'); loadedOnce = true; return; }
-    if (!graph.nodes.length) { showEmpty(status.scanning || status.sniffing ? 'Indexing your project, files appear here as they are analysed...' : 'No indexable files found in this project.'); lastRevision = status.revision; return; }
+    if (!graph.nodes.length) { showEmpty(status.scanning || status.sniffing ? 'Scanning your project, files appear here as they are analysed...' : 'No scannable files found in this project.'); lastRevision = status.revision; return; }
     buildGraph(graph, !loadedOnce);
     lastRevision = status.revision;
     loadedOnce = true;
@@ -1008,8 +1008,8 @@ function updateHud(status, graph) {
   badge.className = 'status-badge';
   scanning = !!(status.scanning || status.sniffing);
   if (status.model_status) { label = 'Preparing model: ' + status.model_status; badge.className = 'status-badge sniffing'; }
-  else if (status.scan_progress) { label = 'Indexing ' + status.scan_progress.pct + '%'; badge.className = 'status-badge sniffing'; }
-  else if (scanning) { label = 'Indexing...'; badge.className = 'status-badge sniffing'; }
+  else if (status.scan_progress) { label = 'Scanning ' + status.scan_progress.pct + '%'; badge.className = 'status-badge sniffing'; }
+  else if (scanning) { label = 'Scanning...'; badge.className = 'status-badge sniffing'; }
   $('status-text').textContent = label;
   checkMcpPing(status);
 }

@@ -628,6 +628,59 @@ def add_module(config, name: str, model: str, key: str, anthropic_url: str = "",
     return module
 
 
+def rename_module(config, module_id: str, new_name: str) -> Optional[dict]:
+    mods = list_modules(config)
+    found = None
+    for m in mods:
+        if m["id"] == module_id:
+            m["name"] = new_name.strip()
+            found = m
+            break
+    if found:
+        config.set("modules", mods)
+    return found
+
+
+def update_module_key(config, module_id: str, new_key: str, keychain: Optional[Keychain] = None) -> None:
+    (keychain or Keychain()).set(module_id, new_key.strip())
+
+
+def get_module_key(config, module_id: str, keychain: Optional[Keychain] = None) -> str:
+    return (keychain or Keychain()).get(module_id) or ""
+
+
+def detect_provider(mod: dict) -> str:
+    openai_url = (mod.get("openai_url") or "").lower()
+    anthropic_url = (mod.get("anthropic_url") or "").lower()
+    name = (mod.get("name") or "").lower()
+    if "openrouter" in openai_url or "openrouter" in anthropic_url or "openrouter" in name:
+        return "OpenRouter"
+    if "api.openai.com" in openai_url:
+        return "OpenAI"
+    if "api.anthropic.com" in anthropic_url:
+        return "Anthropic"
+    if "11434" in openai_url or "ollama" in name or "ollama" in openai_url:
+        return "Ollama"
+    if "1234" in openai_url or "lmstudio" in name or "lmstudio" in openai_url:
+        return "LM Studio"
+    if openai_url:
+        return "OpenAI"
+    if anthropic_url:
+        return "Anthropic"
+    return "API"
+
+
+def format_model_name(mod: dict) -> str:
+    raw_name = (mod.get("name") or "Custom Model").strip()
+    provider = detect_provider(mod)
+    if f"({provider})" in raw_name:
+        return raw_name
+    if raw_name.lower().startswith(provider.lower()) and "(" in raw_name and raw_name.endswith(")"):
+        inner = raw_name[len(provider):].strip(" ()")
+        return f"{inner} ({provider})"
+    return f"{raw_name} ({provider})"
+
+
 def _port(config) -> Optional[int]:
     return config.get("active_port") or config.get("server_port", 8053)
 

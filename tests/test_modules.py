@@ -306,3 +306,37 @@ def test_force_restore_all_clears_all_coding_agents(env):
     assert not (home / "Library" / "Application Support" / "Cursor" / "User" / "settings.json").exists()
     assert not (home / "Library" / "Application Support" / "Antigravity IDE" / "User" / "settings.json").exists()
     assert not (home / ".config" / "opencode" / "opencode.json").exists()
+
+
+def test_rename_and_key_updates(env):
+    cfg, home, kc = env
+    m = add(cfg, kc, "Initial Name")
+    assert modules.get_module_key(cfg, m["id"], keychain=kc) == "sk-secret-123"
+
+    # Rename
+    renamed = modules.rename_module(cfg, m["id"], "Renamed Model")
+    assert renamed is not None
+    assert renamed["name"] == "Renamed Model"
+    assert modules.get_module(cfg, m["id"])["name"] == "Renamed Model"
+
+    # Update Key
+    modules.update_module_key(cfg, m["id"], "sk-new-key-456", keychain=kc)
+    assert modules.get_module_key(cfg, m["id"], keychain=kc) == "sk-new-key-456"
+
+
+def test_detect_provider_and_format_model_name():
+    m1 = {"name": "MiMo Flash", "openai_url": "https://openrouter.ai/api/v1"}
+    assert modules.detect_provider(m1) == "OpenRouter"
+    assert modules.format_model_name(m1) == "MiMo Flash (OpenRouter)"
+
+    m2 = {"name": "GPT-4o", "openai_url": "https://api.openai.com/v1"}
+    assert modules.detect_provider(m2) == "OpenAI"
+    assert modules.format_model_name(m2) == "GPT-4o (OpenAI)"
+
+    m3 = {"name": "Claude 3.5 Sonnet", "anthropic_url": "https://api.anthropic.com"}
+    assert modules.detect_provider(m3) == "Anthropic"
+    assert modules.format_model_name(m3) == "Claude 3.5 Sonnet (Anthropic)"
+
+    m4 = {"name": "Already Formatted (OpenRouter)", "openai_url": "https://openrouter.ai/api/v1"}
+    assert modules.format_model_name(m4) == "Already Formatted (OpenRouter)"
+

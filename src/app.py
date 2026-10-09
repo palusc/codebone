@@ -55,6 +55,8 @@ from AppKit import (
     NSRectFillUsingOperation,
     NSCursor,
     NSLineBreakByTruncatingTail,
+    NSViewWidthSizable,
+    NSViewMinXMargin,
 )
 
 from .config import Config
@@ -291,12 +293,32 @@ class NonClickableInfoView(NSView):
     def hitTest_(self, point):
         return None
 
+    def viewWillDraw(self):
+        objc.super(NonClickableInfoView, self).viewWillDraw()
+        if self.superview():
+            new_w = self.superview().frame().size.width
+            if new_w > 0 and abs(new_w - self.frame().size.width) > 1:
+                self.setFrameSize_(NSSize(new_w, self.frame().size.height))
+
+
+class FullWidthMenuView(NSView):
+    """Container view for menu items that automatically stretches to the full width of the parent menu."""
+
+    def viewWillDraw(self):
+        objc.super(FullWidthMenuView, self).viewWillDraw()
+        if self.superview():
+            new_w = self.superview().frame().size.width
+            if new_w > 0 and abs(new_w - self.frame().size.width) > 1:
+                self.setFrameSize_(NSSize(new_w, self.frame().size.height))
+
 
 def make_info_item(title: str, bold: bool = True, size: float = 11.5, height: float = 20.0, width: float = 216.0) -> rumps.MenuItem:
     """Creates a native non-clickable menu item displaying crisp bold white text."""
     item = rumps.MenuItem(title, callback=None)
     view = NonClickableInfoView.alloc().initWithFrame_(NSRect(NSPoint(0, 0), NSSize(width, height)))
+    view.setAutoresizingMask_(NSViewWidthSizable)
     label = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(14, 2), NSSize(width - 24, height - 4)))
+    label.setAutoresizingMask_(NSViewWidthSizable)
     label.setStringValue_(title)
     if bold:
         label.setFont_(NSFont.boldSystemFontOfSize_(size))
@@ -312,6 +334,7 @@ def make_info_item(title: str, bold: bool = True, size: float = 11.5, height: fl
     item._info_label = label
     try:
         item._menuitem.setView_(view)
+        item._menuitem.setToolTip_(title)
     except Exception as exc:
         logger.debug("Failed to set info view on menu item: %s", exc)
     return item
@@ -519,6 +542,23 @@ class ModulesSwitchDelegate(NSObject):
         self.app.set_modules_master(sender.state() == NSControlStateValueOn)
 
 
+class MapSwitchDelegate(NSObject):
+    """Action delegate for the native switch on the Map Agent row: toggle between custom model and built-in model."""
+
+    def initWithApp_(self, app):
+        self = objc.super(MapSwitchDelegate, self).init()
+        if self is None:
+            return None
+        self.app = app
+        return self
+
+    @objc.IBAction
+    def switchToggled_(self, sender):
+        if not self.app:
+            return
+        self.app.set_map_master(sender.state() == NSControlStateValueOn)
+
+
 class CodeBoneApp(rumps.App):
     def __init__(self):
         try:
@@ -598,6 +638,18 @@ class CodeBoneApp(rumps.App):
 
         self.modules_menu = rumps.MenuItem("Coding Agent")
         _set_symbol_icon(self.modules_menu, "square.stack.3d.up")
+
+        # Map agent switch for custom models vs built-in model
+        (
+            self.map_switch_row,
+            self.map_switch_delegate,
+            self.map_switch,
+        ) = self._build_map_switch_row()
+        self.map_switch_item = rumps.MenuItem("Use Custom Model", callback=None)
+        try:
+            self.map_switch_item._menuitem.setView_(self.map_switch_row)
+        except Exception as exc:
+            logger.warning("Could not set map-agent switch view: %s", exc)
 
         # The map agent analyses files, builds TLDRs and powers the knowledge map. It is deliberately
         # separate from the optional model routed into the user's coding agent.
@@ -796,13 +848,13 @@ class CodeBoneApp(rumps.App):
         return container, delegate, status_dot, stats_lbl, title_lbl
 
     def _build_modules_switch_row(self):
-        """A menu row that IS the on/off control for the custom coding model, native-switch style
-        toggle rows) instead of a checkmark buried inside a submenu."""
+        """A menu row that IS the on/off control for the custom coding model, native-switch style."""
         w, h = 216.0, 30.0
-        container = NSView.alloc().initWithFrame_(NSRect(NSPoint(0, 0), NSSize(w, h)))
+        container = FullWidthMenuView.alloc().initWithFrame_(NSRect(NSPoint(0, 0), NSSize(w, h)))
+        container.setAutoresizingMask_(NSViewWidthSizable)
         delegate = ModulesSwitchDelegate.alloc().initWithApp_(self)
 
-        label = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(14, 6), NSSize(144, 18)))
+        label = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(14, 6), NSSize(140, 18)))
         label.setStringValue_("Use Custom Model")
         label.setFont_(NSFont.systemFontOfSize_(13.0))
         label.setTextColor_(NSColor.labelColor())
@@ -812,8 +864,36 @@ class CodeBoneApp(rumps.App):
         label.setSelectable_(False)
         container.addSubview_(label)
 
-        switch = NSSwitch.alloc().initWithFrame_(NSRect(NSPoint(w - 50, 4), NSSize(38, 22)))
+        switch = NSSwitch.alloc().initWithFrame_(NSRect(NSPoint(w - 52, 4), NSSize(38, 22)))
+        switch.setAutoresizingMask_(NSViewMinXMargin)
         switch.setState_(NSControlStateValueOn if bool(self.config.get("modules_enabled")) else NSControlStateValueOff)
+        switch.setTarget_(delegate)
+        switch.setAction_(objc.selector(delegate.switchToggled_, signature=b"v@:@"))
+        container.addSubview_(switch)
+
+        return container, delegate, switch
+
+    def _build_map_switch_row(self):
+        """A menu row that toggles custom cloud model vs local built-in model for Map Agent."""
+        w, h = 216.0, 30.0
+        container = FullWidthMenuView.alloc().initWithFrame_(NSRect(NSPoint(0, 0), NSSize(w, h)))
+        container.setAutoresizingMask_(NSViewWidthSizable)
+        delegate = MapSwitchDelegate.alloc().initWithApp_(self)
+
+        label = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(14, 6), NSSize(140, 18)))
+        label.setStringValue_("Use Custom Model")
+        label.setFont_(NSFont.systemFontOfSize_(13.0))
+        label.setTextColor_(NSColor.labelColor())
+        label.setBezeled_(False)
+        label.setDrawsBackground_(False)
+        label.setEditable_(False)
+        label.setSelectable_(False)
+        container.addSubview_(label)
+
+        is_custom = self.config.get("brain_provider") in ("cloud", "local_url")
+        switch = NSSwitch.alloc().initWithFrame_(NSRect(NSPoint(w - 52, 4), NSSize(38, 22)))
+        switch.setAutoresizingMask_(NSViewMinXMargin)
+        switch.setState_(NSControlStateValueOn if is_custom else NSControlStateValueOff)
         switch.setTarget_(delegate)
         switch.setAction_(objc.selector(delegate.switchToggled_, signature=b"v@:@"))
         container.addSubview_(switch)
@@ -1358,6 +1438,7 @@ class CodeBoneApp(rumps.App):
         self._update_modules_menu()
         self._update_models_menu()
         self._sync_modules_switch()
+        self._sync_map_switch()
         self._push_stats()
 
     @staticmethod
@@ -1420,71 +1501,149 @@ class CodeBoneApp(rumps.App):
     def _update_brain_checks(self):
         """Rebuilds the Map Agent menu: live status at the top, local models, online API models,
         and action items with consistent bold white info headers."""
-        provider = self.config.get("brain_provider", "builtin")
-        current_model_path = self.config.get("model_path")
+        from . import modules
 
         if getattr(self.brain_menu, "_menu", None) is not None:
             self.brain_menu.clear()
 
-        # Header info
-        self.brain_menu.add(make_info_item("Shared Engine (Same APIs)"))
+        provider = self.config.get("brain_provider", "builtin")
+        selected_mod_id = self.config.get("brain_selected_module")
+        selected_mod = modules.get_module(self.config, selected_mod_id) if selected_mod_id else None
+        master_on = (provider in ("cloud", "local_url"))
 
-        # 1. Status line
-        name, state = self._brain_status()
-        self.brain_menu.add(make_info_item(f"Active: {name} ({state})"))
+        if not master_on:
+            active_map_name = "Built-in Qwen 0.5B (Metal GPU)"
+        elif selected_mod:
+            active_map_name = modules.format_model_name(selected_mod)
+        elif provider == "cloud":
+            m_id = self.config.get("brain_cloud_model", "Model")
+            v_id = self.config.get("brain_cloud_vendor", "Cloud").title()
+            active_map_name = f"{m_id} ({v_id})"
+        else:
+            active_map_name = "Local Server (Ollama)"
+
+        # 1. Active Model info
+        self.brain_menu.add(make_info_item("Active Model"))
+        self.brain_menu.add(make_info_item(active_map_name))
         self.brain_menu.add(None)
 
-        # 2. Local Models section
+        # 2. Switch row
+        self.brain_menu.add(self.map_switch_item)
+        self.brain_menu.add(None)
+
+        # 3. Local Models section
         self.brain_menu.add(make_info_item("Local Models"))
-        for m in self.config.known_models:
-            m_name = m.get("name", "Model")
-            m_path = m.get("path")
-            item = rumps.MenuItem(
-                m_name,
-                callback=lambda _, p=m_path, n=m_name: self.select_model_by_path(p, n),
-            )
-            _set_symbol_icon(item, "cpu")
-            item.state = (provider == "builtin" and current_model_path == m_path)
-            self.brain_menu.add(item)
-
-        self.brain_local_item = rumps.MenuItem(
-            "Local Server (Ollama / LM Studio)"
-            + (" — Connected ✓" if provider == "local_url" and self._brain_connection_verified() else "..."),
-            callback=self.select_brain_local,
+        builtin_item = rumps.MenuItem(
+            "Built-in Qwen 0.5B (Metal GPU)",
+            callback=lambda _: self.select_builtin_map_model(),
         )
-        _set_symbol_icon(self.brain_local_item, "network")
-        self.brain_local_item.state = (provider == "local_url")
-        self.brain_menu.add(self.brain_local_item)
+        _set_symbol_icon(builtin_item, "cpu")
+        builtin_item.state = (provider == "builtin")
+        self.brain_menu.add(builtin_item)
 
-        self.brain_menu.add(None)
+        library = modules.list_modules(self.config)
+        local_mods = [
+            m for m in library
+            if "localhost" in (m.get("openai_url") or "")
+            or "127.0.0.1" in (m.get("openai_url") or "")
+            or "ollama" in m.get("name", "").lower()
+            or "local" in m.get("name", "").lower()
+        ]
+        online_mods = [m for m in library if m not in local_mods]
 
-        # 3. Online API Models section
-        self.brain_menu.add(make_info_item("Online API Models"))
-        for vid, label, model in self.BRAIN_PROFILES:
-            connected = bool(
-                provider == "cloud"
-                and self.config.get("brain_cloud_vendor") == vid
-                and self._brain_connection_verified()
-            )
+        for m in local_mods:
+            m_label = modules.format_model_name(m)
             item = rumps.MenuItem(
-                f"{label}{' — Connected ✓' if connected else '...'}",
-                callback=lambda _, v=vid, m=model, l=label: self.setup_brain_profile(v, m, l),
+                m_label,
+                callback=lambda _, mid=m["id"]: self.select_map_module(mid),
             )
-            _set_symbol_icon(item, "cloud")
-            item.state = bool(provider == "cloud" and self.config.get("brain_cloud_vendor") == vid)
+            _set_symbol_icon(item, "network")
+            item.state = bool(provider == "local_url" and (selected_mod_id == m["id"] or not selected_mod_id))
             self.brain_menu.add(item)
 
         self.brain_menu.add(None)
 
-        # 4. Actions
-        self.add_model_item = rumps.MenuItem("Add Model File (.gguf)...", callback=self.add_model_file)
-        _set_symbol_icon(self.add_model_item, "plus")
-        self.brain_menu.add(self.add_model_item)
+        # 4. Online API Models section
+        self.brain_menu.add(make_info_item("Online API Models"))
+        if online_mods:
+            for m in online_mods:
+                m_label = modules.format_model_name(m)
+                item = rumps.MenuItem(
+                    m_label,
+                    callback=lambda _, mid=m["id"]: self.select_map_module(mid),
+                )
+                _set_symbol_icon(item, "cloud")
+                item.state = bool(provider == "cloud" and selected_mod_id == m["id"])
+                self.brain_menu.add(item)
+        else:
+            add_hint = rumps.MenuItem("Add Model in Models...", callback=self.add_module_dialog)
+            _set_symbol_icon(add_hint, "cloud")
+            self.brain_menu.add(add_hint)
+
+        self.brain_menu.add(None)
+
+        # 5. Actions
+        add_item = rumps.MenuItem("Add Model...", callback=self.add_module_dialog)
+        _set_symbol_icon(add_item, "plus")
+        self.brain_menu.add(add_item)
+
+        add_file_item = rumps.MenuItem("Add Model File (.gguf)...", callback=self.add_model_file)
+        _set_symbol_icon(add_file_item, "doc.badge.plus")
+        self.brain_menu.add(add_file_item)
 
         if provider in ("cloud", "local_url"):
             test_item = rumps.MenuItem("Test Connection", callback=self.test_selected_brain)
             _set_symbol_icon(test_item, "bolt")
             self.brain_menu.add(test_item)
+
+    def select_map_module(self, module_id: str):
+        from . import modules
+        mod = modules.get_module(self.config, module_id)
+        if not mod:
+            return
+        key = modules.get_module_key(self.config, module_id)
+        provider = modules.detect_provider(mod)
+        url = mod.get("openai_url") or mod.get("anthropic_url") or ""
+        self.config.set("brain_selected_module", module_id)
+        self.config.set("brain_provider", "cloud" if "local" not in provider.lower() else "local_url")
+        self.config.set("brain_cloud_vendor", provider.lower())
+        self.config.set("brain_cloud_model", mod.get("model", ""))
+        self.config.set("brain_cloud_url", url)
+        self.config.set("brain_cloud_api_key", key)
+        self._update_brain_checks()
+        self._update_models_menu()
+        self._sync_map_switch()
+        rumps.notification("codebone", "Map Agent Model Updated", f"Map Agent now uses {modules.format_model_name(mod)}.")
+
+    def select_builtin_map_model(self):
+        self.config.set("brain_selected_module", None)
+        self.config.set("brain_provider", "builtin")
+        self._update_brain_checks()
+        self._update_models_menu()
+        self._sync_map_switch()
+        rumps.notification("codebone", "Map Agent Model Updated", "Map Agent now uses Built-in (Qwen 0.5B) on Apple Metal.")
+
+    def set_map_master(self, turning_on: bool):
+        from . import modules
+        if turning_on:
+            selected_id = self.config.get("brain_selected_module")
+            mod = modules.get_module(self.config, selected_id) if selected_id else None
+            if not mod:
+                mods = modules.list_modules(self.config)
+                if mods:
+                    mod = mods[0]
+                    selected_id = mod["id"]
+            if mod:
+                self.select_map_module(selected_id)
+            else:
+                self.add_module_dialog(None)
+        else:
+            self.select_builtin_map_model()
+
+    def _sync_map_switch(self):
+        if hasattr(self, "map_switch") and self.map_switch is not None:
+            is_custom = self.config.get("brain_provider") in ("cloud", "local_url")
+            self.map_switch.setState_(NSControlStateValueOn if is_custom else NSControlStateValueOff)
 
     def setup_brain_profile(self, vendor: str, model: str, label: str):
         """Dead-simple model setup: paste the API key once, codebone saves it and checks the connection."""
@@ -1558,148 +1717,100 @@ class CodeBoneApp(rumps.App):
         name = self.config.active_model_display_name
         self._test_brain(name)
 
-    def set_key_mode(self, mode: str):
-        """Switches between shared keys (single key for Map & Code) and separate keys (cost tracking)."""
-        self.config.set("key_mode", mode)
-        if mode == "shared":
-            rumps.notification(
-                "codebone",
-                "Shared Key Mode Active",
-                "Map Agent and Coding Agents share provider API keys.",
-            )
-            self.sync_shared_keys()
-        else:
-            rumps.notification(
-                "codebone",
-                "Separate Keys Mode Active",
-                "Configure dedicated keys for Map Agent vs Coding Agents to track costs.",
-            )
-        self._update_models_menu()
-
-    def sync_shared_keys(self, _=None):
-        """Synchronizes Map Agent key into matching Coding Agent modules."""
+    def rename_module_dialog(self, module_id: str, current_name: str):
         from . import modules
-        map_key = (self.config.get("brain_cloud_api_key") or "").strip()
-        map_vendor = self.config.get("brain_cloud_vendor", "openai")
-        if not map_key:
-            rumps.alert("Shared Keys", "No Map Agent Cloud API key configured yet.")
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        resp = rumps.Window(
+            message=f"Enter new name for '{current_name}':",
+            title="Rename Model",
+            default_text=current_name,
+            ok="Save",
+            cancel="Cancel",
+            dimensions=(320, 24),
+        ).run()
+        if not resp.clicked:
             return
-        library = modules.list_modules(self.config)
-        updated = False
-        for m in library:
-            if map_vendor.lower() in m.get("name", "").lower():
-                modules.Keychain().set(m["id"], map_key)
-                updated = True
-        if updated:
-            rumps.notification("codebone", "Keys Synced", f"Synchronized {map_vendor.title()} key to coding models.")
-        self._update_models_menu()
+        new_name = resp.text.strip()
+        if not new_name or new_name == current_name:
+            return
+        modules.rename_module(self.config, module_id, new_name)
         self._update_modules_menu()
-
-    def configure_map_agent_key(self, _=None):
-        self.select_brain_cloud(_)
-        if self.config.get("key_mode", "shared") == "shared":
-            self.sync_shared_keys()
+        self._update_brain_checks()
         self._update_models_menu()
+        rumps.notification("codebone", "Model Renamed", f"Model is now named '{new_name}'.")
 
-    def manage_coding_model_key(self, module_id: str, name: str):
-        self.edit_module_key(module_id, name)
-        self._update_models_menu()
+    def test_module_by_id(self, module_id: str):
+        from . import modules
+        mod = modules.get_module(self.config, module_id)
+        if not mod:
+            return
+        self.test_selected_module(None, target_mod=mod)
 
     def _update_models_menu(self):
-        """Rebuilds the Models... menu: list of all models (Map Agent & Coding Agent),
-        'Add Model...', and key management supporting either a single Shared Key
-        or separate keys for Coding vs. Mapping to track costs independently."""
+        """Rebuilds the Models... menu: list of all configured models, Add Model,
+        per-model rename, key editing, and removal."""
+        from . import modules
+
         if getattr(self.models_menu, "_menu", None) is not None:
             self.models_menu.clear()
 
         # Header info
-        self.models_menu.add(make_info_item("Models & API Keys"))
+        self.models_menu.add(make_info_item("Models & APIs"))
         self.models_menu.add(None)
 
-        # ── Key Mode Section ──
-        self.models_menu.add(make_info_item("Key Management Mode"))
-        key_mode = self.config.get("key_mode", "shared")
-        is_shared = (key_mode == "shared")
-
-        shared_item = rumps.MenuItem(
-            "Shared Key (One Key for All)",
-            callback=lambda _: self.set_key_mode("shared"),
-        )
-        shared_item.state = is_shared
-        self.models_menu.add(shared_item)
-
-        separate_item = rumps.MenuItem(
-            "Separate Keys (Track Costs)",
-            callback=lambda _: self.set_key_mode("separate"),
-        )
-        separate_item.state = not is_shared
-        self.models_menu.add(separate_item)
-
-        self.models_menu.add(None)
-
-        # ── Map Agent Model Section ──
-        self.models_menu.add(make_info_item("Map Agent Model"))
-        provider = self.config.get("brain_provider", "builtin")
-        map_model_name = self.config.active_model_display_name
-        map_key = (self.config.get("brain_cloud_api_key") or "").strip()
-        map_vendor = self.config.get("brain_cloud_vendor", "openai").title()
-
-        if provider == "cloud":
-            status_desc = f"{map_vendor}: {map_model_name}"
-            key_status = "Key Set ✓" if map_key else "Key Missing"
-        elif provider == "local_url":
-            status_desc = f"Local Server: {self.config.get('brain_local_url') or 'Ollama'}"
-            key_status = "Local (No Key)"
-        else:
-            status_desc = f"Local Model: {map_model_name}"
-            key_status = "Offline (No Key)"
-
-        map_item = rumps.MenuItem(
-            f"{status_desc} — {key_status}",
-            callback=self.configure_map_agent_key,
-        )
-        _set_symbol_icon(map_item, "brain")
-        self.models_menu.add(map_item)
-
-        self.models_menu.add(None)
-
-        # ── Coding Agent Models Section ──
-        self.models_menu.add(make_info_item("Coding Agent Models"))
-        from . import modules
         library = modules.list_modules(self.config)
-        selected_mod = modules.get_module(self.config, self.config.get("module_selected"))
 
         if library:
             for m in library:
+                m_label = modules.format_model_name(m)
                 has_key = bool(modules.Keychain().get(m["id"]))
-                is_active = bool(selected_mod and selected_mod["id"] == m["id"])
-                mark = " [Active]" if is_active else ""
-                key_text = "Key Set ✓" if has_key else "Key Missing"
-                item = rumps.MenuItem(
-                    f"{m['name']}{mark} — {key_text}",
-                    callback=lambda _, mid=m["id"], n=m["name"]: self.manage_coding_model_key(mid, n),
-                )
+                key_text = "Key Set ✓" if has_key else "No Key"
+                item = rumps.MenuItem(f"{m_label} — {key_text}")
                 _set_symbol_icon(item, "cpu")
-                item.state = is_active
+
+                rename_item = rumps.MenuItem(
+                    "Rename Model...",
+                    callback=lambda _, mid=m["id"], n=m["name"]: self.rename_module_dialog(mid, n),
+                )
+                _set_symbol_icon(rename_item, "pencil")
+                item.add(rename_item)
+
+                edit_key_item = rumps.MenuItem(
+                    "Edit API Key...",
+                    callback=lambda _, mid=m["id"], n=m["name"]: self.edit_module_key(mid, n),
+                )
+                _set_symbol_icon(edit_key_item, "key")
+                item.add(edit_key_item)
+
+                test_item = rumps.MenuItem(
+                    "Test Connection",
+                    callback=lambda _, mid=m["id"]: self.test_module_by_id(mid),
+                )
+                _set_symbol_icon(test_item, "bolt")
+                item.add(test_item)
+
+                item.add(None)
+                remove_item = rumps.MenuItem(
+                    "Remove Model",
+                    callback=lambda _, mid=m["id"], n=m["name"]: self.remove_module_dialog(mid, n),
+                )
+                _set_symbol_icon(remove_item, "trash")
+                item.add(remove_item)
+
                 self.models_menu.add(item)
         else:
             self.models_menu.add(make_info_item("No custom models added yet"))
 
         self.models_menu.add(None)
 
-        # ── Actions ──
-        add_coding_item = rumps.MenuItem("Add Model...", callback=self.add_module_dialog)
-        _set_symbol_icon(add_coding_item, "plus")
-        self.models_menu.add(add_coding_item)
+        # Actions
+        add_item = rumps.MenuItem("Add Model...", callback=self.add_module_dialog)
+        _set_symbol_icon(add_item, "plus")
+        self.models_menu.add(add_item)
 
         add_gguf_item = rumps.MenuItem("Add Model File (.gguf)...", callback=self.add_model_file)
         _set_symbol_icon(add_gguf_item, "doc.badge.plus")
         self.models_menu.add(add_gguf_item)
-
-        if is_shared and map_key:
-            sync_item = rumps.MenuItem("Sync Map Key to Coding Agents", callback=self.sync_shared_keys)
-            _set_symbol_icon(sync_item, "arrow.triangle.2.circlepath")
-            self.models_menu.add(sync_item)
 
     def _update_api_keys_menu(self):
         """Backward compatibility alias."""
@@ -1711,10 +1822,10 @@ class CodeBoneApp(rumps.App):
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         current = modules.Keychain().get(module_id) or ""
         resp = rumps.Window(
-            message=f"API key for {name} (stored in your macOS Keychain)",
-            title="API Keys",
+            message=f"API key for '{name}' (stored in your macOS Keychain):",
+            title="Edit API Key",
             default_text=current,
-            ok="Save",
+            ok="Save Key",
             cancel="Cancel",
             dimensions=(360, 24),
             secure=True,
@@ -1726,7 +1837,10 @@ class CodeBoneApp(rumps.App):
             return
         try:
             modules.Keychain().set(module_id, key)
-            rumps.notification("codebone", "API Key Saved", f"{name} updated.")
+            self._update_modules_menu()
+            self._update_brain_checks()
+            self._update_models_menu()
+            rumps.notification("codebone", "API Key Saved", f"Updated API key for '{name}'.")
         except RuntimeError as exc:
             rumps.alert("API Keys", str(exc))
 
@@ -1844,7 +1958,7 @@ class CodeBoneApp(rumps.App):
         auto_scan_on = self.config.is_auto_scan_enabled(project)
         auto_scan_item = rumps.MenuItem(
             "Auto-Scan on Save",
-            callback=lambda _, target=project: self.toggle_project_auto_scan(target),
+            callback=lambda sender, target=project: self.toggle_project_auto_scan(target, sender),
         )
         auto_scan_item.state = auto_scan_on
         _set_symbol_icon(auto_scan_item, "bolt.badge.automatic")
@@ -1852,13 +1966,12 @@ class CodeBoneApp(rumps.App):
 
         item.add(None)
         if info:
-            nodes = rumps.MenuItem(
-                f"{_fmt_count(info['nodes'])} Nodes — Open Map",
+            map_item = rumps.MenuItem(
+                f"Open Map ({_fmt_count(info['nodes'])} Nodes · {_fmt_count(info['connections'])} Connections)",
                 callback=lambda _, target=project: self.view_project_map(target),
             )
-            _set_symbol_icon(nodes, "point.3.connected.trianglepath.dotted")
-            item.add(nodes)
-            item.add(make_info_item(f"{_fmt_count(info['connections'])} Connections"))
+            _set_symbol_icon(map_item, "point.3.connected.trianglepath.dotted")
+            item.add(map_item)
         else:
             item.add(make_info_item("Not Scanned Yet"))
 
@@ -1921,11 +2034,13 @@ class CodeBoneApp(rumps.App):
             _set_symbol_icon(clear_item, "trash")
             self.projects_menu.add(clear_item)
 
-    def toggle_project_auto_scan(self, project: Path):
+    def toggle_project_auto_scan(self, project: Path, sender: Optional[rumps.MenuItem] = None):
         """Toggle automatic scanning on file save for the given project folder."""
         is_enabled = self.config.is_auto_scan_enabled(project)
         new_state = not is_enabled
         self.config.set_auto_scan_enabled(project, new_state)
+        if sender is not None:
+            sender.state = new_state
         state_word = "enabled" if new_state else "disabled"
         rumps.notification(
             "codebone",
@@ -1933,7 +2048,7 @@ class CodeBoneApp(rumps.App):
             f"Auto-scan on save is now {state_word} for '{project.name}'.",
         )
         self._update_projects_menu()
-        self._update_quick_access_items()
+        self._update_quick_access_menu()
 
     def remove_from_workspace(self, p: Path):
         """Remove a project from the workspace without deleting its folder or saved map."""
@@ -2063,23 +2178,23 @@ class CodeBoneApp(rumps.App):
         master_on = bool(self.config.get("modules_enabled"))
         active = set(modules.enabled_apps(self.config))
 
-        # Header info
-        self.modules_menu.add(make_info_item("Shared Engine (Same APIs)"))
-
-        # 1. Status line — mirrors Map Agent's status line
-        if master_on and selected:
-            status_text = f"Active: {selected['name']} (Routed ✓)"
-        elif master_on:
-            status_text = "Active: Enabled (No model picked)"
+        if not master_on:
+            active_coding_name = "Default Setup (Off)"
+        elif selected:
+            active_coding_name = modules.format_model_name(selected)
         else:
-            status_text = "Active: Off (Default agent config)"
-        self.modules_menu.add(make_info_item(status_text))
+            active_coding_name = "Custom Model (None Selected)"
+
+        # 1. Active Model info
+        self.modules_menu.add(make_info_item("Active Model"))
+        self.modules_menu.add(make_info_item(active_coding_name))
         self.modules_menu.add(None)
 
+        # 2. Switch row
         self.modules_menu.add(self.modules_switch_item)
         self.modules_menu.add(None)
 
-        # 2. Local Models section — mirrors Map Agent's local section
+        # 3. Local Models section
         self.modules_menu.add(make_info_item("Local Models"))
         local_mods = [
             m for m in library
@@ -2092,48 +2207,44 @@ class CodeBoneApp(rumps.App):
 
         if local_mods:
             for m in local_mods:
+                m_label = modules.format_model_name(m)
                 item = rumps.MenuItem(
-                    m["name"],
+                    m_label,
                     callback=(lambda _, mid=m["id"]: self.pick_module(mid)) if master_on else None,
                 )
                 _set_symbol_icon(item, "network")
                 item.state = bool(selected and selected["id"] == m["id"])
                 self.modules_menu.add(item)
         else:
-            ollama_item = rumps.MenuItem(
-                "Local Server (Ollama)...",
-                callback=lambda _: self._add_local_ollama_module(),
+            builtin_hint = rumps.MenuItem(
+                "Built-in Qwen 0.5B (Metal GPU)",
+                callback=None,
             )
-            _set_symbol_icon(ollama_item, "network")
-            self.modules_menu.add(ollama_item)
+            _set_symbol_icon(builtin_hint, "cpu")
+            self.modules_menu.add(builtin_hint)
 
         self.modules_menu.add(None)
 
-        # 3. Online API Models section — mirrors Map Agent's online section
+        # 4. Online API Models section
         self.modules_menu.add(make_info_item("Online API Models"))
-        for m in online_mods:
-            item = rumps.MenuItem(
-                m["name"],
-                callback=(lambda _, mid=m["id"]: self.pick_module(mid)) if master_on else None,
-            )
-            _set_symbol_icon(item, "cloud")
-            item.state = bool(selected and selected["id"] == m["id"])
-            self.modules_menu.add(item)
-
-        if not online_mods:
-            for preset in modules.PRESETS:
-                if "local" in preset["name"].lower():
-                    continue
+        if online_mods:
+            for m in online_mods:
+                m_label = modules.format_model_name(m)
                 item = rumps.MenuItem(
-                    f"{preset['name']}...",
-                    callback=lambda _, p=preset: self._add_preset_module(p),
+                    m_label,
+                    callback=(lambda _, mid=m["id"]: self.pick_module(mid)) if master_on else None,
                 )
                 _set_symbol_icon(item, "cloud")
+                item.state = bool(selected and selected["id"] == m["id"])
                 self.modules_menu.add(item)
+        else:
+            add_hint = rumps.MenuItem("Add Model in Models...", callback=self.add_module_dialog)
+            _set_symbol_icon(add_hint, "cloud")
+            self.modules_menu.add(add_hint)
 
         self.modules_menu.add(None)
 
-        # 4. Actions
+        # 5. Actions
         add_item = rumps.MenuItem("Add Model...", callback=self.add_module_dialog)
         _set_symbol_icon(add_item, "plus")
         self.modules_menu.add(add_item)
@@ -2350,6 +2461,7 @@ class CodeBoneApp(rumps.App):
         except (ValueError, modules.SettingsUnreadable) as exc:
             rumps.alert("Coding Agent", str(exc))
         self._update_modules_menu()
+        self._update_models_menu()
 
     def add_module_dialog(self, _):
         from . import modules
@@ -2390,6 +2502,8 @@ class CodeBoneApp(rumps.App):
                     self.config.set("module_selected", module["id"])
                     self.config.set("modules_enabled", True)
                     self._update_modules_menu()
+                    self._update_brain_checks()
+                    self._update_models_menu()
                     rumps.notification("codebone", "Coding Agent Synced", f"Now using {name} for coding agents.")
                     return
                 except Exception as exc:
@@ -2435,9 +2549,11 @@ class CodeBoneApp(rumps.App):
             module = modules.add_module(self.config, name, model, key, anthropic_url, openai_url)
             self.config.set("module_selected", module["id"])
         except (ValueError, RuntimeError) as exc:
-            rumps.alert("Add Coding Model", str(exc))
+            rumps.alert("Add Model", str(exc))
             return
         self._update_modules_menu()
+        self._update_brain_checks()
+        self._update_models_menu()
         self._check_module(module, key)
 
     def _check_module(self, module: dict, key: str):
@@ -2469,13 +2585,13 @@ class CodeBoneApp(rumps.App):
 
         threading.Thread(target=_run, daemon=True, name="codebone-module-test").start()
 
-    def test_selected_module(self, _):
+    def test_selected_module(self, _, target_mod: Optional[dict] = None):
         from . import modules
 
-        module = modules.get_module(self.config, self.config.get("module_selected"))
+        module = target_mod or modules.get_module(self.config, self.config.get("module_selected"))
         key = modules.Keychain().get(module["id"]) if module else None
         if not module or not key:
-            rumps.alert("Coding Agent", "Select a model with a stored key first.")
+            rumps.alert("Model Test", "Select a model with a stored key first.")
             return
         self._check_module(module, key)
 
@@ -2483,13 +2599,15 @@ class CodeBoneApp(rumps.App):
         from . import modules
 
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-        if rumps.alert("Remove Coding Model", f"Remove {name}, switch its apps back and delete its API key?", ok="Remove", cancel="Cancel") != 1:
+        if rumps.alert("Remove Model", f"Remove '{name}', switch its apps back and delete its API key?", ok="Remove", cancel="Cancel") != 1:
             return
         try:
             modules.remove_module(self.config, module_id)
         except modules.SettingsUnreadable as exc:
-            rumps.alert("Coding Agent", str(exc))
+            rumps.alert("Model", str(exc))
         self._update_modules_menu()
+        self._update_brain_checks()
+        self._update_models_menu()
 
     def clear_recent_projects(self, _):
         """Explain the scope before clearing only the three recent main-menu shortcuts."""

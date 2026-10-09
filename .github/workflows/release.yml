@@ -25,7 +25,7 @@ permissions:
 jobs:
   release:
     runs-on: macos-14
-    if: github.event_name == 'workflow_dispatch' || !contains(fromJSON('["refs/tags/v1.0", "refs/tags/v1.1", "refs/tags/v1.2", "refs/tags/v1.3", "refs/tags/v1.4", "refs/tags/v1.5", "refs/tags/v1.6"]'), github.ref)
+    if: github.event_name == 'workflow_dispatch' || (!startsWith(github.ref, 'refs/tags/v1.0') && !startsWith(github.ref, 'refs/tags/v1.1') && !startsWith(github.ref, 'refs/tags/v1.2') && !startsWith(github.ref, 'refs/tags/v1.3') && !startsWith(github.ref, 'refs/tags/v1.4') && !startsWith(github.ref, 'refs/tags/v1.5') && !startsWith(github.ref, 'refs/tags/v1.6'))
     steps:
       - uses: actions/checkout@v4
         with:

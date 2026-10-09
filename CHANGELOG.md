@@ -4,7 +4,7 @@ All notable changes to codebone will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Official milestone releases are clean numbers (`1.0`, `1.1`, `1.2`, `1.3`, `1.4`, `1.5`, `1.6`, `1.7`).
-Development preview snapshots leading up to a milestone use letter tags (`.a`, `.b`) during active iteration.
+Development preview snapshots leading up to each milestone use letter releases (`.a`, `.b`, `.c`).
 
 ---
 
@@ -45,18 +45,68 @@ Development preview snapshots leading up to a milestone use letter tags (`.a`, `
 
 ---
 
-## [1.6] - 2026-10-08
-*Release Automation & Milestone Consolidation*
+## [1.7c] - 2026-10-09
+*Pre-Release*
 
 ### Added
-- **Release Workflow Automation**: Release pipeline gated to explicit tags (`v*`) or manual triggers with automated artifact verification.
+- **Per-Project Auto-Scan Toggle**: Added `Auto-Scan on Save` setting directly in each project's menu. Defaults to enabled (`ON`), allowing developers to easily disable automatic scanning on file saves per project.
+- **Cancelable Scan Controls**: Enhanced scan management with instant `Cancel Scan` and `Pause Scanning`/`Resume Scanning` controls with live ETA feedback in the macOS menu bar.
+
+### Changed
+- **Terminology Standardization**: Standardized all UI labels, menus, alerts, and notifications from "Index / Indexing" to "Scan / Scanning / Scanned".
+
+---
+
+## [1.7b] - 2026-10-09
+*Pre-Release*
+
+### Fixed
+- **App Startup & Menu Bar Crash**: Restored missing Cocoa menu items (`open_map_item`, `documentation_item`, `feedback_item`, `check_updates_item`, `uninstall_item`) and fixed missing `time` import after menu flattening.
+- **Automated Startup Suite**: Added menu item regression test in test suite to ensure 100% launch reliability.
+
+---
+
+## [1.7a] - 2026-10-09
+*Pre-Release*
+
+### Added
+- **True Hybrid Architecture Preview**: Combines deterministic multi-language structural static scanning with local & BYOK LLM semantic synthesis.
+- **Resilient Agent Routing & Verification**: Non-intrusive diagnostic warnings for transient connection checks without disabling preferences.
+- **Enhanced Codex Integration**: Dual injection of `OPENAI_BASE_URL` and `OPENAI_API_BASE` in Codex config for broader CLI compatibility.
+- **Thermal Profile & System Specs**: Battery-aware debouncing and passive thermal cooling guidelines documented.
+
+---
+
+## [1.6] - 2026-10-08
+*Official Milestone Release*
+
+### Added
+- **Automated Release Pipeline**: CI workflow building signed DMGs, zip archives, and computing SHA256 checksums on tag push.
+- **In-App Auto-Updater**: Native version comparison in `src/updater.py` with support for milestone and letter releases.
+- **Homebrew Formula Automation**: Automated Homebrew formula synchronization upon release publication.
+
+---
+
+## [1.6b] - 2026-10-08
+*Pre-Release*
+
+### Added
+- **Release CI Automation**: GitHub Actions release pipeline building signed DMGs and publishing release assets.
+- **Homebrew Formula Sync**: Automated update of download URL and SHA256 in `Formula/codebone.rb`.
+
+---
+
+## [1.6a] - 2026-10-08
+*Pre-Release*
+
+### Added
+- **Release Workflow Automation**: Release pipeline gated to explicit tags (`v*`) to prevent automated release spam on main.
 - **Letter-Based Auto-Updater**: Native comparison in `src/updater.py` with SHA256 checksum validation.
-- **Milestone Consolidation**: Streamlined release hierarchy into full generations with granular `.a`, `.b` interim tracking.
 
 ---
 
 ## [1.5] - 2026-09-26
-*Ranked Search, Project TL;DR & Graph Performance*
+*Official Milestone Release*
 
 ### Added
 - **Architectural Project TLDR**: `codebone_tldr` tool synthesizing concise architectural executive summaries of indexed codebases via MCP and HTTP API.
@@ -69,8 +119,35 @@ Development preview snapshots leading up to a milestone use letter tags (`.a`, `
 
 ---
 
+## [1.5c] - 2026-09-26
+*Pre-Release*
+
+### Added
+- **Architectural Project TLDR via MCP & API**: Introduced `codebone_tldr` and `/codebone/tldr` for whole-codebase executive summaries.
+
+---
+
+## [1.5b] - 2026-09-26
+*Pre-Release*
+
+### Added
+- **Ranked Word and Meaning Search**: `cb(query=...)` searches symbols, comments, and summaries with scoring and definition matching.
+- **2-Step Offer Protocol**: First call returns lightweight offer; `whisper=true` returns the full ranked context.
+- **Smart Domain & Asset Filters**: Domain boosting and asset filtering flags.
+
+---
+
+## [1.5a] - 2026-09-26
+*Pre-Release*
+
+### Changed
+- **Star Topology Graph Grouping**: Collapses large entity groups into stars through central structural hubs.
+- **Standalone File Neighbor Linking**: Connects isolated files to folder neighbours.
+
+---
+
 ## [1.4] - 2026-09-25
-*Multi-Folder Workspaces & Live Call Chains*
+*Official Milestone Release*
 
 ### Added
 - **Multi-Folder Project Workspace**: Support for multiple project folders in workspace with sequential indexing and rolling snapshots.
@@ -81,8 +158,29 @@ Development preview snapshots leading up to a milestone use letter tags (`.a`, `
 
 ---
 
+## [1.4b] - 2026-09-25
+*Pre-Release*
+
+### Added
+- **Multi-Folder Workspaces**: Support for multi-folder workspaces and sequential background scanning.
+- **Unified Settings**: Unified modules, models, API keys, and workspace management.
+
+### Fixed
+- **Scan Adoption**: Route depths and error tolerance fixes.
+
+---
+
+## [1.4a] - 2026-09-25
+*Pre-Release*
+
+### Added
+- **Dynamic Map Deepening**: Sources re-read at query time to capture import edges, fetch calls, and table references.
+- **Live Call Chains**: Visual call edges and route role badges.
+
+---
+
 ## [1.3] - 2026-09-24
-*Modules Model Library, Graph Clustering & Translation Bridges*
+*Official Milestone Release*
 
 ### Added
 - **Modules Model Library**: Pluggable models (MiMo V2.6 Pro, local/cloud endpoints) with per-app routing switches and macOS Keychain storage.
@@ -96,8 +194,35 @@ Development preview snapshots leading up to a milestone use letter tags (`.a`, `
 
 ---
 
+## [1.3c] - 2026-09-24
+*Pre-Release*
+
+### Added
+- **Translation Bridge & OpenRouter**: Anthropic ↔ OpenAI message translation bridge and OpenRouter integration.
+- **Lightweight Delta Updates**: Delta update packages omitting base model binaries.
+
+---
+
+## [1.3b] - 2026-09-24
+*Pre-Release*
+
+### Added
+- **Import Graph Edges**: Cross-file dependency edges for Python and JS/TS imports.
+- **Graph Community Clustering**: Louvain modularity clustering over co-occurrence graphs.
+
+---
+
+## [1.3a] - 2026-09-24
+*Pre-Release*
+
+### Added
+- **Modules Model Library**: Pluggable models with per-app routing switches and macOS Keychain storage.
+- **In-App Uninstaller**: Clean removal of app, data, models, and MCP client entries.
+
+---
+
 ## [1.2] - 2026-09-23
-*Live Graph UI, Multi-Client MCP Ecosystem & Native Launcher*
+*Official Milestone Release*
 
 ### Added
 - **Live Graph UI Redesign**: Slate-and-iris dark glassmorphism interface with category filter pills, tooltips, and interactive inspector drawer.
@@ -111,8 +236,30 @@ Development preview snapshots leading up to a milestone use letter tags (`.a`, `
 
 ---
 
+## [1.2b] - 2026-09-23
+*Pre-Release*
+
+### Added
+- **Zero-Config MCP Package**: `codebone-mcp` on npm allowing instant bridge invocation via `npx -y codebone-mcp`.
+- **Multi-Client MCP Auto-Registration**: Automatic registration for Gemini / Antigravity IDE, Claude Desktop, and Cursor.
+- **Native Mach-O Launcher**: Standalone binary ensuring instant menu bar icon visibility and Gatekeeper compatibility.
+- **Concise `cb` MCP Tool**: Streamlined context query tool for LLM agent rules.
+
+---
+
+## [1.2a] - 2026-09-23
+*Pre-Release*
+
+### Added
+- **Live Graph UI Redesign**: Slate-and-iris dark glassmorphism interface with category filter pills, tooltips, and interactive inspector drawer.
+- **Native macOS Auto-Updater**: Automated update checking, downloading, codesign validation, and atomic bundle replacement.
+- **SF Symbols & Full Disk Access Automation**: Native AppKit icons and automated privacy preflight checks.
+- **Recent Projects History**: 1-click project switching directly in the main menu bar.
+
+---
+
 ## [1.1] - 2026-09-22
-*Local Model Inference & Native Cocoa Menu Bar*
+*Official Milestone Release*
 
 ### Added
 - **Qwen 0.5B Architecture Unification**: Sub-second local inference with ~390 MB RAM footprint on Apple Silicon Metal.
@@ -122,8 +269,26 @@ Development preview snapshots leading up to a milestone use letter tags (`.a`, `
 
 ---
 
+## [1.1b] - 2026-09-22
+*Pre-Release*
+
+### Added
+- **Tailscale-Style Popover Header**: Master toggle switch, live status indicator dot, active model selector, and native symbols.
+- **Live Graph Resilience**: Infinite loading spinner fixes and prominent "Scan Project Now" trigger.
+
+---
+
+## [1.1a] - 2026-09-22
+*Pre-Release*
+
+### Added
+- **Qwen 0.5B Architecture Unification**: Sub-second local inference with ~390 MB RAM footprint on Apple Silicon Metal.
+- **Native Cocoa Menu Bar**: 100% native AppKit interface with settings, live stats, and ETA calculation.
+
+---
+
 ## [1.0] - 2026-09-22
-*Initial Release — Real-Time Architecture Intelligence*
+*Official Milestone Release*
 
 ### Added
 - **24/7 Background Engine**: macOS menu bar assistant watching project files on save with battery-aware debouncing.
@@ -132,4 +297,26 @@ Development preview snapshots leading up to a milestone use letter tags (`.a`, `
 - **Model Context Protocol (MCP)**: Native server for Claude Desktop, Cursor, Gemini, and Codex.
 - **Deep Scan Mode**: Background 7B model re-analysis option with live menu bar progress reporting.
 - **Brand Standardization**: Application bundle, CLI, MCP tools, and plists unified under the CodeBone name.
+- **Secure Sandboxing**: Isolated XML container parsing with anti-jailbreak directives.
+
+---
+
+## [1.0b] - 2026-09-22
+*Pre-Release*
+
+### Added
+- **Deep Scan Mode**: Background 7B model re-analysis option with live menu bar progress reporting.
+- **Brand Standardization**: Application bundle, CLI, MCP tools, and plists unified under the CodeBone name.
+- **Day-One Performance Patch**: Level-of-detail filtering, WAL+RLock concurrency, and `.gitignore` respect.
+
+---
+
+## [1.0a] - 2026-09-22
+*Pre-Release*
+
+### Added
+- **24/7 Background Engine**: macOS menu bar assistant watching project files on save with battery-aware debouncing.
+- **Apple Silicon Metal GPU Inference**: Local LLM inference via `llama-cpp-python` with Metal acceleration.
+- **Semantic System Graph**: Real-time mapping of business domains and cross-module relationships.
+- **Model Context Protocol (MCP)**: Native server for Claude Desktop, Cursor, Gemini, and Codex.
 - **Secure Sandboxing**: Isolated XML container parsing with anti-jailbreak directives.

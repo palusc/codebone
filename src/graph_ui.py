@@ -1098,10 +1098,10 @@ function buildGraph(graph, fit) {
 
   const fresh = nodes.filter(n => !previous[n.id]).length;
   if (fit || fresh > nodes.length / 2) {
-    runForceLayout(nodes.length > 2500 ? 12 : nodes.length > 1200 ? 20 : nodes.length > 600 ? 40 : nodes.length > 300 ? 70 : 110);
+    runForceLayout(nodes.length > 2500 ? 18 : nodes.length > 1200 ? 30 : nodes.length > 600 ? 60 : nodes.length > 300 ? 90 : 140);
     fitView();
   } else if (fresh) {
-    runForceLayout(25);  // settle only the new nodes' neighbourhood; keep the user's view
+    runForceLayout(35);  // settle only the new nodes' neighbourhood; keep the user's view
   }
   if (selectedNode && nodeById[selectedNode.id]) selectNode(nodeById[selectedNode.id], true); else if (selectedNode) closeSidebar();
   hoveredNode = null;
@@ -1110,7 +1110,7 @@ function buildGraph(graph, fit) {
 
 // Repulsion uses a spatial grid (neighbouring cells only), so a tick costs O(N) instead of O(N^2).
 function runForceLayout(ticks) {
-  const CELL = 350;
+  const CELL = 420;
   for (let t = 0; t < ticks; t++) {
     const grid = new Map();
     for (const n of nodes) {
@@ -1127,14 +1127,15 @@ function runForceLayout(ticks) {
           const dx = a.x - b.x, dy = a.y - b.y;
           const dist = Math.sqrt(dx * dx + dy * dy) || 1;
           if (dist > CELL) continue;
-          const f = 1900 / (dist * dist);
+          // Stronger repulsion so nodes push apart cleanly and never look clumped/pasted
+          const f = 7500 / (dist * dist);
           a.vx += (dx / dist) * f;
           a.vy += (dy / dist) * f;
         }
       }
-      // weak pull to the centre keeps unconnected clusters from drifting apart
-      a.vx += (window.innerWidth / 2 - a.x) * 0.004;
-      a.vy += (window.innerHeight / 2 - a.y) * 0.004;
+      // Gentle center pull keeps disconnected clusters together without squeezing them
+      a.vx += (window.innerWidth / 2 - a.x) * 0.0018;
+      a.vy += (window.innerHeight / 2 - a.y) * 0.0018;
       a.vx *= 0.82;
       a.vy *= 0.82;
     }
@@ -1142,7 +1143,8 @@ function runForceLayout(ticks) {
       const a = e.a, b = e.b;
       const dx = b.x - a.x, dy = b.y - a.y;
       const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-      const f = (dist - (e.type === 'domain' ? 120 : 85)) * 0.055;
+      const restLen = e.type === 'domain' ? 175 : 125;
+      const f = (dist - restLen) * 0.045;
       a.vx += (dx / dist) * f; a.vy += (dy / dist) * f;
       b.vx -= (dx / dist) * f; b.vy -= (dy / dist) * f;
     }

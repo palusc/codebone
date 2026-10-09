@@ -114,6 +114,8 @@ def _set_symbol_icon(menu_item: Optional[rumps.MenuItem], symbol_name: str, size
     """Sets a native Apple SF Symbol vector icon on an NSMenuItem with standard point size."""
     if menu_item is None:
         return
+    if getattr(menu_item, "_choice_view", None) is not None:
+        return
     raw_item = getattr(menu_item, "_menuitem", menu_item)
     try:
         img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(symbol_name, None)
@@ -390,21 +392,39 @@ class ChoiceRowView(NSView):
             NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(inset, 5.0, 5.0).fill()
 
 
-def make_choice_item(title: str, checked: bool, on_click, tooltip: str = "", height: float = 22.0, width: float = 216.0) -> rumps.MenuItem:
-    """Menu row that can be selected repeatedly without the menu closing."""
+def make_choice_item(title: str, checked: Optional[bool], on_click, tooltip: str = "", height: float = 22.0, width: float = 216.0, icon: str = "") -> rumps.MenuItem:
+    """Menu row that can be clicked repeatedly without the menu closing.
+
+    checked=True/False shows a selection checkmark column; checked=None makes it a plain action row,
+    optionally with an SF Symbol `icon` in that column."""
     item = rumps.MenuItem(title, callback=None)
     view = ChoiceRowView.alloc().initWithFrame_(NSRect(NSPoint(0, 0), NSSize(width, height)))
     view.setAutoresizingMask_(NSViewWidthSizable)
     view._on_click = on_click
-    check = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(10, 2), NSSize(16, height - 4)))
-    check.setStringValue_("✓" if checked else "")
-    check.setFont_(NSFont.systemFontOfSize_(13))
-    check.setTextColor_(NSColor.labelColor())
-    check.setBezeled_(False)
-    check.setDrawsBackground_(False)
-    check.setEditable_(False)
-    check.setSelectable_(False)
-    view.addSubview_(check)
+    glyph = None
+    if icon:
+        try:
+            glyph = NSImage.imageWithSystemSymbolName_accessibilityDescription_(icon, None)
+        except Exception:
+            glyph = None
+    if glyph is not None and checked is None:
+        glyph_view = NSImageView.alloc().initWithFrame_(NSRect(NSPoint(9, (height - 15) / 2), NSSize(15, 15)))
+        glyph_view.setImage_(glyph)
+        try:
+            glyph_view.setContentTintColor_(NSColor.labelColor())
+        except Exception:
+            pass
+        view.addSubview_(glyph_view)
+    else:
+        check = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(10, 2), NSSize(16, height - 4)))
+        check.setStringValue_("✓" if checked else "")
+        check.setFont_(NSFont.systemFontOfSize_(13))
+        check.setTextColor_(NSColor.labelColor())
+        check.setBezeled_(False)
+        check.setDrawsBackground_(False)
+        check.setEditable_(False)
+        check.setSelectable_(False)
+        view.addSubview_(check)
     label = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(30, 2), NSSize(width - 40, height - 4)))
     label.setAutoresizingMask_(NSViewWidthSizable)
     label.setStringValue_(title)
@@ -416,6 +436,8 @@ def make_choice_item(title: str, checked: bool, on_click, tooltip: str = "", hei
     label.setSelectable_(False)
     label.cell().setLineBreakMode_(NSLineBreakByTruncatingTail)
     view.addSubview_(label)
+    view._label = label
+    item._choice_view = view
     try:
         item._menuitem.setView_(view)
         item._menuitem.setToolTip_(tooltip or title)
@@ -703,8 +725,7 @@ class CodeBoneApp(rumps.App):
         self.projects_menu = rumps.MenuItem("Projects")
         _set_symbol_icon(self.projects_menu, "folder")
 
-        self.mcp_setup_item = rumps.MenuItem("Connect Coding Agent (MCP)...", callback=self.open_mcp_setup)
-        _set_symbol_icon(self.mcp_setup_item, "bolt.fill")
+        self.mcp_setup_item = make_choice_item("Connect Coding Agent (MCP)", checked=None, on_click=self.open_mcp_setup, icon="bolt.fill")
 
         # Model modules: API endpoints Claude Code can be routed through (for coding, not for indexing).
         # The on/off switch lives on its own row (self.modules_switch_item); this submenu holds the
@@ -749,8 +770,7 @@ class CodeBoneApp(rumps.App):
         self.adopt_scan_item = rumps.MenuItem("Merge with Previous Scan...", callback=self.choose_adopt_scan)
         _set_symbol_icon(self.adopt_scan_item, "arrow.triangle.merge")
 
-        self.copy_curl_item = rumps.MenuItem("Copy AI Context (curl)", callback=self.copy_curl)
-        _set_symbol_icon(self.copy_curl_item, "doc.on.clipboard")
+        self.copy_curl_item = make_choice_item("Copy AI Context (curl)", checked=None, on_click=self.copy_curl, icon="doc.on.clipboard")
 
         self.rescan_item = rumps.MenuItem("Scan Project Now", callback=self.rescan_workspace)
         _set_symbol_icon(self.rescan_item, "arrow.clockwise")
@@ -1199,13 +1219,18 @@ class CodeBoneApp(rumps.App):
         threading.Thread(target=_run, daemon=True, name="codebone-workspace-scan").start()
 
     def _run_single_scan(self, p: Path):
-        """Scans exactly one workspace folder and keeps the current project active."""
+        """Scans exactly one workspace folder and automatically activates it as the current project."""
         def _run():
             def _on_prog(cur, tot, f):
                 self._on_main(self._push_stats)
             try:
                 result = self.service.scan_project(p, on_progress=_on_prog)
                 self._last_completed_scans[str(p.resolve())] = time.time()
+                self.config.record_recent_scanned_project(str(p.resolve()))
+                try:
+                    self.service.activate_project(p)
+                except Exception as act_err:
+                    logger.warning("Could not automatically activate scanned project %s: %s", p, act_err)
                 rumps.notification(
                     "codebone",
                     "Scan Complete",
@@ -1313,7 +1338,7 @@ class CodeBoneApp(rumps.App):
                         except Exception as e:
                             logger.warning("Failed to copy TLDR to clipboard: %s", e)
                     elif choice == -1:  # Open Map button
-                        self._open_browser_at_url(f"http://127.0.0.1:{self.service.config.port}")
+                        self.open_url(f"http://127.0.0.1:{self.service.config.port}")
 
                 self._on_main(_show)
             except Exception as exc:
@@ -1511,10 +1536,14 @@ class CodeBoneApp(rumps.App):
         if not self.icon:
             self.title = "codebone"
         if hasattr(self, "mcp_setup_item") and self.mcp_setup_item:
-            if self.config.is_first_days():
-                self.mcp_setup_item.title = "⚡ Connect Coding Agent (MCP)..."
-            else:
-                self.mcp_setup_item.title = "Connect Coding Agent (MCP)..."
+            mcp_t = "⚡ Connect Coding Agent (MCP)" if self.config.is_first_days() else "Connect Coding Agent (MCP)"
+            self.mcp_setup_item.title = mcp_t
+            v = getattr(self.mcp_setup_item, "_choice_view", None)
+            if v and hasattr(v, "_label") and v._label:
+                try:
+                    v._label.setStringValue_(mcp_t)
+                except Exception:
+                    pass
         self._apply_all_icons()
         self._update_quick_access_menu()
         self._update_projects_menu()
@@ -1806,7 +1835,7 @@ class CodeBoneApp(rumps.App):
 
     def _copy_text(self, text: str, label: str):
         if not text:
-            rumps.alert("Copy", f"No {label} available to copy.")
+            rumps.notification("codebone", "Copy", f"No {label} available to copy.")
             return
         copy_to_clipboard(text)
         rumps.notification("codebone", f"{label} Copied", f"Copied '{text}' to clipboard.")
@@ -1815,7 +1844,7 @@ class CodeBoneApp(rumps.App):
         from . import modules
         key = modules.Keychain().get(module_id)
         if not key:
-            rumps.alert("API Key", "No API key stored for this model.")
+            rumps.notification("codebone", "API Key", "No API key stored for this model.")
             return
         copy_to_clipboard(key)
         rumps.notification("codebone", "API Key Copied", "API key copied to clipboard.")
@@ -1845,8 +1874,7 @@ class CodeBoneApp(rumps.App):
         _set_symbol_icon(builtin_privacy, "lock.shield")
         builtin_item.add(builtin_privacy)
         builtin_item.add(None)
-        builtin_test = rumps.MenuItem("Test Local Inference", callback=self.test_selected_brain)
-        _set_symbol_icon(builtin_test, "bolt")
+        builtin_test = make_choice_item("Test Local Inference", None, lambda: self.test_selected_brain(None), icon="bolt")
         builtin_item.add(builtin_test)
         self.models_menu.add(builtin_item)
         self.models_menu.add(None)
@@ -1863,25 +1891,16 @@ class CodeBoneApp(rumps.App):
 
                 # Copy Endpoints & Credentials directly in model settings
                 model_id_val = m.get("model", "")
-                copy_id_item = rumps.MenuItem(f"Copy Model ID ({model_id_val})", callback=lambda _, val=model_id_val: self._copy_text(val, "Model ID"))
-                _set_symbol_icon(copy_id_item, "doc.on.clipboard")
-                item.add(copy_id_item)
-
-                copy_key_item = rumps.MenuItem("Copy API Key", callback=lambda _, mid=m["id"]: self._copy_module_key(mid))
-                _set_symbol_icon(copy_key_item, "key")
-                item.add(copy_key_item)
+                item.add(make_choice_item(f"Copy Model ID ({model_id_val})", None, lambda val=model_id_val: self._copy_text(val, "Model ID"), icon="doc.on.clipboard"))
+                item.add(make_choice_item("Copy API Key", None, lambda mid=m["id"]: self._copy_module_key(mid), icon="key"))
 
                 openai_url = m.get("openai_url")
                 if openai_url:
-                    copy_openai = rumps.MenuItem("Copy OpenAI Base URL", callback=lambda _, val=openai_url: self._copy_text(val, "OpenAI URL"))
-                    _set_symbol_icon(copy_openai, "link")
-                    item.add(copy_openai)
+                    item.add(make_choice_item("Copy OpenAI Base URL", None, lambda val=openai_url: self._copy_text(val, "OpenAI URL"), icon="link"))
 
                 anthropic_url = m.get("anthropic_url")
                 if anthropic_url:
-                    copy_anthropic = rumps.MenuItem("Copy Anthropic Base URL", callback=lambda _, val=anthropic_url: self._copy_text(val, "Anthropic URL"))
-                    _set_symbol_icon(copy_anthropic, "link")
-                    item.add(copy_anthropic)
+                    item.add(make_choice_item("Copy Anthropic Base URL", None, lambda val=anthropic_url: self._copy_text(val, "Anthropic URL"), icon="link"))
 
                 item.add(None)
 
@@ -1899,12 +1918,7 @@ class CodeBoneApp(rumps.App):
                 _set_symbol_icon(rename_item, "pencil")
                 item.add(rename_item)
 
-                test_item = rumps.MenuItem(
-                    "Test Connection",
-                    callback=lambda _, mid=m["id"]: self.test_module_by_id(mid),
-                )
-                _set_symbol_icon(test_item, "bolt")
-                item.add(test_item)
+                item.add(make_choice_item("Test Connection", None, lambda mid=m["id"]: self.test_module_by_id(mid), icon="bolt"))
 
                 item.add(None)
                 remove_item = rumps.MenuItem(
@@ -2035,11 +2049,12 @@ class CodeBoneApp(rumps.App):
             item.clear()
 
         if info and active_str != str(project):
-            select_item = rumps.MenuItem(
+            select_item = make_choice_item(
                 "Set as Current Project",
-                callback=lambda _, target=project: self.activate_project_from_menu(target),
+                checked=None,
+                on_click=lambda target=project: self.activate_project_from_menu(target),
+                icon="checkmark.circle",
             )
-            _set_symbol_icon(select_item, "checkmark.circle")
             item.add(select_item)
         elif active_str == str(project):
             item.add(make_info_item("Current Project"))
@@ -2057,6 +2072,14 @@ class CodeBoneApp(rumps.App):
             pass
         item.add(info_item)
 
+        copy_path_item = make_choice_item(
+            "Copy Path",
+            checked=None,
+            on_click=lambda target=project: self._copy_text(str(target.resolve()), "Project Path"),
+            icon="doc.on.clipboard",
+        )
+        item.add(copy_path_item)
+
         tldr_item = rumps.MenuItem(
             "TLDR...",
             callback=lambda _, target=project: self._run_project_tldr(target),
@@ -2065,20 +2088,20 @@ class CodeBoneApp(rumps.App):
         item.add(tldr_item)
 
         item.add(None)
-        scan_item = rumps.MenuItem(
+        scan_item = make_choice_item(
             "Scan",
-            callback=lambda _, target=project: self.start_project_scan(target),
+            checked=None,
+            on_click=lambda target=project: self.start_project_scan(target),
+            icon="arrow.clockwise",
         )
-        _set_symbol_icon(scan_item, "arrow.clockwise")
         item.add(scan_item)
 
         auto_scan_on = self.config.is_auto_scan_enabled(project)
-        auto_scan_item = rumps.MenuItem(
+        auto_scan_item = make_choice_item(
             "Auto-Scan on Save",
-            callback=lambda sender, target=project: self.toggle_project_auto_scan(target, sender),
+            checked=auto_scan_on,
+            on_click=lambda target=project: self.toggle_project_auto_scan(target, auto_scan_item),
         )
-        auto_scan_item.state = auto_scan_on
-        _set_symbol_icon(auto_scan_item, "bolt.badge.automatic")
         item.add(auto_scan_item)
 
         item.add(None)
@@ -2217,6 +2240,11 @@ class CodeBoneApp(rumps.App):
 
     def _activate_project(self, p: Path, open_map: bool):
         """Restore a project's saved map, then optionally open that exact map in the browser."""
+        if open_map:
+            try:
+                NSMenu.cancelTracking()
+            except Exception:
+                pass
         if self.config.project_path == p and self.service.watching:
             if open_map:
                 self.view_live_graph(None)
@@ -2239,6 +2267,8 @@ class CodeBoneApp(rumps.App):
                 self._update_ui_state()
                 if open_map:
                     self.view_live_graph(None)
+                else:
+                    rumps.notification("codebone", "Project Switched", f"Now active: '{p.name}'.")
 
             self._on_main(_done)
 
@@ -2279,6 +2309,10 @@ class CodeBoneApp(rumps.App):
             self._run_project_tldr(p)
 
     def reveal_project(self, p: Path):
+        try:
+            NSMenu.cancelTracking()
+        except Exception:
+            pass
         try:
             subprocess.Popen(["open", str(p)])
         except Exception as exc:
@@ -2434,6 +2468,10 @@ class CodeBoneApp(rumps.App):
             rumps.alert("Add Model", f"Failed to add model: {exc}")
 
     def open_url(self, url: str):
+        try:
+            NSMenu.cancelTracking()
+        except Exception:
+            pass
         try:
             subprocess.Popen(["open", url])
         except Exception as exc:
@@ -2668,14 +2706,16 @@ class CodeBoneApp(rumps.App):
                 results.append(("error", False, str(exc)))
 
             def _show():
-                NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
                 if not results:
-                    rumps.alert("Test Connection", f"{module['name']} has no Anthropic- or OpenAI-format URL to test.")
+                    rumps.notification("codebone", "Test Connection", f"{module['name']} has no Anthropic- or OpenAI-format URL to test.")
                     return
+                all_ok = all(ok for _, ok, _ in results)
                 lines = [f"{modules.FORMAT_NAMES.get(fmt, fmt)}: {'OK' if ok else 'failed'} — {msg}" for fmt, ok, msg in results]
-                rumps.alert("Test Connection", f"{module['name']}\n\n" + "\n".join(lines))
-                for fmt, ok, msg in results:
-                    rumps.notification("codebone", f"{module['name']} ({fmt} format): " + ("works" if ok else "failed"), msg)
+                rumps.notification(
+                    "codebone",
+                    f"{module['name']}: {'Connection Verified' if all_ok else 'Connection Failed'}",
+                    " · ".join(lines),
+                )
 
             self._on_main(_show)
 
@@ -2966,8 +3006,8 @@ class CodeBoneApp(rumps.App):
         except Exception as exc:
             rumps.notification("codebone", "Import Failed", str(exc))
 
-    def open_mcp_setup(self, _):
-        """Opens the GitHub MCP setup instructions section and re-patches MCP configs."""
+    def open_mcp_setup(self, _=None):
+        """Re-patches MCP configs for installed coding agents without navigating away."""
         try:
             from .server import patch_mcp_configs
             server_port = getattr(getattr(self, "server", None), "port", None) or self.config.get("active_port") or self.config.get("server_port", 8053)
@@ -2975,12 +3015,12 @@ class CodeBoneApp(rumps.App):
             rumps.notification("codebone", "Coding Agents Connected", "MCP configured for Claude Desktop, Claude Code, Cursor, Antigravity & Codex.")
         except Exception as exc:
             logger.warning("Could not patch MCP configs during open_mcp_setup: %s", exc)
-        from AppKit import NSURL, NSWorkspace
-        url = NSURL.URLWithString_("https://github.com/palusc/codebone#mcp-setup")
-        if url:
-            NSWorkspace.sharedWorkspace().openURL_(url)
 
-    def view_live_graph(self, _):
+    def view_live_graph(self, _=None):
+        try:
+            NSMenu.cancelTracking()
+        except Exception:
+            pass
         port = getattr(getattr(self, "server", None), "port", None) or self.config.get("active_port") or self.config.get("server_port", 8053)
         url = f"http://127.0.0.1:{port}/codebone/graph/ui"
         try:
@@ -2988,7 +3028,11 @@ class CodeBoneApp(rumps.App):
         except Exception as exc:
             logger.error("Failed to open graph UI: %s", exc)
 
-    def view_logs(self, _):
+    def view_logs(self, _=None):
+        try:
+            NSMenu.cancelTracking()
+        except Exception:
+            pass
         from .logging_setup import LOG_FILE
         try:
             subprocess.Popen(["open", "-a", "Console", str(LOG_FILE)])
@@ -3101,6 +3145,10 @@ class CodeBoneApp(rumps.App):
 
     def open_disk_access_settings(self, _):
         """Opens Full Disk Access in macOS System Settings and provides a guided dialog with 1-click Finder reveal."""
+        try:
+            NSMenu.cancelTracking()
+        except Exception:
+            pass
         try:
             open_full_disk_access_settings()
         except Exception as exc:

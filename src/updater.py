@@ -102,9 +102,16 @@ def check_for_updates(current_version: str = CURRENT_VERSION, timeout: int = 8) 
             data = json.loads(resp.read().decode("utf-8"))
     except Exception as exc:
         logger.error("Failed to check for updates from GitHub: %s", exc)
+        err_str = str(exc)
+        if any(m in err_str.lower() for m in ("nodename nor servname", "errno 8", "timed out", "connection refused", "temporary failure in name resolution")):
+            err_msg = "Could not connect to GitHub. Please check your internet connection and try again."
+        elif "403" in err_str or "rate limit" in err_str.lower():
+            err_msg = "GitHub API rate limit reached. Please try again in a few minutes."
+        else:
+            err_msg = f"Network or server error: {exc}"
         return {
             "update_available": False,
-            "error": str(exc),
+            "error": err_msg,
             "current_version": current_version,
             "latest_version": current_version,
             "download_url": None,

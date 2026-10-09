@@ -826,9 +826,14 @@ class CodeBoneApp(rumps.App):
             update_info = check_for_updates(current_version=CURRENT_VERSION)
         except Exception as exc:
             logger.error("Failed to check for updates: %s", exc)
+            err_str = str(exc)
+            if any(m in err_str.lower() for m in ("nodename nor servname", "errno 8", "timed out", "connection refused", "temporary failure")):
+                msg = "Could not connect to GitHub. Please check your internet connection and try again."
+            else:
+                msg = f"Could not check for updates:\n{exc}"
             rumps.alert(
-                title="Update Check Failed",
-                message=f"Could not connect to GitHub to check for updates:\n{exc}",
+                title="Update Check",
+                message=msg,
                 ok="OK",
             )
             return
@@ -837,8 +842,8 @@ class CodeBoneApp(rumps.App):
             if update_info.get("error"):
                 err_msg = update_info["error"]
                 rumps.alert(
-                    title="Update Check Failed",
-                    message=f"Could not check for updates:\n{err_msg}",
+                    title="Update Check",
+                    message=err_msg,
                     ok="OK",
                 )
             else:
@@ -1095,11 +1100,24 @@ class CodeBoneApp(rumps.App):
 
                 def _show():
                     NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-                    rumps.alert(
+                    body = result["text"]
+                    choice = rumps.alert(
                         title=f"TLDR — {result['project']}",
-                        message=f"{result['text']}\n\n{result['file_count']} scanned files",
+                        message=body,
                         ok="Done",
+                        cancel="Copy TLDR",
+                        other="Open Map",
                     )
+                    if choice == 0:  # Copy TLDR button
+                        import subprocess
+                        full_clip = f"# TLDR — {result['project']}\n\n{result['text']}\n"
+                        try:
+                            subprocess.run(["pbcopy"], input=full_clip.encode("utf-8"), check=False)
+                            rumps.notification("codebone", "Copied to Clipboard", f"TLDR for '{result['project']}' copied!")
+                        except Exception as e:
+                            logger.warning("Failed to copy TLDR to clipboard: %s", e)
+                    elif choice == -1:  # Open Map button
+                        self._open_browser_at_url(f"http://127.0.0.1:{self.service.config.port}")
 
                 self._on_main(_show)
             except Exception as exc:
@@ -1890,7 +1908,20 @@ class CodeBoneApp(rumps.App):
         master_on = bool(self.config.get("modules_enabled"))
         active = set(modules.enabled_apps(self.config))
 
-        self.modules_menu.add(rumps.MenuItem("Custom Coding Model", callback=None))
+        self.modules_menu.add(rumps.MenuItem("Used for Claude Code, Cursor & Codex", callback=None))
+        self.modules_menu.add(None)
+
+        # 1. Status line — mirrors Map Agent's status line
+        if master_on and selected:
+            status_text = f"Active: {selected['name']} (Routed ✓)"
+        elif master_on:
+            status_text = "Active: Enabled (No model picked)"
+        else:
+            status_text = "Active: Off (Default agent config)"
+        status_item = rumps.MenuItem(status_text, callback=None)
+        self.modules_menu.add(status_item)
+        self.modules_menu.add(None)
+
         self.modules_menu.add(self.modules_switch_item)
         self.modules_menu.add(None)
 
@@ -2086,6 +2117,46 @@ class CodeBoneApp(rumps.App):
         from . import modules
 
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+
+        # 1-click sync if user already configured a model in Map Agent
+        map_key = (self.config.get("brain_cloud_api_key") or "").strip()
+        map_vendor = self.config.get("brain_cloud_vendor", "openai")
+        map_model = self.config.get("brain_cloud_model", "")
+        if map_key and len(map_key) > 8:
+            vendor_display = {
+                "openai": "OpenAI",
+                "anthropic": "Claude (Anthropic)",
+                "openrouter": "OpenRouter",
+            }.get(map_vendor, map_vendor.title())
+            use_map = rumps.alert(
+                title="Add Coding Model",
+                message=f"You already have a {vendor_display} key configured in Map Agent.\n\nWould you like to route Coding Agents through your existing {vendor_display} configuration?",
+                ok=f"Use Map {vendor_display}",
+                cancel="Other / Custom...",
+            )
+            if use_map == 1:
+                preset_match = next((p for p in modules.PRESETS if vendor_display.lower() in p["name"].lower()), None)
+                if preset_match:
+                    name = preset_match["name"]
+                    model = map_model or preset_match["model"]
+                    anthropic_url = preset_match.get("anthropic_url", "")
+                    openai_url = preset_match.get("openai_url", "")
+                else:
+                    name = f"{vendor_display} (Synced)"
+                    model = map_model or "default"
+                    anthropic_url = "https://api.anthropic.com/v1" if map_vendor == "anthropic" else ""
+                    openai_url = "https://api.openai.com/v1" if map_vendor == "openai" else ""
+                key = map_key
+                try:
+                    module = modules.add_module(self.config, name, model, key, anthropic_url, openai_url)
+                    self.config.set("module_selected", module["id"])
+                    self.config.set("modules_enabled", True)
+                    self._update_modules_menu()
+                    rumps.notification("codebone", "Coding Agent Synced", f"Now using {name} for coding agents.")
+                    return
+                except Exception as exc:
+                    logger.warning("Could not sync Map Agent model to coding agent: %s", exc)
+
         name = model = anthropic_url = openai_url = None
         for i, preset in enumerate(modules.PRESETS):
             last = i == len(modules.PRESETS) - 1

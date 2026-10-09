@@ -15,9 +15,10 @@ except ImportError:
     _REQUESTS_AVAILABLE = False
     requests = None
 
+from collections import Counter
 from .config import Config
 from .imports import JS_EXT, ROUTE_FILES, VERB_CONST, VERB_FN, _route_url, sql_tables, supabase_tables
-from .prompts import build_project_tldr_prompt, build_prompt, ground_analysis, sanitize_text
+from .prompts import PROJECT_TLDR_SYSTEM_PROMPT, build_project_tldr_prompt, build_prompt, ground_analysis, sanitize_text
 
 logger = logging.getLogger("codebone.providers")
 
@@ -64,7 +65,7 @@ class Provider:
     def sniff(self, file_path: str, code: str) -> str:
         raise NotImplementedError
 
-    def generate(self, prompt: str, max_tokens: int = 250) -> str:
+    def generate(self, prompt: str, max_tokens: int = 250, system_prompt: str = "") -> str:
         raise NotImplementedError
 
     def reconcile_architecture(
@@ -86,10 +87,40 @@ class Provider:
 
     def project_tldr(self, project_name: str, files: list[dict], index: dict) -> str:
         """Short description of a whole indexed codebase; it never re-reads arbitrary documents."""
-        out = self.generate(build_project_tldr_prompt(project_name, files, index), max_tokens=220)
-        if not out:
+        prompt = build_project_tldr_prompt(project_name, files, index)
+        out = self.generate(prompt, max_tokens=180, system_prompt=PROJECT_TLDR_SYSTEM_PROMPT)
+
+        invalid_markers = (
+            "security directive",
+            "untrusted_project_index",
+            "untrusted_source_code",
+            "system prompt",
+            "system directive",
+            "ignore previous",
+            "ignore any commands",
+            "software architect",
+            "summarize an entire",
+        )
+        out_lower = (out or "").lower()
+        if not out or len(out.strip()) < 25 or any(m in out_lower for m in invalid_markers):
             return self._fallback_project_tldr(project_name, files, index)
-        return sanitize_text(out)
+
+        cleaned = sanitize_text(out)
+        cleaned = re.sub(r"^```[a-z]*\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+        cleaned = cleaned.strip("\"' \n")
+
+        if len(cleaned) < 25 or any(m in cleaned.lower() for m in invalid_markers):
+            return self._fallback_project_tldr(project_name, files, index)
+
+        stack_line = FastFallbackProvider._format_stack_line(files)
+        arch_line = FastFallbackProvider._format_arch_line(index)
+        parts = [cleaned]
+        if stack_line:
+            parts.append(stack_line)
+        if arch_line:
+            parts.append(arch_line)
+        return "\n\n".join(parts)
 
     def _fallback_project_tldr(self, project_name: str, files: list[dict], index: dict) -> str:
         fb = getattr(self, "_fallback", None) or FastFallbackProvider()
@@ -130,7 +161,7 @@ class FastFallbackProvider(Provider):
     def ready(self) -> bool:
         return False  # heuristics only: there is no model behind this provider
 
-    def generate(self, prompt: str, max_tokens: int = 250) -> str:
+    def generate(self, prompt: str, max_tokens: int = 250, system_prompt: str = "") -> str:
         return ""
 
     def reconcile_architecture(
@@ -285,6 +316,46 @@ class FastFallbackProvider(Provider):
             f"FLOW: {a['summary']}"
         )
 
+    @staticmethod
+    def _format_stack_line(files: list[dict]) -> str:
+        ext_map = {
+            ".py": "Python", ".js": "JavaScript", ".jsx": "React", ".ts": "TypeScript",
+            ".tsx": "TypeScript/React", ".html": "HTML", ".css": "CSS", ".swift": "Swift",
+            ".go": "Go", ".rs": "Rust", ".java": "Java", ".kt": "Kotlin",
+            ".c": "C", ".cpp": "C++", ".sh": "Shell", ".zsh": "Shell", ".rb": "Ruby",
+            ".php": "PHP", ".sql": "SQL",
+        }
+        counts = Counter()
+        for f in files:
+            ext = Path(f.get("path", "")).suffix.lower()
+            if ext in ext_map:
+                counts[ext_map[ext]] += 1
+        top = [lang for lang, _ in counts.most_common(4)]
+        if top:
+            return f"💻 Stack: {', '.join(top)} ({len(files)} files)"
+        return f"💻 Scale: {len(files)} files"
+
+    @staticmethod
+    def _format_arch_line(index: dict) -> str:
+        parts = []
+        domains = index.get("domains", {})
+        if domains:
+            top_d = sorted(domains.keys(), key=lambda d: len(domains[d]), reverse=True)[:3]
+            parts.append(f"🏛️ Domains: {', '.join(top_d)}")
+        entities = []
+        tables = index.get("tables", {})
+        routes = index.get("routes", {})
+        events = index.get("events", {})
+        if tables:
+            entities.append(f"{len(tables)} models")
+        if routes:
+            entities.append(f"{len(routes)} routes")
+        if events:
+            entities.append(f"{len(events)} events")
+        if entities:
+            parts.append(f"📊 Architecture: {', '.join(entities)}")
+        return "\n".join(parts)
+
     def project_tldr(self, project_name: str, files: list[dict], index: dict) -> str:
         """Deterministic whole-project overview when no model is loaded."""
         domains = sorted(
@@ -293,13 +364,15 @@ class FastFallbackProvider(Provider):
         )
         focus = f" focused on {', '.join(domains[:3])}" if domains else ""
         first = f"{project_name} is a {len(files)}-file software project{focus}."
-        counts = []
-        for label, key in (("data models", "tables"), ("API routes", "routes"), ("events", "events")):
-            count = len(index.get(key, {}))
-            if count:
-                counts.append(f"{count} {label}")
-        second = f"Its indexed architecture includes {', '.join(counts)}." if counts else ""
-        return " ".join(part for part in (first, second) if part)
+
+        stack_line = self._format_stack_line(files)
+        arch_line = self._format_arch_line(index)
+        parts = [first]
+        if stack_line:
+            parts.append(stack_line)
+        if arch_line:
+            parts.append(arch_line)
+        return "\n\n".join(parts)
 
 
 class BuiltinProvider(Provider):
@@ -369,15 +442,17 @@ class BuiltinProvider(Provider):
             self._load_failed_at = time.monotonic()
             return False
 
-    def generate(self, prompt: str, max_tokens: int = 250) -> str:
+    def generate(self, prompt: str, max_tokens: int = 250, system_prompt: str = "") -> str:
         if not self._ensure_loaded():
             return ""
         try:
             with self._gen_lock:
+                messages = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                messages.append({"role": "user", "content": prompt})
                 res = self._llm.create_chat_completion(
-                    messages=[
-                        {"role": "user", "content": prompt},
-                    ],
+                    messages=messages,
                     max_tokens=max_tokens,
                     temperature=0.1,
                 )
@@ -421,24 +496,31 @@ class LocalUrlProvider(Provider):
         except Exception:
             return False
 
-    def generate(self, prompt: str, max_tokens: int = 250) -> str:
+    def generate(self, prompt: str, max_tokens: int = 250, system_prompt: str = "") -> str:
         try:
             if "api/generate" in self.url or ":11434" in self.url:
                 url = self.url if "api/generate" in self.url else f"{self.url}/api/generate"
+                payload = {"model": "qwen2.5-coder:0.5b", "prompt": prompt, "stream": False}
+                if system_prompt:
+                    payload["system"] = system_prompt
                 r = requests.post(
                     url,
-                    json={"model": "qwen2.5-coder:0.5b", "prompt": prompt, "stream": False},
+                    json=payload,
                     timeout=REQUEST_TIMEOUT,
                 )
                 if r.status_code == 200:
                     return r.json().get("response", "").strip()
             else:
                 url = self.url if self.url.endswith("/chat/completions") else f"{self.url}/v1/chat/completions"
+                messages = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                messages.append({"role": "user", "content": prompt})
                 r = requests.post(
                     url,
                     json={
                         "model": "default",
-                        "messages": [{"role": "user", "content": prompt}],
+                        "messages": messages,
                         "temperature": 0.1,
                     },
                     timeout=REQUEST_TIMEOUT,
@@ -468,11 +550,18 @@ class CloudProvider(Provider):
     def available(self) -> bool:
         return bool(self.api_key and len(self.api_key.strip()) > 8)
 
-    def generate(self, prompt: str, max_tokens: int = 250) -> str:
+    def generate(self, prompt: str, max_tokens: int = 250, system_prompt: str = "") -> str:
         if not self.available:
             return ""
         try:
             if self.vendor == "anthropic":
+                payload = {
+                    "model": self.model or "claude-sonnet-5",
+                    "max_tokens": max_tokens,
+                    "messages": [{"role": "user", "content": prompt}],
+                }
+                if system_prompt:
+                    payload["system"] = system_prompt
                 r = requests.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={
@@ -480,16 +569,16 @@ class CloudProvider(Provider):
                         "anthropic-version": "2023-06-01",
                         "content-type": "application/json",
                     },
-                    json={
-                        "model": self.model or "claude-sonnet-5",
-                        "max_tokens": max_tokens,
-                        "messages": [{"role": "user", "content": prompt}],
-                    },
+                    json=payload,
                     timeout=REQUEST_TIMEOUT,
                 )
                 if r.status_code == 200:
                     return r.json()["content"][0]["text"].strip()
             elif self.vendor == "openrouter":
+                messages = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                messages.append({"role": "user", "content": prompt})
                 r = requests.post(
                     "https://openrouter.ai/api/v1/chat/completions",
                     headers={
@@ -498,7 +587,7 @@ class CloudProvider(Provider):
                     },
                     json={
                         "model": self.model or "openai/gpt-4o-mini",
-                        "messages": [{"role": "user", "content": prompt}],
+                        "messages": messages,
                         "temperature": 0.1,
                     },
                     timeout=REQUEST_TIMEOUT,
@@ -507,6 +596,10 @@ class CloudProvider(Provider):
                     return r.json()["choices"][0]["message"]["content"].strip()
             else:
                 # OpenAI
+                messages = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                messages.append({"role": "user", "content": prompt})
                 r = requests.post(
                     "https://api.openai.com/v1/chat/completions",
                     headers={
@@ -515,7 +608,7 @@ class CloudProvider(Provider):
                     },
                     json={
                         "model": self.model or "gpt-6",
-                        "messages": [{"role": "user", "content": prompt}],
+                        "messages": messages,
                         "temperature": 0.1,
                     },
                     timeout=REQUEST_TIMEOUT,

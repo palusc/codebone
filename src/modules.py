@@ -27,6 +27,12 @@ PRESETS = [
      "anthropic_url": "https://api.xiaomimimo.com/anthropic", "openai_url": "https://api.xiaomimimo.com/v1"},
     {"name": "OpenRouter", "model": "openai/gpt-4o-mini",
      "openai_url": "https://openrouter.ai/api/v1"},
+    {"name": "Claude (Anthropic)", "model": "claude-sonnet-5",
+     "anthropic_url": "https://api.anthropic.com/v1"},
+    {"name": "OpenAI", "model": "gpt-4o",
+     "openai_url": "https://api.openai.com/v1"},
+    {"name": "Local Server (Ollama)", "model": "qwen2.5-coder:7b",
+     "openai_url": "http://localhost:11434/v1"},
 ]
 
 # app id -> (menu name, API format the app needs)

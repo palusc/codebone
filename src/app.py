@@ -340,6 +340,90 @@ def make_info_item(title: str, bold: bool = True, size: float = 11.5, height: fl
     return item
 
 
+class ChoiceRowView(NSView):
+    """Selectable menu row (checkmark + label) that keeps the menu open when clicked, with a native-style hover highlight."""
+
+    def initWithFrame_(self, frame):
+        self = objc.super(ChoiceRowView, self).initWithFrame_(frame)
+        if self is None:
+            return None
+        self._on_click = None
+        self._hovered = False
+        tracking = NSTrackingArea.alloc().initWithRect_options_owner_userInfo_(
+            self.bounds(),
+            NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways | NSTrackingInVisibleRect,
+            self,
+            None,
+        )
+        self.addTrackingArea_(tracking)
+        return self
+
+    def viewWillDraw(self):
+        objc.super(ChoiceRowView, self).viewWillDraw()
+        if self.superview():
+            new_w = self.superview().frame().size.width
+            if new_w > 0 and abs(new_w - self.frame().size.width) > 1:
+                self.setFrameSize_(NSSize(new_w, self.frame().size.height))
+
+    def hitTest_(self, point):
+        res = objc.super(ChoiceRowView, self).hitTest_(point)
+        return self if res is not None else None
+
+    def mouseEntered_(self, event):
+        self._hovered = True
+        self.setNeedsDisplay_(True)
+
+    def mouseExited_(self, event):
+        self._hovered = False
+        self.setNeedsDisplay_(True)
+
+    def mouseUp_(self, event):
+        point = self.convertPoint_fromView_(event.locationInWindow(), None)
+        if self._on_click and self.mouse_inRect_(point, self.bounds()):
+            # Deferred: the callback rebuilds the menu, which must not happen inside this view's own event handler.
+            AppHelper.callAfter(self._on_click)
+
+    def drawRect_(self, rect):
+        if self._hovered:
+            NSColor.labelColor().colorWithAlphaComponent_(0.12).setFill()
+            inset = NSRect(NSPoint(5, 1), NSSize(max(self.bounds().size.width - 10, 0), self.bounds().size.height - 2))
+            NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(inset, 5.0, 5.0).fill()
+
+
+def make_choice_item(title: str, checked: bool, on_click, tooltip: str = "", height: float = 22.0, width: float = 216.0) -> rumps.MenuItem:
+    """Menu row that can be selected repeatedly without the menu closing."""
+    item = rumps.MenuItem(title, callback=None)
+    view = ChoiceRowView.alloc().initWithFrame_(NSRect(NSPoint(0, 0), NSSize(width, height)))
+    view.setAutoresizingMask_(NSViewWidthSizable)
+    view._on_click = on_click
+    check = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(10, 2), NSSize(16, height - 4)))
+    check.setStringValue_("✓" if checked else "")
+    check.setFont_(NSFont.systemFontOfSize_(13))
+    check.setTextColor_(NSColor.labelColor())
+    check.setBezeled_(False)
+    check.setDrawsBackground_(False)
+    check.setEditable_(False)
+    check.setSelectable_(False)
+    view.addSubview_(check)
+    label = NSTextField.alloc().initWithFrame_(NSRect(NSPoint(30, 2), NSSize(width - 40, height - 4)))
+    label.setAutoresizingMask_(NSViewWidthSizable)
+    label.setStringValue_(title)
+    label.setFont_(NSFont.systemFontOfSize_(13))
+    label.setTextColor_(NSColor.labelColor())
+    label.setBezeled_(False)
+    label.setDrawsBackground_(False)
+    label.setEditable_(False)
+    label.setSelectable_(False)
+    label.cell().setLineBreakMode_(NSLineBreakByTruncatingTail)
+    view.addSubview_(label)
+    try:
+        item._menuitem.setView_(view)
+        item._menuitem.setToolTip_(tooltip or title)
+    except Exception as exc:
+        logger.debug("Failed to set choice view on menu item: %s", exc)
+    return item
+
+
 class CardRowView(NSControl):
     """Custom clickable card row with hover and press highlights matching native macOS popovers."""
 
@@ -1447,38 +1531,6 @@ class CodeBoneApp(rumps.App):
         the updater run on background threads and hop over with this."""
         AppHelper.callAfter(fn, *args)
 
-    def reopen_menu(self, submenu: Optional[rumps.MenuItem] = None, delay: float = 0.05):
-        """Re-opens the status item menu automatically so the user is not kicked out after selecting an option.
-        If a submenu is provided, directly pops up that submenu under the status item button."""
-        def _reopen():
-            try:
-                button = getattr(self._nsapp, "nsstatusitem", None)
-                if not button or not hasattr(button, "button"):
-                    return
-                btn = button.button()
-                if not btn:
-                    return
-
-                sub_nsmenu = getattr(submenu, "_menu", None) if submenu else None
-                if sub_nsmenu is not None:
-                    pt = (0, btn.bounds().size.height + 2)
-                    sub_nsmenu.popUpMenuPositioningItem_atLocation_inView_(None, pt, btn)
-                else:
-                    btn.performClick_(None)
-            except Exception as exc:
-                logger.debug("reopen_menu exception: %s", exc)
-
-        try:
-            from Foundation import NSTimer
-            NSTimer.scheduledTimerWithTimeInterval_repeats_block_(delay, False, lambda _: _reopen())
-        except Exception:
-            try:
-                import threading
-                threading.Timer(delay, self._on_main, args=[_reopen]).start()
-            except Exception:
-                pass
-
-
     def _on_sniff_start(self):
         self._on_main(self._push_stats)
 
@@ -1560,12 +1612,11 @@ class CodeBoneApp(rumps.App):
 
         # 2. Local Models section
         self.brain_menu.add(make_info_item("Local Models"))
-        builtin_item = rumps.MenuItem(
+        builtin_item = make_choice_item(
             "Built-in Qwen 0.5B (Metal GPU)",
-            callback=lambda _: self.select_builtin_map_model(),
+            checked=bool(provider == "builtin"),
+            on_click=self.select_builtin_map_model,
         )
-        _set_symbol_icon(builtin_item, "cpu")
-        builtin_item.state = bool(provider == "builtin")
         self.brain_menu.add(builtin_item)
 
         library = modules.list_modules(self.config)
@@ -1579,13 +1630,11 @@ class CodeBoneApp(rumps.App):
         online_mods = [m for m in library if m not in local_mods]
 
         for m in local_mods:
-            m_label = modules.format_model_name(m)
-            item = rumps.MenuItem(
-                m_label,
-                callback=lambda _, mid=m["id"]: self.select_map_module(mid),
+            item = make_choice_item(
+                modules.format_model_name(m),
+                checked=bool(provider == "local_url" and selected_mod_id == m["id"]),
+                on_click=lambda mid=m["id"]: self.select_map_module(mid),
             )
-            _set_symbol_icon(item, "network")
-            item.state = bool(provider == "local_url" and selected_mod_id == m["id"])
             self.brain_menu.add(item)
 
         self.brain_menu.add(None)
@@ -1594,13 +1643,11 @@ class CodeBoneApp(rumps.App):
         self.brain_menu.add(make_info_item("Online API Models"))
         if online_mods:
             for m in online_mods:
-                m_label = modules.format_model_name(m)
-                item = rumps.MenuItem(
-                    m_label,
-                    callback=lambda _, mid=m["id"]: self.select_map_module(mid),
+                item = make_choice_item(
+                    modules.format_model_name(m),
+                    checked=bool(provider == "cloud" and selected_mod_id == m["id"]),
+                    on_click=lambda mid=m["id"]: self.select_map_module(mid),
                 )
-                _set_symbol_icon(item, "cloud")
-                item.state = bool(provider == "cloud" and selected_mod_id == m["id"])
                 self.brain_menu.add(item)
         else:
             add_hint = rumps.MenuItem("Add Model in Models...", callback=None)
@@ -1625,7 +1672,6 @@ class CodeBoneApp(rumps.App):
         self._update_models_menu()
         self._sync_map_switch()
         rumps.notification("codebone", "Map Agent Model Updated", f"Map Agent now uses {modules.format_model_name(mod)}.")
-        self.reopen_menu(submenu=self.brain_menu)
 
     def select_builtin_map_model(self):
         self.config.set("brain_selected_module", None)
@@ -1634,7 +1680,6 @@ class CodeBoneApp(rumps.App):
         self._update_models_menu()
         self._sync_map_switch()
         rumps.notification("codebone", "Map Agent Model Updated", "Map Agent now uses Built-in (Qwen 0.5B) on Apple Metal.")
-        self.reopen_menu(submenu=self.brain_menu)
 
     def set_map_master(self, turning_on: bool):
         from . import modules
@@ -2121,7 +2166,6 @@ class CodeBoneApp(rumps.App):
         )
         self._update_projects_menu()
         self._update_quick_access_menu()
-        self.reopen_menu()
 
     def remove_from_workspace(self, p: Path):
         """Remove a project from the workspace without deleting its folder or saved map."""
@@ -2278,30 +2322,29 @@ class CodeBoneApp(rumps.App):
         ]
         online_mods = [m for m in library if m not in local_mods]
 
-        if local_mods:
-            for m in local_mods:
-                m_label = modules.format_model_name(m)
-                item = rumps.MenuItem(
-                    m_label,
-                    callback=(lambda _, mid=m["id"]: self.pick_module(mid)) if master_on else None,
-                )
-                _set_symbol_icon(item, "network")
-                item.state = bool(selected and selected["id"] == m["id"])
-                self.modules_menu.add(item)
-        else:
-            builtin_hint = rumps.MenuItem(
-                "Built-in Qwen 0.5B (Metal GPU) — Map Only",
-                callback=self.explain_builtin_coding_agent,
+        def _model_row(m: dict, icon: str):
+            label = modules.format_model_name(m)
+            is_selected = bool(selected and selected["id"] == m["id"])
+            if master_on:
+                return make_choice_item(label, checked=is_selected, on_click=lambda mid=m["id"]: self.pick_module(mid))
+            row = rumps.MenuItem(label, callback=None)
+            _set_symbol_icon(row, icon)
+            row.state = is_selected
+            return row
+
+        # Built-in model: never usable for coding agents, so it is greyed out and only explains itself on hover.
+        builtin_hint = rumps.MenuItem("Built-in Qwen 0.5B (Metal GPU)", callback=None)
+        _set_symbol_icon(builtin_hint, "cpu")
+        try:
+            builtin_hint._menuitem.setToolTip_(
+                "Greyed out on purpose: the built-in Qwen 0.5B only powers the Map Agent (knowledge map indexing). "
+                "Coding agents need a full coding model - add one in Models..."
             )
-            _set_symbol_icon(builtin_hint, "cpu")
-            try:
-                builtin_hint._menuitem.setToolTip_(
-                    "Built-in Qwen 0.5B is dedicated to Map Agent graph indexing on Apple Metal. "
-                    "For coding agents, connect a coding model (e.g. MiMo, Ollama, Claude, or OpenAI) in Models..."
-                )
-            except Exception:
-                pass
-            self.modules_menu.add(builtin_hint)
+        except Exception:
+            pass
+        self.modules_menu.add(builtin_hint)
+        for m in local_mods:
+            self.modules_menu.add(_model_row(m, "network"))
 
         self.modules_menu.add(None)
 
@@ -2309,14 +2352,7 @@ class CodeBoneApp(rumps.App):
         self.modules_menu.add(make_info_item("Online API Models"))
         if online_mods:
             for m in online_mods:
-                m_label = modules.format_model_name(m)
-                item = rumps.MenuItem(
-                    m_label,
-                    callback=(lambda _, mid=m["id"]: self.pick_module(mid)) if master_on else None,
-                )
-                _set_symbol_icon(item, "cloud")
-                item.state = bool(selected and selected["id"] == m["id"])
-                self.modules_menu.add(item)
+                self.modules_menu.add(_model_row(m, "cloud"))
         else:
             add_hint = rumps.MenuItem("Add Model in Models...", callback=None)
             _set_symbol_icon(add_hint, "cloud")
@@ -2338,19 +2374,6 @@ class CodeBoneApp(rumps.App):
 
         self.modules_menu.add(None)
         self.modules_menu.add(rumps.MenuItem("Reset Agent Routing", callback=self.reset_modules_to_normal))
-
-    def explain_builtin_coding_agent(self, _):
-        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-        rumps.alert(
-            title="Built-in Model (Map Agent Only)",
-            message=(
-                "The built-in Qwen 0.5B model runs directly on your Mac using Apple Silicon Metal "
-                "specifically to index file structures and build the knowledge map.\n\n"
-                "Coding agents (Claude Code, Cursor, Codex, Antigravity, OpenCode) require full coding models. "
-                "You can add an online model or local server (e.g. Ollama qwen2.5-coder) via the 'Models...' menu."
-            ),
-            ok="Got it",
-        )
 
     def _add_local_ollama_module(self):
         from . import modules
@@ -2485,7 +2508,6 @@ class CodeBoneApp(rumps.App):
         else:
             rumps.notification("codebone", f"{label} is back on its normal model", "New sessions use your usual setup again.")
         self._update_modules_menu()
-        self.reopen_menu(submenu=self.modules_menu)
 
     def _verify_module_or_revert(self, app_id: str, module: dict):
         """After switching an app onto a module, confirms the endpoint answers in the background.
@@ -2536,7 +2558,6 @@ class CodeBoneApp(rumps.App):
             rumps.alert("Coding Agent", str(exc))
         self._update_modules_menu()
         self._update_models_menu()
-        self.reopen_menu(submenu=self.modules_menu)
 
     def add_module_dialog(self, _):
         from . import modules

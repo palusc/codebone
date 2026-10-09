@@ -1447,6 +1447,29 @@ class CodeBoneApp(rumps.App):
         the updater run on background threads and hop over with this."""
         AppHelper.callAfter(fn, *args)
 
+    def reopen_menu(self, delay: float = 0.05):
+        """Re-opens the status item menu automatically so the user is not kicked out after selecting an option."""
+        def _reopen():
+            try:
+                button = getattr(self._nsapp, "nsstatusitem", None)
+                if button and hasattr(button, "button"):
+                    btn = button.button()
+                    if btn:
+                        btn.performClick_(None)
+            except Exception:
+                pass
+
+        try:
+            from Foundation import NSTimer
+            NSTimer.scheduledTimerWithTimeInterval_repeats_block_(delay, False, lambda _: _reopen())
+        except Exception:
+            try:
+                import threading
+                threading.Timer(delay, self._on_main, args=[_reopen]).start()
+            except Exception:
+                pass
+
+
     def _on_sniff_start(self):
         self._on_main(self._push_stats)
 
@@ -1499,8 +1522,8 @@ class CodeBoneApp(rumps.App):
         return self.config.get("brain_tested_signature", "") == self._brain_signature()
 
     def _update_brain_checks(self):
-        """Rebuilds the Map Agent menu: live status at the top, local models, online API models,
-        and action items with consistent bold white info headers."""
+        """Rebuilds the Map Agent menu: active model status at the top, local models,
+        and online API models."""
         from . import modules
 
         if getattr(self.brain_menu, "_menu", None) is not None:
@@ -1509,9 +1532,8 @@ class CodeBoneApp(rumps.App):
         provider = self.config.get("brain_provider", "builtin")
         selected_mod_id = self.config.get("brain_selected_module")
         selected_mod = modules.get_module(self.config, selected_mod_id) if selected_mod_id else None
-        master_on = (provider in ("cloud", "local_url"))
 
-        if not master_on:
+        if provider == "builtin" or not selected_mod_id:
             active_map_name = "Built-in Qwen 0.5B (Metal GPU)"
         elif selected_mod:
             active_map_name = modules.format_model_name(selected_mod)
@@ -1527,18 +1549,14 @@ class CodeBoneApp(rumps.App):
         self.brain_menu.add(make_info_item(active_map_name))
         self.brain_menu.add(None)
 
-        # 2. Switch row
-        self.brain_menu.add(self.map_switch_item)
-        self.brain_menu.add(None)
-
-        # 3. Local Models section
+        # 2. Local Models section
         self.brain_menu.add(make_info_item("Local Models"))
         builtin_item = rumps.MenuItem(
             "Built-in Qwen 0.5B (Metal GPU)",
             callback=lambda _: self.select_builtin_map_model(),
         )
         _set_symbol_icon(builtin_item, "cpu")
-        builtin_item.state = (provider == "builtin")
+        builtin_item.state = bool(provider == "builtin")
         self.brain_menu.add(builtin_item)
 
         library = modules.list_modules(self.config)
@@ -1558,12 +1576,12 @@ class CodeBoneApp(rumps.App):
                 callback=lambda _, mid=m["id"]: self.select_map_module(mid),
             )
             _set_symbol_icon(item, "network")
-            item.state = bool(provider == "local_url" and (selected_mod_id == m["id"] or not selected_mod_id))
+            item.state = bool(provider == "local_url" and selected_mod_id == m["id"])
             self.brain_menu.add(item)
 
         self.brain_menu.add(None)
 
-        # 4. Online API Models section
+        # 3. Online API Models section
         self.brain_menu.add(make_info_item("Online API Models"))
         if online_mods:
             for m in online_mods:
@@ -1576,25 +1594,9 @@ class CodeBoneApp(rumps.App):
                 item.state = bool(provider == "cloud" and selected_mod_id == m["id"])
                 self.brain_menu.add(item)
         else:
-            add_hint = rumps.MenuItem("Add Model in Models...", callback=self.add_module_dialog)
+            add_hint = rumps.MenuItem("Add Model in Models...", callback=None)
             _set_symbol_icon(add_hint, "cloud")
             self.brain_menu.add(add_hint)
-
-        self.brain_menu.add(None)
-
-        # 5. Actions
-        add_item = rumps.MenuItem("Add Model...", callback=self.add_module_dialog)
-        _set_symbol_icon(add_item, "plus")
-        self.brain_menu.add(add_item)
-
-        add_file_item = rumps.MenuItem("Add Model File (.gguf)...", callback=self.add_model_file)
-        _set_symbol_icon(add_file_item, "doc.badge.plus")
-        self.brain_menu.add(add_file_item)
-
-        if provider in ("cloud", "local_url"):
-            test_item = rumps.MenuItem("Test Connection", callback=self.test_selected_brain)
-            _set_symbol_icon(test_item, "bolt")
-            self.brain_menu.add(test_item)
 
     def select_map_module(self, module_id: str):
         from . import modules
@@ -1614,6 +1616,7 @@ class CodeBoneApp(rumps.App):
         self._update_models_menu()
         self._sync_map_switch()
         rumps.notification("codebone", "Map Agent Model Updated", f"Map Agent now uses {modules.format_model_name(mod)}.")
+        self.reopen_menu()
 
     def select_builtin_map_model(self):
         self.config.set("brain_selected_module", None)
@@ -1622,6 +1625,7 @@ class CodeBoneApp(rumps.App):
         self._update_models_menu()
         self._sync_map_switch()
         rumps.notification("codebone", "Map Agent Model Updated", "Map Agent now uses Built-in (Qwen 0.5B) on Apple Metal.")
+        self.reopen_menu()
 
     def set_map_master(self, turning_on: bool):
         from . import modules
@@ -2049,6 +2053,7 @@ class CodeBoneApp(rumps.App):
         )
         self._update_projects_menu()
         self._update_quick_access_menu()
+        self.reopen_menu()
 
     def remove_from_workspace(self, p: Path):
         """Remove a project from the workspace without deleting its folder or saved map."""
@@ -2238,21 +2243,11 @@ class CodeBoneApp(rumps.App):
                 item.state = bool(selected and selected["id"] == m["id"])
                 self.modules_menu.add(item)
         else:
-            add_hint = rumps.MenuItem("Add Model in Models...", callback=self.add_module_dialog)
+            add_hint = rumps.MenuItem("Add Model in Models...", callback=None)
             _set_symbol_icon(add_hint, "cloud")
             self.modules_menu.add(add_hint)
 
         self.modules_menu.add(None)
-
-        # 5. Actions
-        add_item = rumps.MenuItem("Add Model...", callback=self.add_module_dialog)
-        _set_symbol_icon(add_item, "plus")
-        self.modules_menu.add(add_item)
-
-        if selected:
-            test_item = rumps.MenuItem("Test Connection", callback=self.test_selected_module)
-            _set_symbol_icon(test_item, "bolt")
-            self.modules_menu.add(test_item)
 
         # Agent Routing
         agents_menu = rumps.MenuItem("Use in Coding Agent")
@@ -2396,15 +2391,16 @@ class CodeBoneApp(rumps.App):
     def toggle_module_app(self, app_id: str):
         from . import modules
 
-        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         label = modules.APPS[app_id][0]
         turning_on = app_id not in modules.enabled_apps(self.config)
         try:
             module = modules.set_app_enabled(self.config, app_id, turning_on)
         except modules.SettingsUnreadable as exc:
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
             rumps.alert("Coding Agent", f"{label}'s settings file could not be read, so nothing was changed:\n{exc}")
             return
         except ValueError as exc:
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
             rumps.alert("Coding Agent", str(exc))
             return
         if module:
@@ -2413,6 +2409,7 @@ class CodeBoneApp(rumps.App):
         else:
             rumps.notification("codebone", f"{label} is back on its normal model", "New sessions use your usual setup again.")
         self._update_modules_menu()
+        self.reopen_menu()
 
     def _verify_module_or_revert(self, app_id: str, module: dict):
         """After switching an app onto a module, confirms the endpoint answers in the background.
@@ -2459,9 +2456,11 @@ class CodeBoneApp(rumps.App):
         try:
             modules.select_module(self.config, module_id)
         except (ValueError, modules.SettingsUnreadable) as exc:
+            NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
             rumps.alert("Coding Agent", str(exc))
         self._update_modules_menu()
         self._update_models_menu()
+        self.reopen_menu()
 
     def add_module_dialog(self, _):
         from . import modules

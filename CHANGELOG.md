@@ -3,12 +3,45 @@
 All notable changes to codebone will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Official release downloads on GitHub are the base `.a` versions (`1.0a`, `1.1a`, `1.2a`, `1.3a`, `1.4a`, `1.5a`, `1.6a`, `1.7a`).
-Incremental updates within each series are documented as distinct letter releases (`.b`, `.c`, `.d`, ...).
+Official milestone releases are clean numbers (`1.0`, `1.5`, `1.6`, `1.7`, `1.8`).
+Incremental updates and development drops within each cycle use letter releases (`.a`, `.b`, `.c`, ...).
 
 ---
 
 ## [Unreleased]
+
+---
+
+## [1.7] - 2026-10-09
+*Official Milestone Full Release*
+
+### 🚀 Core & Hybrid Scan Engine
+- **True Hybrid Architecture**: Combines deterministic multi-language structural static scanning (Python, TS/JS, Go, Rust, Ruby, PHP, Java, C/C++) with local and BYOK LLM semantic synthesis for deep symbol, dependency, and architecture indexing.
+- **Cancelable & Resumable Scanning**: Enhanced scan management with instant `Cancel Scan` and `Pause Scanning`/`Resume Scanning` controls with live ETA calculation and active phase indicators.
+- **Per-Project Auto-Scan Toggle**: Added `Auto-Scan on Save` setting directly in each project's menu (`ON` by default), allowing developers to easily disable automatic scanning on file saves for mass-editing sessions.
+- **Terminology Standardization**: Standardized all UI labels, menus, alerts, and notifications from "Index / Indexing" to "Scan / Scanning / Scanned" throughout the app and graph dashboard.
+
+### 🧠 Architecture Intelligence & Project TL;DR
+- **Re-architected Project TL;DR**: Completely redesigned whole-project executive summaries. Structured prompt format prevents prompt echo/leakage with small local models (Qwen 0.5B).
+- **Automated Architecture Breakdown**: TL;DRs now automatically append **💻 Tech Stack & Scale** (e.g. `Python, Shell, JavaScript (80 files)`), **🏛️ Key Domains** (e.g. `Testing, Authentication & Identity, Core`), and **📊 Entities** (`models, routes, events`).
+- **Interactive TL;DR Dialog**: Added **Copy TLDR** (1-click markdown copy to macOS clipboard with notification) and **Open Map** (direct shortcut into the visual architecture graph).
+- **Unified Info & TLDR Access**: Grouped `Info...` and `TLDR...` in the same section of the project menu, and added a **View TLDR** button directly inside the Project Info dialog.
+
+### 🤖 Coding Agent Integration & Model Sync
+- **1-Click Model Synchronization**: Automatically detects if a Cloud BYOK key (OpenAI, Claude, OpenRouter) is already configured in Map Agent and offers 1-click sync into Coding Agents without re-entering credentials.
+- **Expanded Coding Presets**: Added Claude (Anthropic), OpenAI, OpenRouter, and Local Server (Ollama) presets alongside MiMo V2.6 Pro.
+- **Dedicated Agent Routing**: Clear, individual routing switches for Claude Code, Cursor, Codex, Antigravity/Gemini, and opencode with resilient verification.
+- **Categorized API Keys Settings**: Explicitly partitioned into `Map Agent (Cloud BYOK)` and `Coding Agent Models` for centralized credential management.
+
+### 🖥️ macOS UI & Menu Hierarchy
+- **Flattened Menu Hierarchy**: Eliminated Cocoa submenu overlap and stuck floating tooltips by replacing deeply nested submenus with accessible direct menus.
+- **Mirrored Agent Menus**: Map Agent (`Used for maps, scanning & TLDRs` • `Active: [Model]`) and Coding Agent (`Used for Claude Code, Cursor & Codex` • `Active: [Model]`) now share identical, intuitive layouts and status lines.
+- **Direct Recent Project Navigation**: The three most recently scanned projects are full menus in the main bar, complete with Info, TLDR, Scan, Auto-Scan, and Open Map.
+
+### 🛡️ Stability, Auto-Updater & Resilience
+- **Clean Network Error Handling**: Replaced raw Python socket/URL errors with clear, user-friendly messages (`"Could not connect to GitHub. Please check your internet connection and try again."`).
+- **Milestone Version Ordering**: Updated in-app auto-updater (`src/updater.py`) to recognize clean milestone releases (`1.7`) as succeeding iterative letter patches (`1.7a < 1.7b < 1.7c < 1.7`).
+- **Startup Crash Protection**: Fixed Cocoa menu item registration and added automated startup regression suites to ensure 100% launch reliability.
 
 ---
 

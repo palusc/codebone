@@ -26,5 +26,5 @@
   <text class="label" x="20" y="208">codebone Live Graph</text>
   <rect class="track" x="20" y="218" width="600" height="22" rx="4"/>
   <rect x="20" y="218" width="48" height="22" rx="4" fill="#3fb950"/>
-  <text class="value" x="78" y="234" fill="#8b949e">~2,000 tokens · ⚡ ~80% savings</text>
+  <text class="value" x="78" y="234" fill="#8b949e">~2,000 tokens · ⚡ ~92% savings</text>
 </svg>

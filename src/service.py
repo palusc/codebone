@@ -634,6 +634,20 @@ class CodeBoneService:
         progress: dict[str, dict] = {}
         total_paused_time = 0.0
         paused_start = None
+        with self._parallel_progress_lock:
+            target_label = projects[0].name if len(projects) == 1 else f"{len(projects)} projects"
+            self.current_scan_project = target_label
+            self.scan_progress = {
+                "current": 0,
+                "total": 0,
+                "pct": 0,
+                "eta_seconds": 0,
+                "eta_str": "",
+                "current_file": "",
+                "project": target_label,
+                "projects": {},
+                "paused": self.is_paused,
+            }
 
         def report(project: Path, current: int, total: int, current_file: str):
             nonlocal paused_start, total_paused_time
@@ -665,7 +679,7 @@ class CodeBoneService:
                     "eta_seconds": eta_sec,
                     "eta_str": eta_str,
                     "current_file": current_file,
-                    "project": f"{len(progress)}/{len(projects)} projects",
+                    "project": projects[0].name if len(projects) == 1 else f"{len(progress)}/{len(projects)} projects",
                     "projects": {Path(k).name: dict(v) for k, v in progress.items()},
                     "paused": self.is_paused,
                 }

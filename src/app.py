@@ -1372,30 +1372,35 @@ class CodeBoneApp(rumps.App):
             return  # nothing changed: do not make AppKit redraw the menu every 2 s
         self._last_stats_signature = signature
 
-        # 0. Update macOS menubar title (e.g. " (~14s)" or " (Paused)" next to icon during scan)
+        # 0. Update macOS menubar title (e.g. " (codebone · ~14s)" or " (Paused)" next to icon during scan)
+        target_name = (
+            (scan_progress.get("project") if scan_progress else None)
+            or getattr(self.service, "current_scan_project", None)
+            or (self.config.project_path.name if self.config.project_path else "codebase")
+        )
         if configured and sniffing:
             eta_str = scan_progress.get("eta_str", "") if scan_progress else ""
             if is_paused:
-                self.title = " (Paused)"
+                self.title = f" ({target_name} · Paused)"
             elif eta_str:
-                self.title = f" ({eta_str})"
+                self.title = f" ({target_name} · {eta_str})"
             else:
-                self.title = " (Scanning…)"
+                self.title = f" ({target_name}…)"
         elif not self.icon:
             self.title = "codebone"
         else:
             self.title = ""
 
-        # 1. Update header title (codebone or codebone · ~12s / Paused / Scanning)
+        # 1. Update header title (codebone or codebone · <target> (<eta>) / Paused)
         if hasattr(self, "header_title_lbl") and self.header_title_lbl is not None:
             if configured and sniffing:
                 eta_str = scan_progress.get("eta_str", "") if scan_progress else ""
                 if is_paused:
-                    self.header_title_lbl.setStringValue_("codebone  ·  Paused")
+                    self.header_title_lbl.setStringValue_(f"codebone  ·  {target_name} (Paused)")
                 elif eta_str:
-                    self.header_title_lbl.setStringValue_(f"codebone  ·  {eta_str}")
+                    self.header_title_lbl.setStringValue_(f"codebone  ·  {target_name} ({eta_str})")
                 else:
-                    self.header_title_lbl.setStringValue_("codebone  ·  Scanning")
+                    self.header_title_lbl.setStringValue_(f"codebone  ·  Scanning {target_name}")
             else:
                 self.header_title_lbl.setStringValue_("codebone")
 
@@ -1421,16 +1426,17 @@ class CodeBoneApp(rumps.App):
                     cur_f = scan_progress.get("current_file", "")
                     short_f = Path(cur_f).name if cur_f else ""
                     eta_str = scan_progress.get("eta_str", "")
+                    prefix = f"{target_name}: " if target_name and target_name != "codebase" else ""
                     if is_paused:
-                        stats_text = f"Paused ({curr}/{tot})  ·  Resume to continue"
+                        stats_text = f"Paused ({prefix}{curr}/{tot})  ·  Resume to continue"
                     else:
                         eta_part = f"  ·  {eta_str} left" if eta_str else ""
                         if short_f:
-                            stats_text = f"Scanning {short_f} ({curr}/{tot}){eta_part}"
+                            stats_text = f"{prefix}Scanning {short_f} ({curr}/{tot}){eta_part}"
                         else:
-                            stats_text = f"Scanning ({curr}/{tot}){eta_part}"
+                            stats_text = f"{prefix}Scanning ({curr}/{tot}){eta_part}"
                 elif sniffing:
-                    stats_text = "Scanning codebase..."
+                    stats_text = f"Scanning {target_name}..."
                 else:
                     stats_text = f"{_fmt_count(file_count)} Nodes  ·  {_fmt_count(connection_count)} Connections"
             else:
@@ -2032,7 +2038,7 @@ class CodeBoneApp(rumps.App):
                     item._menuitem.setToolTip_(str(path))
                 except Exception:
                     pass
-                item.state = bool(active and active == path)
+                item.state = False
                 self._populate_project_actions(item, path, ws_by_path.get(str(path)), active_str)
             elif getattr(item, "_menu", None) is not None:
                 item.clear()
@@ -2048,28 +2054,13 @@ class CodeBoneApp(rumps.App):
         if getattr(item, "_menu", None) is not None:
             item.clear()
 
-        if info and active_str != str(project):
-            select_item = make_choice_item(
-                "Set as Current Project",
-                checked=None,
-                on_click=lambda target=project: self.activate_project_from_menu(target),
-                icon="checkmark.circle",
-            )
-            item.add(select_item)
-        elif active_str == str(project):
-            item.add(make_info_item("Current Project"))
-        else:
-            item.add(make_info_item("Scan this project to activate it"))
-
-        info_item = rumps.MenuItem(
+        info_item = make_choice_item(
             "Info...",
-            callback=lambda _, target=project: self.show_project_info(target),
+            checked=None,
+            on_click=lambda target=project: self.show_project_info(target),
+            icon="info.circle",
+            tooltip=str(project.resolve()),
         )
-        _set_symbol_icon(info_item, "info.circle")
-        try:
-            info_item._menuitem.setToolTip_(str(project.resolve()))
-        except Exception:
-            pass
         item.add(info_item)
 
         copy_path_item = make_choice_item(
@@ -2080,11 +2071,12 @@ class CodeBoneApp(rumps.App):
         )
         item.add(copy_path_item)
 
-        tldr_item = rumps.MenuItem(
+        tldr_item = make_choice_item(
             "TLDR...",
-            callback=lambda _, target=project: self._run_project_tldr(target),
+            checked=None,
+            on_click=lambda target=project: self._run_project_tldr(target),
+            icon="text.quote",
         )
-        _set_symbol_icon(tldr_item, "text.quote")
         item.add(tldr_item)
 
         item.add(None)
@@ -2106,28 +2098,33 @@ class CodeBoneApp(rumps.App):
 
         item.add(None)
         if info:
-            map_item = rumps.MenuItem(
-                f"Open Map ({_fmt_count(info['nodes'])} Nodes · {_fmt_count(info['connections'])} Connections)",
-                callback=lambda _, target=project: self.view_project_map(target),
+            map_label = f"Open Map ({_fmt_count(info['nodes'])} Nodes · {_fmt_count(info['connections'])} Connections)"
+            map_item = make_choice_item(
+                map_label,
+                checked=None,
+                on_click=lambda target=project: self.view_project_map(target),
+                icon="point.3.connected.trianglepath.dotted",
+                width=240.0,
             )
-            _set_symbol_icon(map_item, "point.3.connected.trianglepath.dotted")
             item.add(map_item)
         else:
             item.add(make_info_item("Not Scanned Yet"))
 
-        reveal = rumps.MenuItem(
+        reveal = make_choice_item(
             "Show in Finder...",
-            callback=lambda _, target=project: self.reveal_project(target),
+            checked=None,
+            on_click=lambda target=project: self.reveal_project(target),
+            icon="folder",
         )
-        _set_symbol_icon(reveal, "finder")
         item.add(reveal)
 
         item.add(None)
-        remove = rumps.MenuItem(
+        remove = make_choice_item(
             "Remove Project...",
-            callback=lambda _, target=project: self.remove_from_workspace(target),
+            checked=None,
+            on_click=lambda target=project: self.remove_from_workspace(target),
+            icon="minus.circle",
         )
-        _set_symbol_icon(remove, "minus.circle")
         item.add(remove)
 
     def _update_projects_menu(self):
@@ -2151,8 +2148,7 @@ class CodeBoneApp(rumps.App):
                     title = p.name or str(p)
                 item = rumps.MenuItem(title)
                 _set_symbol_icon(item, "folder.fill" if active_str == str(p) else "folder")
-                if active_str == str(p):
-                    item.state = True
+                item.state = False
                 try:
                     item._menuitem.setToolTip_(str(p.resolve()))
                 except Exception:

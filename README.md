@@ -26,7 +26,14 @@
 AI assistants typically read 10–20 files just to understand your architecture — burning thousands of tokens on boilerplate before writing a single line of code.
 
 <p align="center">
-  <img src="resources/token-savings.svg" width="540" alt="Token overhead: Raw File Dump ~25k tokens, Vector RAG ~14k tokens, codebone ~2k tokens">
+  <img src="resources/token-savings.svg" width="540" alt="Token overhead: Raw File Dump ~25k tokens, Vector RAG ~14k tokens, codebone ~2k tokens (~92% reduction)">
+</p>
+
+<p align="center">
+  <img src="resources/graph_screenshot.png" width="680" alt="codebone Live Architecture Knowledge Graph">
+</p>
+<p align="center">
+  <em>Live interactive semantic architecture graph showing connected models, routes, events, and business domains.</em>
 </p>
 
 codebone runs in your macOS menu bar, watches every file save, and delivers a live architectural snapshot directly to Claude, Cursor, or Gemini via MCP.
@@ -42,6 +49,10 @@ codebone runs in your macOS menu bar, watches every file save, and delivers a li
 Drag `codebone.app` to `/Applications` — done. A 🦴 appears in your menu bar.
 
 Click it → **Select Project Folder...** to start your first scan.
+
+<p align="center">
+  <img src="resources/app_menu_screenshot.png" width="520" alt="codebone Native macOS Menu Bar Interface">
+</p>
 
 > 💾 ~750 MB total (~490 MB model + ~260 MB Python environment). Requires macOS 13+ on Apple Silicon.
 

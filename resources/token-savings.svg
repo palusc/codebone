@@ -11,20 +11,20 @@
   <text class="title" x="20" y="28">Prompt token overhead per architectural query</text>
 
   <!-- Raw File Dump -->
-  <text class="label" x="20" y="68">Raw File Dump</text>
+  <text class="label" x="20" y="68">Raw File Dump (10–15 files)</text>
   <rect class="track" x="20" y="78" width="600" height="22" rx="4"/>
   <rect x="20" y="78" width="600" height="22" rx="4" fill="#f85149"/>
-  <text class="value" x="630" y="94" text-anchor="end" fill="#e6edf3">~25,000 tokens · slow &amp; expensive</text>
+  <text class="value" x="630" y="94" text-anchor="end" fill="#e6edf3">~16,000 tokens · slow &amp; expensive</text>
 
   <!-- Vector RAG Search -->
   <text class="label" x="20" y="138">Vector RAG Search</text>
   <rect class="track" x="20" y="148" width="600" height="22" rx="4"/>
-  <rect x="20" y="148" width="336" height="22" rx="4" fill="#d29922"/>
-  <text class="value" x="366" y="164" fill="#8b949e">~14,000 tokens · high noise</text>
+  <rect x="20" y="148" width="356" height="22" rx="4" fill="#d29922"/>
+  <text class="value" x="386" y="164" fill="#8b949e">~9,500 tokens · high noise</text>
 
   <!-- codebone Live Graph -->
   <text class="label" x="20" y="208">codebone Live Graph</text>
   <rect class="track" x="20" y="218" width="600" height="22" rx="4"/>
-  <rect x="20" y="218" width="48" height="22" rx="4" fill="#3fb950"/>
-  <text class="value" x="78" y="234" fill="#8b949e">~2,000 tokens · ⚡ ~92% savings</text>
+  <rect x="20" y="218" width="120" height="22" rx="4" fill="#3fb950"/>
+  <text class="value" x="150" y="234" fill="#8b949e">~3,200 tokens · ⚡ ~80% savings</text>
 </svg>

@@ -26,7 +26,7 @@
 AI assistants typically read 10–20 files just to understand your architecture — burning thousands of tokens on boilerplate before writing a single line of code.
 
 <p align="center">
-  <img src="resources/token-savings.svg" width="600" alt="Token overhead: Raw File Dump ~25k tokens, Vector RAG ~14k tokens, codebone ~2k tokens (~92% reduction)">
+  <img src="resources/token-savings.svg" width="600" alt="Token overhead: Raw File Dump ~16k tokens, Vector RAG ~9.5k tokens, codebone ~3.2k tokens (~80% reduction)">
 </p>
 
 <p align="center">

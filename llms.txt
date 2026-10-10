@@ -21,7 +21,7 @@ Whenever you save a file (`Cmd + S`), codebone automatically extracts 5 architec
 4. **Business Domains** (high-level systemic groupings)
 5. **Logical Flow Summary** (concise explanation of role in the system)
 
-AI assistants access this graph instantly via the Model Context Protocol (MCP) or a local HTTP API in ~2,000 tokens — saving **~92% token overhead** and preventing hallucinations.
+AI assistants access this graph instantly via the Model Context Protocol (MCP) or a local HTTP API in ~3,200 tokens — saving **~80% token overhead** and preventing hallucinations.
 
 ---
 

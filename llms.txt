@@ -1,75 +1,37 @@
 # codebone
 
-> The official GitHub repository for **[codebone](https://codeb.one)**. codebone is a high-performance architecture context engine and native Model Context Protocol (MCP) server that builds a live semantic graph of your codebase and delivers surgical architectural context to AI coding agents.
+> codebone gives AI coding agents a live architecture map of a repository through MCP.
 
-- **Official Website**: https://codeb.one
-- **Official GitHub Repository**: https://github.com/palusc/codebone
-- **Benchmark & Token Comparison**: https://github.com/palusc/codebone-benchmark
-- **License**: MIT
-- **Platform**: macOS (Apple Silicon Metal GPU native) · Cross-platform Engine
+## Canonical links
+- Website: https://codeb.one/
+- Repository: https://github.com/palusc/codebone
+- Releases: https://github.com/palusc/codebone/releases
+- Benchmark: https://github.com/palusc/codebone-benchmark
+- Changelog: https://github.com/palusc/codebone/blob/main/CHANGELOG.md
 
----
+## Current release
+- Version: 1.7
+- License: MIT
+- Platform: macOS 13+ on Apple Silicon (arm64)
+- Built-in map model: Qwen2.5-Coder 0.5B with Apple Metal acceleration
+- Storage: local SQLite
+- Server: localhost-only MCP and HTTP API
 
-## What is codebone?
+## Core behavior
+codebone watches a selected project and builds a live graph from deterministic source facts and grounded local synthesis. It extracts routes, tables, models, events, imports, business domains and flow summaries. Shared entities connect files even when they do not import one another.
 
-codebone solves the context-window problem for AI coding agents (Claude Code, Cursor, Gemini / Antigravity, Codex, Windsurf). Instead of dumping dozens of source files into prompts or relying on fuzzy vector embeddings that miss systemic relations, codebone maintains a real-time semantic knowledge graph of your project.
+## Agent tools
+- `cb()` returns a project overview.
+- `cb(query="...")` returns ranked, focused context with source evidence.
+- `cb(file="...")` returns context and links for one file.
+- `codebone_tldr()` returns a compact project summary.
+- `codebone_status()` reports the active local instance.
 
-Whenever you save a file (`Cmd + S`), codebone automatically extracts 5 architectural dimensions using an embedded local model running on Apple Silicon Metal GPU:
-1. **Database Models & Tables** (entities persisted by each module)
-2. **API Routes & Endpoints** (HTTP methods, paths, contracts)
-3. **Events & Webhooks** (domain events emitted and handled)
-4. **Business Domains** (high-level systemic groupings)
-5. **Logical Flow Summary** (concise explanation of role in the system)
+## Supported clients
+Any MCP-compatible client can use codebone. Project setup paths include Claude Code, Cursor, Codex, Gemini/Antigravity and opencode.
 
-AI assistants access this graph instantly via the Model Context Protocol (MCP) or a local HTTP API in ~3,200 tokens — saving **~80% token overhead** and preventing hallucinations.
+## Privacy boundary
+With the built-in map agent, source analysis, inference and SQLite storage run locally. Environment files, private keys and credential-like files are excluded. Optional cloud BYOK providers are explicit; enabling one can send relevant source to that provider.
 
----
-
-## Key Capabilities
-
-- **100% Local & Private**: All inference and SQLite index storage stay on your machine. Zero code or telemetry sent to the cloud.
-- **MCP Native**: Integrates seamlessly with Claude Code, Cursor, Antigravity IDE (Gemini), Codex, Windsurf, and custom agent harnesses.
-- **The `cb` Shortcut**: Simply type `cb` in your AI chat to inject architecture maps, `cb: question` to query domain structures, or `codebone_tldr()` to get whole-project summaries.
-- **Battery-Aware Live File Watching**: FSEvents watcher with automatic throttling (0.5s on AC power, 15s on battery).
-- **Scan Controls & Live ETA**: Menubar status display with dynamic remaining time estimates (`~14s`), plus pause, resume, and cancellation controls.
-- **Multi-Project Workspace**: Monitor and switch across multiple repositories from a single unified macOS menu bar interface.
-
----
-
-## MCP Server Tools & Usage
-
-The `codebone-mcp` server provides the following tools for AI coding agents:
-
-- `cb`: Injects the live high-level architecture, active business domains, and systemic connections into agent context.
-- `cb_query`: Queries models, routes, events, and relations for a specific feature or domain.
-- `cb_file`: Returns semantic context, incoming/outgoing connections, and domain metadata for a specific file.
-- `codebone_tldr`: Returns an instant whole-codebase architectural executive summary.
-- `codebone_status`: Returns active index statistics, node counts, and watcher health.
-
----
-
-## Quickstart
-
-### Installation on macOS
-1. Download `codebone.app` from https://codeb.one or https://github.com/palusc/codebone/releases.
-2. Drag to `/Applications` and open.
-3. Click the 🦴 icon in your menu bar → **Select Project Folder...**.
-4. Click **Connect Coding Agent (MCP)...** to auto-configure Claude, Cursor, Antigravity, or Codex.
-
-### CLI & Source
-```bash
-git clone https://github.com/palusc/codebone.git
-cd codebone
-./install.sh
-```
-
----
-
-## Repository Structure & Documentation
-
-- [README.md](file:///Users/paul/Desktop/merge/codebone/README.md): Primary documentation, visual diagrams, and benchmarks.
-- [CHANGELOG.md](file:///Users/paul/Desktop/merge/codebone/CHANGELOG.md): Version history and feature milestones.
-- [src/service.py](file:///Users/paul/Desktop/merge/codebone/src/service.py): Core orchestration, background scanning, ETA calculation, and watcher.
-- [src/storage.py](file:///Users/paul/Desktop/merge/codebone/src/storage.py): SQLite semantic entity index and graph database.
-- [src/server.py](file:///Users/paul/Desktop/merge/codebone/src/server.py): Local REST API and MCP bridge for AI agents.
-- [src/modules.py](file:///Users/paul/Desktop/merge/codebone/src/modules.py): Multi-agent MCP configurations (Claude, Cursor, Antigravity, Codex).
+## Benchmark boundary
+The project-maintained benchmark fixes the project and task and verifies results mechanically. It is a reproducible harness, not independent validation, and should not be used to claim a universal percentage improvement without recorded runs.

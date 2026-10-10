@@ -2,175 +2,117 @@
 
 # 🦴 codebone
 
-**The official repository for [codebone (codeb.one)](https://codeb.one)** — Real-time architecture intelligence & Model Context Protocol (MCP) server for AI coding agents.
+### Give your coding agent the map. Not the whole repo.
 
-### Your codebase has a structure. Give your AI access to it!
-**Stop dumping dozens of files into your prompt. Let the dog sniff it.** 🐾
+codebone turns a codebase into a live, local architecture graph and serves focused context to AI coding agents through MCP.
 
-<br>
+[**Download for macOS**](https://github.com/palusc/codebone/releases/latest/download/codebone-macos-arm64.dmg) · [Website](https://codeb.one) · [Benchmark](https://github.com/palusc/codebone-benchmark) · [Latest release](https://github.com/palusc/codebone/releases/latest)
 
-[![Website](https://img.shields.io/badge/website-codeb.one-151719?style=flat-square&logo=safari)](https://codeb.one)
-[![macOS](https://img.shields.io/badge/platform-macOS-black?logo=apple&style=flat-square)](#)
-[![Metal GPU](https://img.shields.io/badge/inference-Apple%20Silicon%20Metal-purple?style=flat-square)](#)
-[![MCP](https://img.shields.io/badge/protocol-MCP%20Native-blue?style=flat-square)](#)
-[![Version 1.7](https://img.shields.io/badge/version-1.7-informational?style=flat-square)](CHANGELOG.md)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
-[![Local Only](https://img.shields.io/badge/privacy-100%25%20local-success?style=flat-square)](#-privacy--security)
+[![Release](https://img.shields.io/badge/version-1.7-b9ff66?style=flat-square)](https://github.com/palusc/codebone/releases/latest)
+[![Platform](https://img.shields.io/badge/macOS_13%2B-Apple_Silicon-111317?style=flat-square&logo=apple)](#requirements)
+[![MCP](https://img.shields.io/badge/MCP-native-917cff?style=flat-square)](#mcp-setup)
+[![License](https://img.shields.io/badge/license-MIT-6ddbd3?style=flat-square)](LICENSE)
 
 </div>
 
----
+![The real codebone architecture graph showing files, domains, routes, tables, events and their connections](resources/graph_screenshot.png)
 
-## 📉 Why codebone?
+## What codebone changes
 
-AI assistants typically read 10–20 files just to understand your architecture — burning thousands of tokens on boilerplate before writing a single line of code.
+Coding agents can read repositories, but they often spend the beginning of every session rediscovering the same architecture: searching for routes, opening models, tracing events and guessing how distant files belong to one system flow.
 
-<p align="center">
-  <img src="resources/token-savings.svg" width="600" alt="Token overhead: Raw File Dump ~16k tokens, Vector RAG ~9.5k tokens, codebone ~3.2k tokens (~80% reduction)">
-</p>
+codebone prepares that map before the task starts. It watches your project, builds a structured graph and lets an MCP-compatible agent request only the relevant slice.
 
-<p align="center">
-  <img src="resources/graph_screenshot.png" width="780" alt="codebone Live Architecture Knowledge Graph">
-</p>
-<p align="center">
-  <em>Live interactive semantic architecture graph showing connected models, routes, events, and business domains.</em>
-</p>
+- **Deterministic facts:** routes, tables, models, events, imports and source matches.
+- **Semantic relationships:** business domains and connections across files that do not import one another.
+- **Focused retrieval:** project overview, domain context, file neighborhoods and ranked queries.
+- **Live updates:** changed files are reconciled incrementally while you work.
+- **Local by default:** the built-in map agent and SQLite graph run on your Mac.
 
-codebone runs in your macOS menu bar, watches every file save, and delivers a live architectural snapshot directly to Claude, Cursor, or Gemini via MCP.
+## Quick start
 
-> 📊 **Don't take our word for it — measure it.** [codebone-benchmark](https://github.com/palusc/codebone-benchmark) ships a small messy project and one task. Run it with and without codebone, on any model you like, and compare tokens, time and cost on your own machine.
+1. [Download the latest DMG](https://github.com/palusc/codebone/releases/latest/download/codebone-macos-arm64.dmg).
+2. Drag `codebone.app` to `/Applications` and open it.
+3. Click the bone in the menu bar and select a project folder.
+4. Open your coding agent and type `cb`.
 
----
+Requires macOS 13 or later on Apple Silicon. The current release is arm64 only.
 
-## 🚀 Download & Install
+## One shortcut
 
-### [⬇️ Download](https://github.com/palusc/codebone/releases/latest/download/codebone-macos-arm64.dmg)
+| Prompt | What the agent receives |
+|---|---|
+| `cb` | Project overview, active domains and important relationships |
+| `cb: how does billing work?` | Ranked files, source lines, models, routes and events for the question |
+| `cb auth.py` | Context and incoming/outgoing links for one file |
+| `codebone_tldr()` | A short whole-project architectural summary |
 
-Drag `codebone.app` to `/Applications` — done. A 🦴 appears in your menu bar.
+Example focused output:
 
-Click it → **Select Project Folder...** to start your first scan.
+```text
+cb(query="subscription renewal")
 
-<p align="center">
-  <img src="resources/app_menu_screenshot.png" width="560" alt="codebone Native macOS Menu Bar Interface">
-</p>
-<p align="center">
-  <em>Native macOS menu bar app with live scan status, project switcher, one-click scan adoption, and direct graph launcher.</em>
-</p>
+billing/webhook.py                         HIGH
+ROUTE   POST /api/webhooks/stripe
+EVENT   invoice.payment_succeeded
+TABLES  Invoice, Subscription
 
-> 💾 ~750 MB total (~490 MB model + ~260 MB Python environment). Requires macOS 13+ on Apple Silicon.
+Related
+cron/dunning.py · emails/receipt.py · models/subscription.py
 
-<details>
-<summary><b>Homebrew / Build from Source</b></summary>
-
-<br>
-
-**Homebrew:**
-```bash
-brew tap palusc/codebone
-brew install codebone
+Flow
+Verifies the webhook, reconciles the subscription, then emits
+the receipt event.
 ```
 
-**Build from source:**
-```bash
-git clone https://github.com/palusc/codebone.git
-cd codebone
-./install.sh
+The example shows the output shape. Actual results are generated from the current repository.
+
+## How it works
+
+```text
+repository changes
+       │
+       ▼
+deterministic source scan ── routes · tables · events · imports
+       │
+       ▼
+grounded local synthesis ─── domains · flow summaries
+       │
+       ▼
+live SQLite system graph ─── shared entities · cross-file links
+       │
+       ▼
+MCP / localhost API ──────── focused context for your coding agent
 ```
 
-</details>
+1. **Scan what the code proves.** Static passes extract concrete source facts across Python, TypeScript/JavaScript, Go, Rust, Java, C#, PHP, Ruby, SQL and common frameworks.
+2. **Connect what imports miss.** Shared tables, routes, events and domains link files that participate in the same system flow.
+3. **Serve the useful slice.** `cb` returns an overview or a ranked, focused answer instead of a repository dump.
+4. **Stay current.** File watching updates changed files, skips unchanged content by SHA-256 and preserves the last good state during temporarily broken edits.
 
----
+## Local by default
 
-## ⚡ The `cb` Shortcut
+With the built-in map agent:
 
-You don't need to write long prompts like *"use codebone"* or *"inspect architecture"*. Simply type **`cb`** in any AI assistant (Claude, Cursor, Gemini):
+- the service binds to `127.0.0.1`;
+- the architecture graph is stored in local SQLite;
+- the bundled Qwen2.5-Coder 0.5B model runs on Apple Metal;
+- `.env` files, private keys and credential-like files are excluded;
+- foreign `Host` and `Origin` requests are rejected;
+- there is no required cloud account.
 
-* **`cb`** — Injects the live high-level architecture & active business domains into your AI context.
-* **`cb: how does billing work?`** — Directly queries database models, API routes, and events for Billing.
-* **`cb auth.py`** — Returns instant semantic context and cross-module links for that specific file.
-* **`codebone_tldr()`** — Explains the active project in one short paragraph; pass a workspace project name to summarize another codebase.
+Cloud BYOK providers are optional. If you explicitly configure one, relevant source can be sent to that provider under its terms.
 
-codebone provides native `cb` MCP tools and prompts, recognized across all major AI agent environments.
+## Works with your agent
 
----
+codebone exposes a native MCP server and local HTTP API. It can be used by Claude Code, Cursor, Codex, Gemini/Antigravity, opencode and other MCP-compatible clients.
 
-## 🐾 How It Works (True Hybrid Architecture)
-
-codebone pairs **deterministic multi-language static scanning** with **embedded local LLM synthesis** into a unified, zero-hallucination hybrid system:
-
-1. **Deterministic Static Scan (0ms latency, zero hallucinations)** — Instantly extracts ground-truth data models, API routes, and event hooks across TypeScript/JavaScript, Python, Go, Rust, Java, C#, PHP, Ruby, and SQL (Drizzle, Prisma, GORM, Diesel, Spring, ASP.NET, Laravel, Rails, Kafka, BullMQ, etc.).
-2. **Local Neural Synthesis (Apple Silicon Metal)** — The local model reasons across file boundaries to classify systemic business domains and synthesize a concise, high-level architectural flow summary.
-3. **Hybrid Grounding Fusion** — The grounding layer fuses verified static facts with code-grounded LLM insights: every single entity is verified against actual source code, completely eliminating AI hallucinations while retaining semantic reasoning.
-4. **Serve** — Streams surgical architectural context to Claude, Cursor, Codex, or Gemini via **MCP** or **curl** in ~2k tokens.
-
-<details>
-<summary><b>🔍 Deep Dive: Architecture, Semantic Extraction & Live Graph</b></summary>
-
-<br>
-
-### 1. Concrete Semantic Extraction (The 5 Primitives)
-For every file in your codebase, codebone's hybrid engine extracts five structured architectural dimensions per file:
-
-- **Database Models & Tables** — Entities persisted by the module (e.g. `User`, `Subscription`, `Invoice` via Prisma, Drizzle, SQLAlchemy, GORM, ActiveRecord, or SQL).
-- **API Routes & Endpoints** — HTTP methods and paths exposed (e.g. `POST /api/v1/checkout`, `GET /webhook/stripe` via FastAPI, Express, Hono, Next.js, Gin, Actix, Spring, ASP.NET).
-- **Events & Webhooks** — Domain events emitted, handled, or dispatched (e.g. `InvoicePaid`, `PaymentFailed` via Kafka, BullMQ, Celery, EventEmitters).
-- **Business Domains** — High-level systemic domains (e.g. `Billing & Subscriptions`, `Authentication & Identity`).
-- **Logical Flow Summary** — A strict 1–2 sentence explanation of the module's actual role in the system.
-
-```python
-# Instead of feeding your AI 400 lines of raw boilerplate...
-# codebone distills the file into pure architecture:
-TABLES:  [Invoice, Subscription, PaymentRecord]
-ROUTES:  [POST /api/v1/webhooks/stripe]
-EVENTS:  [invoice.payment_succeeded, customer.subscription_deleted]
-DOMAINS: [Billing & Subscriptions, Payment Processing]
-FLOW:    Verifies Stripe webhook signatures and reconciles subscription status in PostgreSQL.
-```
-
-### 2. Solving the "Import Gap"
-In traditional AST or grep-based tools, files are only connected if file A explicitly writes `import B`. But in real-world software:
-- `billing/webhook.py` writes an `Invoice` record to the database.
-- `cron/dunning.py` queries `Invoice` to retry failed cards.
-- `emails/receipt.py` listens to the `invoice.payment_succeeded` event.
-
-None of these files import each other. A file-dump or basic search misses the connection completely. **codebone links them automatically** through shared models, events, and domains into a unified Semantic System Graph. When you prompt your AI:
-> *"How does subscription renewal work?"*
-
-codebone answers with the matching files, their entities and their links in a few hundred tokens: a drill-down such as `cb(query="subscription renewal")` returned 170 to 370 tokens on a 56-file project, and the overview of that project (about 125,000 tokens of source) is about 1,500 tokens.
-
-### 3. Interactive Live Graph UI
-Inspect your codebase's real-time architecture visually:
-
-```bash
-open http://localhost:8053/codebone/graph/ui
-```
-
-- **Interactive Canvas** — Dark glassmorphic node-link visualization mapping every file and domain cluster.
-- **Click-to-Inspect Drawer** — Click any node to view its exact tables, endpoints, events, and summary.
-- **Instant Search** — Press `/` to filter nodes across the entire project in real time.
-- **Auto-Sync** — Automatically updates live whenever you save a file.
-
-### 4. Edit Resilience & Sandboxing
-- **Syntax Tolerance**: If a file has broken syntax during typing (unclosed quotes or brackets), codebone quietly preserves the last known good state in SQLite without failing or dropping nodes.
-- **Zero Battery Drain**: Automatically throttles debouncing from 0.5s to 15s when running on MacBook battery power.
-- **Prompt Injection Defense**: Untrusted repository code is isolated with escaped XML wrappers and strict anti-jailbreak directives.
-
-</details>
+Your existing agent still reasons about the task and writes the code. codebone supplies the architecture layer underneath it.
 
 <a id="mcp-setup"></a>
-## 💬 Usage with AI Assistants
+## MCP setup
 
-Prompt naturally:
-> *"Implement authentication middleware for billing routes. Use codebone."*
-
-The model calls `cb()` and receives the exact schemas, routes, and relationships it needs — no file dumping required.
-
-<details open>
-<summary><b>⚙️ Claude Desktop, Cursor & Gemini / Antigravity Configuration</b></summary>
-
-<br>
-
-codebone auto-registers during `./install.sh` and on application start. For manual setup in `claude_desktop_config.json`, `.cursor/mcp.json`, or `~/.gemini/config/mcp_config.json` (`~/.gemini/antigravity-ide/mcp_config.json`):
+The app registers supported clients during setup. A portable manual configuration is:
 
 ```json
 {
@@ -183,208 +125,95 @@ codebone auto-registers during `./install.sh` and on application start. For manu
 }
 ```
 
-That's it — no Python paths, no manual configuration.
-
-<details>
-<summary>Direct Python Path (macOS bundle & source installs)</summary>
-
-```json
-{
-  "mcpServers": {
-    "codebone": {
-      "command": "/Users/YOUR_USERNAME/Library/Application Support/codebone/venv/bin/python3",
-      "args": ["-m", "codebone_mcp.server"],
-      "env": { "CODEBONE_PORT": "8053" }
-    }
-  }
-}
-```
-
-Replace `YOUR_USERNAME` with the output of `whoami`.
-
-</details>
-
-</details>
-
-<details>
-<summary><b>📋 Sample Context Payload</b></summary>
-
-<br>
-
-```markdown
-# codebone — Codebase Architecture
-Project: /Users/you/my_project | Files: 142 | Updated: 2026-09-23
-
-## Business Domains
-- Authentication & Identity (12 files: auth/router.py, auth/jwt.py, models/user.py …)
-- Payment & Billing (8 files: billing/stripe.py, billing/webhook.py, models/invoice.py …)
-- Order Fulfillment (15 files: orders/service.py, events/order_created.py …)
-
-## Focused query: cb(domain="billing")
-→ Returns only billing files, models (Invoice, Subscription),
-  routes (POST /checkout/session), and events (InvoicePaid, PaymentFailed).
-
-## Query: cb(query="stripe webhook")
-→ A short offer first: best file with line, confidence, related files and tests,
-  and the size of the full answer. Often enough for a small change.
-## Tip: cb(query="stripe webhook", whisper=true)
-→ The full answer: best 8 files, matching lines, symbol definitions and references, imports.
-```
-
-</details>
-
-<details>
-<summary><b>🌐 Direct curl / Terminal</b></summary>
-
-<br>
+The local API is also available while the app is running:
 
 ```bash
-# Full architectural context
-curl http://localhost:8053/codebone/context
+# Whole-project architecture overview
+curl http://127.0.0.1:8053/codebone/context
 
-# Filter by domain, file, or entity
-curl 'http://localhost:8053/codebone/context?domain=billing'
-curl 'http://localhost:8053/codebone/context?file=payments'
-curl 'http://localhost:8053/codebone/context?query=InvoiceCreated'           # full answer
-curl 'http://localhost:8053/codebone/context?query=InvoiceCreated&offer=true' # short offer
+# Focused architectural query
+curl 'http://127.0.0.1:8053/codebone/context?query=subscription%20renewal&offer=true'
+
+# Short project summary
+curl http://127.0.0.1:8053/codebone/tldr
+
+# Interactive graph
+open http://127.0.0.1:8053/codebone/graph/ui
 ```
 
-</details>
+If port `8053` is occupied, codebone chooses the next free local port. The MCP bridge discovers the active instance automatically.
 
----
+## Reproducible benchmark
 
-## 🧠 Brains & Smart Engine
+There is deliberately no magic percentage here. [`codebone-benchmark`](https://github.com/palusc/codebone-benchmark) provides:
 
-codebone pairs local-first Apple Silicon Metal acceleration with zero-cost smart indexing:
+- the same messy mini-project for every run;
+- the same three-part change request;
+- a mechanical `3/3` checker;
+- a recorder for model, mode, wall time, tokens and cost.
 
-### 🧩 Flexible Brain Providers
+Run the task with and without codebone on the same model and compare the result yourself. The harness is maintained by this project; it is reproducible evidence, not an independent study.
 
-| Provider | Description | Latency |
-|---|---|---|
-| **Built-in (Qwen 0.5B)** *(default)* | Apple Silicon Metal GPU acceleration. 100% offline, zero cloud, zero cost. | `~1.2 s / file` |
-| **Deep Scan Mode (7B)** | One-click full re-analysis with 7B parameters, automatically reverting to 0.5B. | Thorough |
-| **Local URL** | Ollama, LM Studio, vLLM, or any OpenAI-compatible local endpoint. | Custom |
-| **Cloud BYOK** | Your own API key — Anthropic (`Claude Sonnet 5`) or OpenAI (`GPT-6`). | Zero RAM |
-| **Custom .gguf** | Load any GGUF model directly via macOS file dialog (Qwen 7B, Llama 3, etc.). | Native Metal |
+## Architecture surfaces
 
-> ⚙️ Switch anytime via 🦴 ➔ **Settings** ➔ **Map Agent**. This model is used by codebone for indexing, maps, and project TLDRs.
+| Surface | Purpose |
+|---|---|
+| Menu bar app | Project selection, scan controls, model settings and graph launcher |
+| `cb` MCP tool | Overview and focused architecture retrieval |
+| `codebone_tldr` | Compact project summary |
+| Live graph UI | Interactive files, domains, routes, tables, events and edges |
+| Local HTTP API | Context, graph, status, scan and feedback endpoints |
+| SQLite storage | Persistent architecture facts and relationships |
 
-### ⚡ Smart Scan & Instant Adoption
+## Requirements
 
-Never re-scan from scratch when switching branches or reorganizing code:
+- macOS 13 Ventura or later
+- Apple Silicon (`arm64`)
+- 8 GB memory minimum
+- approximately 2 GB free disk space for the app, runtime, model and local data
 
-- **SHA-256 Fingerprinting (0 LLM Cost)**: Renamed, moved, or refactored files match their cryptographic hash and are re-linked in SQLite immediately without invoking the model.
-- **Branch Switch Batching**: Coalesces rapid burst events (e.g. `git checkout`) into bulk reconciliation.
-- **Portable Scan Snapshots**: Save, export, or adopt pre-computed `.sqlite3` architecture snapshots across folders or team machines via 🦴 ➔ **Adopt / Link Existing Scan...** or REST API (`/codebone/scans`).
+Intel Macs, Windows and Linux are not supported release targets today.
 
----
+## Build from source
 
-## 🧩 Coding Agent: use another model for coding
-
-Add a model API once, then choose per app whether it uses it. Each app has its own on/off switch.
-
-1. 🦴 ➔ **Settings** ➔ **Coding Agent** ➔ **Add Model...**: pick the **MiMo V2.6 Pro (Xiaomi)** preset, or **Custom...** with a model ID and a base URL in Anthropic format (for Claude Code) and/or OpenAI format (for opencode). The API key goes into your macOS Keychain.
-2. Turn on **Use Custom Model**, then under **Use in ...** select the coding agents that should use it. **Claude Code** (terminal and VS Code) and **opencode** are supported directly. New sessions pick the change up; running sessions keep their model.
-3. Switch an app off and codebone restores exactly the settings it changed in that app's config (`~/.claude/settings.json`, `~/.config/opencode/opencode.json`) and leaves everything else alone. A settings file that cannot be parsed is never touched.
-4. Any other app (Cursor, Antigravity, Cline, ...): **Copy for Other Apps** copies the base URL, model ID or API key so you can paste them into that app's model settings.
-
-Claude Code fetches the key from the Keychain on demand. opencode can only read a key from a file or environment variable, so for it codebone keeps a private key file (owner-only) in its own data folder and deletes it when the app is switched off. **Coding Agent** models are for coding only; codebone's own analysis model stays under **Settings ➔ Map Agent**. Uninstalling codebone switches every app back and deletes the stored keys. Your code goes to the selected model provider like with any hosted model.
-
----
-
-## 🔒 Privacy & Security
-
-- **100% Localhost** — Binds to `127.0.0.1:8053` only. Zero cloud, zero telemetry. The API refuses requests with a foreign `Host` or `Origin` header, so a web page in your browser cannot read from or control it.
-- **Secrets stay out** — `.env` files, private keys, `credentials*`/`secrets*` files and files over 1 MB are never read or sent to any model.
-- **Prompt Injection Defense** — Untrusted code is isolated with escaped XML wrappers and strict anti-jailbreak directives.
-- **Symlink Jail** — Symlinks cannot escape the project root into sensitive system paths.
-- **Full Disk Access Helper** — Pre-flight TCC check with 1-click System Settings shortcut.
-- **Battery-Aware** — 0.5s debounce on AC, 15s on battery.
-
----
-
-## 💻 System Requirements
-
-codebone is engineered for whisper-quiet background operation with zero fan noise, minimal CPU wakeups, and strict memory conservation.
-
-| Platform | Minimum Requirements | Recommended Specifications | Inference & Acceleration |
-|---|---|---|---|
-| **macOS** *(Current Release)* | • macOS 13 (Ventura)+<br>• Apple Silicon (M1 / M2 / M3 / M4) or Intel x86_64<br>• 8 GB Unified Memory<br>• 2 GB SSD space | • macOS 14 (Sonoma) / 15 (Sequoia)<br>• Apple Silicon M-Series (Pro / Max)<br>• 16 GB+ Unified Memory<br>• 5 GB SSD space | **Apple Metal GPU**<br>Native hardware acceleration (~1.2s per-file AST & TLDR synthesis, <30ms search). |
-| **Windows** *(codebone 2.0)* | • Windows 10 / 11 (64-bit)<br>• 4-core CPU with AVX2 support<br>• 8 GB RAM<br>• 2 GB SSD space | • Windows 11 (64-bit)<br>• 6+ cores (Intel 12th Gen+ / Ryzen 5000+)<br>• 16 GB RAM<br>• NVIDIA GPU with 4 GB+ VRAM | **DirectML / CUDA**<br>CUDA 12+ or DirectML fallback; AVX2 CPU execution supported. |
-| **Linux** *(codebone 2.0)* | • Ubuntu 22.04 LTS / Debian 12 / Arch<br>• x86_64 or aarch64 (ARM64)<br>• 2 vCPUs / 4 GB RAM (BYOK) or 8 GB (Local)<br>• 2 GB SSD space | • Ubuntu 24.04 LTS / Debian 12+<br>• 4+ physical cores<br>• 16 GB RAM<br>• NVIDIA GPU with CUDA 12+ (4 GB+ VRAM) | **CUDA / Vulkan / CPU**<br>Full headless daemon support with zero X11/Wayland dependencies. |
-
-### 🌡️ Thermal & Battery Budget ("Run Cool & Silent")
-- **Battery-Aware Debouncing**: On AC power, codebone debounces file saves to `0.5s` for instant updates. On battery, it shifts into a battery-saving `15s` cadence.
-- **Whisper-Quiet Threading**: Background indexing and AST tree-sitter walks execute at low thread priority (`nice 10`), strictly capped below 5% idle CPU to prevent thermal throttling, fan spin-up, or heating up your laptop.
-- **Zero-Waste Incremental Cache**: Only files with modified SHA-256 hashes are ever processed. Unchanged files require 0 ms of inference time.
-- **Cloud BYOK Mode**: Offload indexing to Anthropic or OpenAI API keys to drop local memory consumption to mere ~150 MB with 0% GPU load.
-
----
-
-## ❓ Frequently Asked Questions
-
-<details>
-<summary><h3><b>💬 Questions you might have (FAQ) — Click to expand</b></h3></summary>
-
-<br>
-
-> **The important part isn't making your AI work harder. It's doing the repetitive context work before your AI session starts.**
-
----
-
-#### Why does codebone run locally 24/7?
-codebone keeps your codebase graph continuously updated in the background. The local model can process changes independently of your AI session, so architectural context does not have to be rebuilt every time you start a new cloud session.
-
-#### Does codebone replace Claude, Cursor, Gemini, or Codex?
-No. codebone provides architectural context to the AI tools you already use through MCP. Your existing AI model still generates the code.
-
-#### Why not just let my AI read the repository itself?
-It can. The difference is that codebone continuously prepares and maintains a compact semantic representation of the codebase locally, instead of repeatedly discovering the same structure during individual AI sessions.
-
-#### Does codebone actually make AI coding better?
-The primary goal is to provide more relevant architectural context with less repeated file-level context. The effect depends on the codebase, task, and AI agent. The most meaningful comparison is a real feature task on the same repository with and without codebone.
-
-#### Does it send my code to the cloud?
-By default, no. codebone runs locally and binds strictly to `localhost` (`127.0.0.1:8053`). Cloud models can optionally be used with your own API key (BYOK).
-
-#### Why is the local model small?
-The local model is not intended to replace your main coding model. Its job is to continuously analyze and structure your codebase in the background. The main AI agent can then use that prepared context.
-
-#### Does it use tokens while I'm not actively using Claude/Cursor/etc.?
-No. All continuous processing happens locally on your machine via Apple Silicon Metal GPU. It does not consume API tokens simply because codebone is running.
-
-#### What happens if my AI session ends?
-The codebase graph remains available in SQLite. codebone continues running independently in the menu bar and keeps the graph up to date as you write code.
-
-#### Is this just another RAG system?
-codebone focuses on a continuously maintained semantic system graph of domains, models, routes, events, and relationships rather than only retrieving similar text chunks. The actual usefulness depends on the project and query.
-
-</details>
-
----
-
-## 🗑️ Uninstall
-
-<details>
-<summary><b>How to completely remove codebone</b></summary>
-
-<br>
-
-**From the app (recommended):** 🦴 ➔ **Settings** ➔ **Uninstall codebone...**. It lists everything it will remove (the app, application data and models, logs, caches, preferences, login items, and codebone's entries in the Claude Code, Claude Desktop, Cursor and Gemini configs), asks once, removes it all and quits. Your project folders are never touched.
-
-**Terminal:**
 ```bash
-./uninstall.sh --dry-run   # show what would be removed
-./uninstall.sh --yes       # remove everything without asking
+git clone https://github.com/palusc/codebone.git
+cd codebone
+./install.sh
 ```
-Installed with Homebrew? The uninstaller also runs `brew uninstall codebone` for you.
 
-</details>
+The installer validates macOS and Apple Silicon before changing the system.
+
+Run the test suite from a development checkout:
+
+```bash
+python3 -m pytest
+```
+
+## Documentation
+
+- [Changelog](CHANGELOG.md)
+- [Releases](https://github.com/palusc/codebone/releases)
+- [Benchmark harness](https://github.com/palusc/codebone-benchmark)
+- [Issue tracker](https://github.com/palusc/codebone/issues)
+- [License](LICENSE)
+
+## Uninstall
+
+Use **Settings → Uninstall codebone…** in the menu bar app, or run:
+
+```bash
+./uninstall.sh --dry-run
+./uninstall.sh --yes
+```
+
+The uninstaller removes codebone's app data and agent configuration entries. It does not delete project folders.
 
 ---
-
 
 <div align="center">
+
+Your agent can read the files. Give it the system.
 
 Released under the [MIT License](LICENSE).
 

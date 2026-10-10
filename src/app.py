@@ -2034,6 +2034,7 @@ class CodeBoneApp(rumps.App):
                     item.title = f"{path.name} ({path.parent.name})"
                 else:
                     item.title = path.name or str(path)
+                _set_symbol_icon(item, "folder.fill" if active_str == str(path) else "folder")
                 try:
                     item._menuitem.setToolTip_(str(path))
                 except Exception:
@@ -2399,11 +2400,14 @@ class CodeBoneApp(rumps.App):
                 callback=(lambda _, a=app_id: self.toggle_module_app(a)) if master_on else None,
             )
             item.state = app_id in active
+            _set_symbol_icon(item, "app.badge" if "claude" in app_id else "terminal")
             agents_menu.add(item)
         self.modules_menu.add(agents_menu)
 
         self.modules_menu.add(None)
-        self.modules_menu.add(rumps.MenuItem("Reset Agent Routing", callback=self.reset_modules_to_normal))
+        reset_item = rumps.MenuItem("Reset Agent Routing", callback=self.reset_modules_to_normal)
+        _set_symbol_icon(reset_item, "arrow.counterclockwise")
+        self.modules_menu.add(reset_item)
 
     def _add_local_ollama_module(self):
         from . import modules

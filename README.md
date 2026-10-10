@@ -145,14 +145,17 @@ If port `8053` is occupied, codebone chooses the next free local port. The MCP b
 
 ## Reproducible benchmark
 
-There is deliberately no magic percentage here. [`codebone-benchmark`](https://github.com/palusc/codebone-benchmark) provides:
+There is deliberately no magic percentage here. [`codebone-benchmark`](https://github.com/palusc/codebone-benchmark) is a one-prompt automated comparison with:
 
-- the same messy mini-project for every run;
-- the same three-part change request;
-- a mechanical `3/3` checker;
-- a recorder for model, mode, wall time, tokens and cost.
+- a generated 160+ file Northstar Commerce SaaS project;
+- the same four-part, cross-layer implementation task in two isolated agent sessions;
+- a behavioral `4/4` checker outside both editable project copies;
+- automatic token, agent-time and codebone indexing measurements;
+- a plain-English `HELPS`, `DOES NOT HELP`, `MIXED` or `INCONCLUSIVE` verdict.
 
-Run the task with and without codebone on the same model and compare the result yourself. The harness is maintained by this project; it is reproducible evidence, not an independent study.
+Run it on your own Codex or Claude setup and model. The harness is maintained by this project; it is reproducible evidence, not an independent study.
+
+The current comparison measures a static context file built with codebone's fallback graph and task-derived queries. It does not measure live MCP use or local-model synthesis; the generated project is a sample, not a production-scale codebase.
 
 ## Architecture surfaces
 

@@ -3,7 +3,7 @@
 All notable changes to codebone will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Official milestone releases are clean numbers (`1.0`, `1.1`, `1.2`, `1.3`, `1.4`, `1.5`, `1.6`, `1.7`).
+Official milestone releases are clean numbers (`1.0`, `1.1`, `1.2`, `1.3`, `1.4`, `1.5`, `1.6`, `1.7`, `1.8`).
 Development preview snapshots leading up to each milestone use letter releases (`.a`, `.b`, `.c`).
 
 ---
@@ -12,8 +12,39 @@ Development preview snapshots leading up to each milestone use letter releases (
 
 ---
 
-## [1.7] - 2026-10-09
+## [1.8] - 2026-10-15
 *Official Milestone Full Release (Current)*
+
+### 🎯 Milestone Goal
+Implement comprehensive Domain-Driven Design (DDD) internal architecture and multi-language codebase extraction (Bounded Contexts, Aggregate Roots, Value Objects, Domain Events, Repositories, Domain Services), combined with 1-click GitHub repository cloning, workspace synchronization, and automated background scanning.
+
+### Added
+- **Domain-Driven Design (DDD) Internal Architecture**:
+  - Re-architected codebone internally with clean Hexagonal/DDD layers:
+    - `src/domain/`: Pure domain models (`ArchitectureGraph` aggregate root, `BoundedContext`, `DDDRole`, `TacticalSymbol`, `FileRecord`) and ports (`StoragePort`, `AnalysisProviderPort`).
+    - `src/application/`: Dedicated application use-cases (`GetArchitectureContextUseCase`, `ScanProjectUseCase`, `ReconcileArchitectureUseCase`, `AddGitHubRepositoryUseCase`).
+  - Seamlessly bound use cases to `CodeBoneService` (`context_use_case`, `scan_use_case`, `reconcile_use_case`, `github_use_case`).
+- **Tactical & Strategic DDD Codebase Extractor**:
+  - Deterministic AST and pattern extractor (`src/domain/extractor.py`) across Python, TypeScript/JavaScript, Go, Rust, Java, and C#.
+  - Automatic strategic Bounded Context inference from directory topologies.
+  - Tactical extraction of Aggregate Roots, Value Objects, Domain Events, Repositories, and Domain Services.
+- **Rich DDD Context for AI Agents**:
+  - `cb()` overview and search formatting now render `## Bounded Contexts` and `## Entities` (Aggregates, Value Objects, Repositories, Domain Services) with precise role badges (`[Context: ...] [Aggregate Root: ...]`).
+- **Native GitHub Repository Connection**:
+  - Add projects by URL (`https://github.com/owner/repo`, `git@github.com:...`) or slug (`owner/repo`) directly into managed workspace `~/CodeboneProjects/`.
+  - Fast shallow clone (`--depth 1`) with automatic fallback to zip archive download.
+  - Native macOS menu bar dialog (`Projects > + Add GitHub Repo...`) with background download & instant scan.
+  - 1-Click `Sync / Git Pull` action in project submenus for fast-forward updating and incremental scanning.
+  - REST API endpoint (`POST /codebone/projects/add_github`) and MCP tool (`codebone_add_github_repo`).
+
+### Changed
+- **Entity Indexing & Persistence**: Extended SQLite schema and inverted index to persist and query tactical DDD components and bounded contexts with zero overhead.
+- **Documentation & Consistency**: Bumped project version to `1.8` across package manifests, Homebrew formula, badges, and documentation.
+
+---
+
+## [1.7] - 2026-10-09
+*Previous Milestone Release*
 
 ### 🎯 Milestone Goal
 Establish true hybrid scanning combining deterministic multi-language AST analysis with local and cloud LLM synthesis, eliminate macOS menu bar overlapping artifacts, and centralize coding agent routing for external tools (Claude Code, Cursor, Codex, Gemini/Antigravity).

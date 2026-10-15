@@ -17,8 +17,10 @@ except ImportError:
 
 from collections import Counter
 from .config import Config
+from .domain.extractor import extract_tactical_ddd, infer_bounded_context
 from .imports import JS_EXT, ROUTE_FILES, VERB_CONST, VERB_FN, _route_url, sql_tables, supabase_tables
 from .prompts import PROJECT_TLDR_SYSTEM_PROMPT, build_project_tldr_prompt, build_prompt, ground_analysis, sanitize_text
+
 
 logger = logging.getLogger("codebone.providers")
 
@@ -276,10 +278,27 @@ class FastFallbackProvider(Provider):
         for m in re.finditer(r"(?:redis|client)\.(?:publish|subscribe)\s*\(\s*['\"]([^'\"]+)['\"]", code):  # Redis pub/sub
             events.add(m.group(1))
 
+        # Tactical DDD extraction
+        ddd = extract_tactical_ddd(file_path, code)
+        aggregates = ddd["aggregates"]
+        value_objects = ddd["value_objects"]
+        repositories = ddd["repositories"]
+        domain_services = ddd["domain_services"]
+        for ev in ddd["domain_events"]:
+            events.add(ev)
+
         path_domains = [name for name, pattern in PATH_DOMAINS if pattern.search(file_path)]
         low_path, low_code = file_path.lower(), code.lower()
         domains = list(path_domains)
         supported = list(path_domains)  # domains a model may claim: the file shows at least one sign of them
+
+        # Strategic DDD: Inferred Bounded Context
+        bounded_context = infer_bounded_context(file_path)
+        if bounded_context and bounded_context not in domains:
+            domains.insert(0, bounded_context)
+            if bounded_context not in supported:
+                supported.insert(0, bounded_context)
+
         for name, terms in DOMAIN_PATTERNS:
             if any(term in low_path for term in terms) or any(len(re.findall(rf"\b{term}", low_code)) >= 3 for term in terms):
                 if name not in domains:
@@ -289,7 +308,15 @@ class FastFallbackProvider(Provider):
 
         defs = re.findall(r"(?:def|class|function|const)\s+([A-Za-z0-9_]+)", code)
         consts = re.findall(r"^([A-Z][A-Z0-9_]{2,})\s*=", code, re.MULTILINE)
-        if tables and routes:
+        if aggregates:
+            summary = f"Implements Aggregate Root: {', '.join(sorted(aggregates)[:2])}" + (f"; Repositories: {', '.join(sorted(repositories)[:2])}" if repositories else "") + "."
+        elif value_objects:
+            summary = f"Defines Value Object: {', '.join(sorted(value_objects)[:3])}."
+        elif repositories:
+            summary = f"Implements Repository: {', '.join(sorted(repositories)[:3])}."
+        elif domain_services:
+            summary = f"Domain Service / Use Case: {', '.join(sorted(domain_services)[:3])}."
+        elif tables and routes:
             summary = f"Declares {', '.join(sorted(tables)[:3])}; handles {', '.join(sorted(routes)[:3])}."
         elif routes:
             summary = f"Implements API endpoints: {', '.join(sorted(routes)[:4])}."
@@ -301,20 +328,43 @@ class FastFallbackProvider(Provider):
             summary = f"Defines {', '.join(defs[:6])}" + (f"; constants {', '.join(consts[:6])}" if consts else "") + "."
         else:
             summary = ""  # nothing worth saying (empty __init__.py, data file): keep it out of the context
-        return {"tables": sorted(tables), "routes": sorted(routes), "events": sorted(events),
-                "domains": domains[:3], "path_domains": path_domains[:2], "supported": supported,
-                "summary": summary}
+        return {
+            "tables": sorted(tables),
+            "routes": sorted(routes),
+            "events": sorted(events),
+            "domains": domains[:3],
+            "path_domains": path_domains[:2],
+            "supported": supported,
+            "summary": summary,
+            "aggregates": sorted(aggregates),
+            "value_objects": sorted(value_objects),
+            "repositories": sorted(repositories),
+            "domain_services": sorted(domain_services),
+            "bounded_context": bounded_context,
+        }
 
     def sniff(self, file_path: str, code: str) -> str:
         self.last_source = "regex"
         a = self.analyze(file_path, code)
-        return (
-            f"TABLES: {', '.join(a['tables']) or 'none'}\n"
-            f"ROUTES: {', '.join(a['routes']) or 'none'}\n"
-            f"EVENTS: {', '.join(a['events']) or 'none'}\n"
-            f"DOMAINS: {', '.join(a['domains']) or 'none'}\n"
-            f"FLOW: {a['summary']}"
-        )
+        lines = [
+            f"TABLES: {', '.join(a['tables']) or 'none'}",
+            f"ROUTES: {', '.join(a['routes']) or 'none'}",
+            f"EVENTS: {', '.join(a['events']) or 'none'}",
+            f"DOMAINS: {', '.join(a['domains']) or 'none'}",
+        ]
+        if a.get("aggregates"):
+            lines.append(f"AGGREGATES: {', '.join(a['aggregates'])}")
+        if a.get("value_objects"):
+            lines.append(f"VALUE_OBJECTS: {', '.join(a['value_objects'])}")
+        if a.get("repositories"):
+            lines.append(f"REPOSITORIES: {', '.join(a['repositories'])}")
+        if a.get("domain_services"):
+            lines.append(f"SERVICES: {', '.join(a['domain_services'])}")
+        if a.get("bounded_context"):
+            lines.append(f"BOUNDED_CONTEXT: {a['bounded_context']}")
+        lines.append(f"FLOW: {a['summary']}")
+        return "\n".join(lines)
+
 
     @staticmethod
     def _format_stack_line(files: list[dict]) -> str:

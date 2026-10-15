@@ -157,6 +157,19 @@ def codebone_adopt_scan(scan_id_or_path: str, project_path: str | None = None) -
     return _post("/codebone/scans/adopt", payload)
 
 
+@mcp.tool()
+def codebone_add_github_repo(repo_url_or_slug: str, target_dir: str = "", branch: str = "") -> str:
+    """Clones a GitHub repository (e.g. 'palusc/codebone' or 'https://github.com/owner/repo'), adds it to
+    codebone's workspace, activates it, and automatically initiates codebase analysis."""
+    payload: dict = {"repo": repo_url_or_slug}
+    if target_dir:
+        payload["target_dir"] = target_dir
+    if branch:
+        payload["branch"] = branch
+    return _post("/codebone/projects/add_github", payload)
+
+
+
 @mcp.prompt("cb")
 @mcp.prompt("codebone")
 def codebone_prompt() -> str:

@@ -442,6 +442,36 @@ def create_app(service: CodeBoneService, allowed_hosts: Optional[set] = None) ->
             threading.Thread(target=service.rescan_all, daemon=True, name="codebone-api-reset-rescan").start()
         return {"status": "reset", "message": "Knowledge graph reset and re-scanning initiated."}
 
+    @app.post("/codebone/projects/add_github")
+    @app.post("/pug/projects/add_github")
+    def add_github_project(payload: dict):
+        repo_id = _text(payload, "repo", 300)
+        if not repo_id:
+            raise HTTPException(status_code=400, detail="Missing required 'repo' field (URL or owner/repo).")
+        target_dir_str = _text(payload, "target_dir", 500)
+        target_dir = Path(target_dir_str) if target_dir_str else None
+        branch = _text(payload, "branch", 100) or None
+        token = _text(payload, "token", 200) or None
+
+        from .github import clone_github_repo
+        try:
+            cloned_path = clone_github_repo(repo_id, target_dir=target_dir, branch=branch, token=token)
+            service.config.add_project_path(str(cloned_path))
+            service.config.set("project_path", str(cloned_path))
+            try:
+                service.activate_project(cloned_path)
+            except Exception:
+                service.start(auto_scan=True)
+            return {
+                "status": "success",
+                "message": f"Successfully cloned and activated '{cloned_path.name}'.",
+                "project_path": str(cloned_path),
+                "project_name": cloned_path.name,
+            }
+        except Exception as exc:
+            logger.exception("Failed to add GitHub repository: %s", exc)
+            raise HTTPException(status_code=500, detail=str(exc))
+
     anthropic_bridge.register(app, service.config)
 
     return app

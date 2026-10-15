@@ -8,7 +8,7 @@ codebone turns a codebase into a live, local architecture graph and serves focus
 
 [**Download for macOS**](https://github.com/palusc/codebone/releases/latest/download/codebone-macos-arm64.dmg) · [Website](https://codeb.one) · [Benchmark](https://github.com/palusc/codebone-benchmark) · [Latest release](https://github.com/palusc/codebone/releases/latest)
 
-[![Release](https://img.shields.io/badge/version-1.7-b9ff66?style=flat-square)](https://github.com/palusc/codebone/releases/latest)
+[![Release](https://img.shields.io/badge/version-1.8-b9ff66?style=flat-square)](https://github.com/palusc/codebone/releases/latest)
 [![Platform](https://img.shields.io/badge/macOS_13%2B-Apple_Silicon-111317?style=flat-square&logo=apple)](#requirements)
 [![MCP](https://img.shields.io/badge/MCP-native-917cff?style=flat-square)](#mcp-setup)
 [![License](https://img.shields.io/badge/license-MIT-6ddbd3?style=flat-square)](LICENSE)

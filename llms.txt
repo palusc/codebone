@@ -10,7 +10,7 @@
 - Changelog: https://github.com/palusc/codebone/blob/main/CHANGELOG.md
 
 ## Current release
-- Version: 1.7
+- Version: 1.8
 - License: MIT
 - Platform: macOS 13+ on Apple Silicon (arm64)
 - Built-in map model: Qwen2.5-Coder 0.5B with Apple Metal acceleration
@@ -18,13 +18,14 @@
 - Server: localhost-only MCP and HTTP API
 
 ## Core behavior
-codebone watches a selected project and builds a live graph from deterministic source facts and grounded local synthesis. It extracts routes, tables, models, events, imports, business domains and flow summaries. Shared entities connect files even when they do not import one another.
+codebone watches a selected project and builds a live graph from deterministic source facts and grounded local synthesis. It extracts routes, tables, models, events, imports, business domains, tactical DDD patterns (aggregates, value objects, domain events, repositories, domain services) and bounded contexts. Shared entities connect files even when they do not import one another. Remote repositories can be cloned and indexed directly from GitHub.
 
 ## Agent tools
-- `cb()` returns a project overview.
-- `cb(query="...")` returns ranked, focused context with source evidence.
+- `cb()` returns a project overview with bounded contexts and entities.
+- `cb(query="...")` returns ranked, focused context with source evidence and DDD role badges.
 - `cb(file="...")` returns context and links for one file.
 - `codebone_tldr()` returns a compact project summary.
+- `codebone_add_github_repo()` clones and indexes any GitHub repository by URL or slug.
 - `codebone_status()` reports the active local instance.
 
 ## Supported clients

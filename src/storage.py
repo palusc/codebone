@@ -9,8 +9,11 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .domain.models import FileRecord
+from .domain.ports import StoragePort
 from .imports import source_facts as _source_facts, _SQL_STOP
 from .prompts import _clean_entity_list, parse_analysis, sanitize_text
+
 
 logger = logging.getLogger("codebone.storage")
 
@@ -52,7 +55,7 @@ def _dir_of(path: str) -> str:
     return path.rsplit("/", 1)[0] if "/" in path else "."
 
 
-class Storage:
+class Storage(StoragePort):
     def __init__(self, db_path: Path, readonly: bool = False):
         self.db_path = db_path
         self.readonly = readonly
@@ -109,10 +112,16 @@ class Storage:
             ("events", "TEXT DEFAULT '[]'"),
             ("domains", "TEXT DEFAULT '[]'"),
             ("source", "TEXT DEFAULT 'model'"),
+            ("aggregates", "TEXT DEFAULT '[]'"),
+            ("value_objects", "TEXT DEFAULT '[]'"),
+            ("repositories", "TEXT DEFAULT '[]'"),
+            ("domain_services", "TEXT DEFAULT '[]'"),
+            ("bounded_context", "TEXT DEFAULT ''"),
         ):
             if name not in columns:
                 self._conn.execute(f"ALTER TABLE files ADD COLUMN {name} {ddl}")
         self._has_entities_col = "entities" in columns
+
 
     # ── change tracking ─────────────────────────────────────────────────
     @property
@@ -147,13 +156,26 @@ class Storage:
             self._touch()  # project_path gates the derived views; a cached empty one must not outlive the bind
 
     # ── writes ───────────────────────────────────────────────────────────
-    def _upsert(self, path, tables, routes, events, domains, summary, updated_at, mtime, content_hash, source):
+    def _upsert(
+        self, path, tables, routes, events, domains, summary, updated_at, mtime, content_hash, source,
+        aggregates=None, value_objects=None, repositories=None, domain_services=None, bounded_context=""
+    ):
         cols = ["path", "tables", "routes", "events", "domains", "summary", "updated_at", "mtime", "content_hash", "source"]
         vals = [path, json.dumps(tables), json.dumps(routes), json.dumps(events), json.dumps(domains),
                 summary, updated_at, mtime, content_hash, source]
+
+        cols.extend(["aggregates", "value_objects", "repositories", "domain_services", "bounded_context"])
+        vals.extend([
+            json.dumps(aggregates or []),
+            json.dumps(value_objects or []),
+            json.dumps(repositories or []),
+            json.dumps(domain_services or []),
+            bounded_context or "",
+        ])
+
         if self._has_entities_col:  # legacy schema kept a NOT NULL combined column
             cols.insert(1, "entities")
-            vals.insert(1, json.dumps(tables + routes + events + domains))
+            vals.insert(1, json.dumps(tables + routes + events + domains + (aggregates or [])))
         updates = ", ".join(f"{c} = excluded.{c}" for c in cols[1:])
         with self._lock:
             self._conn.execute(
@@ -172,8 +194,19 @@ class Storage:
         content_hash: str = "",
         source: str = "model",
     ) -> dict:
-        tables, routes, events, domains, summary = parse_analysis(raw_output)
-        self._upsert(rel_path, tables, routes, events, domains, summary, time.time(), mtime, content_hash, source)
+        parsed = parse_analysis(raw_output)
+        tables, routes, events, domains, summary = parsed
+        aggregates = getattr(parsed, "aggregates", [])
+        value_objects = getattr(parsed, "value_objects", [])
+        repositories = getattr(parsed, "repositories", [])
+        domain_services = getattr(parsed, "domain_services", [])
+        bounded_context = getattr(parsed, "bounded_context", "")
+
+        self._upsert(
+            rel_path, tables, routes, events, domains, summary, time.time(), mtime, content_hash, source,
+            aggregates=aggregates, value_objects=value_objects, repositories=repositories,
+            domain_services=domain_services, bounded_context=bounded_context,
+        )
         return {
             "path": rel_path,
             "tables": tables,
@@ -181,6 +214,11 @@ class Storage:
             "events": events,
             "domains": domains,
             "summary": summary,
+            "aggregates": aggregates,
+            "value_objects": value_objects,
+            "repositories": repositories,
+            "domain_services": domain_services,
+            "bounded_context": bounded_context,
         }
 
     def insert_record(self, entry: dict):
@@ -197,7 +235,13 @@ class Storage:
             entry.get("mtime", 0.0),
             entry.get("content_hash", ""),
             entry.get("source", "model"),
+            aggregates=_clean_entity_list([str(x) for x in entry.get("aggregates", [])]),
+            value_objects=_clean_entity_list([str(x) for x in entry.get("value_objects", [])]),
+            repositories=_clean_entity_list([str(x) for x in entry.get("repositories", [])]),
+            domain_services=_clean_entity_list([str(x) for x in entry.get("domain_services", [])]),
+            bounded_context=str(entry.get("bounded_context", "")),
         )
+
 
     def set_mtime(self, rel_path: str, mtime: float):
         """Refresh the stored mtime of an unchanged file so the next rescan can skip it without reading it."""
@@ -309,17 +353,28 @@ class Storage:
 
     @staticmethod
     def _build_index(files: List[dict]) -> dict:
-        """Inverted indexes table/route/event/domain -> [files]. Names that differ only in case are one entity."""
-        maps: Dict[str, Dict[str, List[str]]] = {"tables": {}, "routes": {}, "events": {}, "domains": {}}
+        """Inverted indexes table/route/event/domain/aggregates/value_objects/repositories -> [files]. Names that differ only in case are one entity."""
+        maps: Dict[str, Dict[str, List[str]]] = {
+            "tables": {}, "routes": {}, "events": {}, "domains": {},
+            "aggregates": {}, "value_objects": {}, "repositories": {}, "domain_services": {},
+            "bounded_contexts": {},
+        }
         canon: Dict[str, Dict[str, str]] = {k: {} for k in maps}
         for entry in sorted(files, key=lambda f: f["path"]):  # path order: the chosen spelling is stable
             p = entry["path"]
-            for cat, cat_map in maps.items():
+            for cat in ("tables", "routes", "events", "domains", "aggregates", "value_objects", "repositories", "domain_services"):
+                cat_map = maps[cat]
                 for name in entry.get(cat, []):
                     key = canon[cat].setdefault(name.lower(), name)
                     bucket = cat_map.setdefault(key, [])
                     if p not in bucket:
                         bucket.append(p)
+            ctx = entry.get("bounded_context")
+            if ctx:
+                key = canon["bounded_contexts"].setdefault(ctx.lower(), ctx)
+                bucket = maps["bounded_contexts"].setdefault(key, [])
+                if p not in bucket:
+                    bucket.append(p)
         return maps
 
     def entity_index(self) -> dict:
@@ -532,4 +587,47 @@ class Storage:
             "mtime": row["mtime"],
             "content_hash": row["content_hash"] if "content_hash" in keys else "",
             "source": (row["source"] if "source" in keys else None) or "model",
+            "aggregates": _parse(row["aggregates"]) if "aggregates" in keys else [],
+            "value_objects": _parse(row["value_objects"]) if "value_objects" in keys else [],
+            "repositories": _parse(row["repositories"]) if "repositories" in keys else [],
+            "domain_services": _parse(row["domain_services"]) if "domain_services" in keys else [],
+            "bounded_context": (row["bounded_context"] if "bounded_context" in keys else "") or "",
         }
+
+    # ── StoragePort implementation ──────────────────────────────────────
+    def get_file_record(self, rel_path: str) -> Optional[FileRecord]:
+        """Fetch strongly typed domain FileRecord."""
+        d = self.get_file(rel_path)
+        return FileRecord.from_dict(d) if d else None
+
+    def put_file(self, record: FileRecord) -> None:
+        """Store or update a domain FileRecord."""
+        self._upsert(
+            record.path,
+            record.tables,
+            record.routes,
+            record.events,
+            record.domains,
+            record.summary,
+            record.updated_at or time.time(),
+            record.mtime,
+            record.content_hash,
+            record.source,
+            aggregates=record.aggregates,
+            value_objects=record.value_objects,
+            repositories=record.repositories,
+            domain_services=record.domain_services,
+            bounded_context=record.bounded_context,
+        )
+
+    def list_files(self) -> List[FileRecord]:
+        """List all indexed files as domain FileRecord entities."""
+        return [FileRecord.from_dict(f) for f in self.all_files()]
+
+    def delete_file(self, path: str) -> bool:
+        """Delete a file by path."""
+        exists = self.get_file(path) is not None
+        if exists:
+            self.remove_file(path)
+        return exists
+

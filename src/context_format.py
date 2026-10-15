@@ -61,8 +61,17 @@ def _degree(files: List[dict], index: dict) -> Dict[str, int]:
             for p in paths:
                 if p in score:
                     score[p] += len(paths)
+    for cat in ("aggregates", "value_objects", "repositories", "domain_services"):
+        for paths in index.get(cat, {}).values():
+            for p in paths:
+                if p in score:
+                    score[p] += len(paths) * 2  # DDD architectural symbols carry higher connectivity weight
     for f in files:
-        score[f["path"]] += len(f.get("tables", [])) + len(f.get("routes", [])) + len(f.get("events", []))
+        score[f["path"]] += (
+            len(f.get("tables", [])) + len(f.get("routes", [])) + len(f.get("events", []))
+            + len(f.get("aggregates", [])) * 2 + len(f.get("value_objects", []))
+            + len(f.get("repositories", [])) + len(f.get("domain_services", []))
+        )
     return score
 
 
@@ -76,6 +85,12 @@ def overview(project_name: str, files: List[dict], index: dict, fresh: str = "")
         lines.append(fresh)
     lines.append(f"Layout: {_layout(files)}")
 
+    bounded_contexts = sorted(index.get("bounded_contexts", {}).items(), key=lambda kv: (-len(kv[1]), kv[0].lower()))
+    if bounded_contexts:
+        lines += ["", "## Bounded Contexts"]
+        for name, paths in bounded_contexts[:MAX_DOMAINS]:
+            lines.append(f"- {name} ({len(paths)}): {_more(sorted(paths), 4)}")
+
     domains = sorted(index.get("domains", {}).items(), key=lambda kv: (-len(kv[1]), kv[0].lower()))
     if domains:
         lines += ["", "## Domains"]
@@ -85,7 +100,15 @@ def overview(project_name: str, files: List[dict], index: dict, fresh: str = "")
             lines.append(f"- (+{len(domains) - MAX_DOMAINS} more domains)")
 
     entity_lines = []
-    for label, cat in (("Tables", "tables"), ("Routes", "routes"), ("Events", "events")):
+    for label, cat in (
+        ("Aggregates", "aggregates"),
+        ("Tables", "tables"),
+        ("Value Objects", "value_objects"),
+        ("Repositories", "repositories"),
+        ("Domain Services", "domain_services"),
+        ("Routes", "routes"),
+        ("Events", "events"),
+    ):
         names = sorted(index.get(cat, {}))
         if names:
             entity_lines.append(f"- {label}: {_more(names, MAX_ENTITIES)}")
@@ -94,7 +117,12 @@ def overview(project_name: str, files: List[dict], index: dict, fresh: str = "")
 
     # Files with no summary, content record and no entities (empty __init__.py ...) tell an assistant
     # nothing: count, do not list
-    informative = [f for f in files if f.get("summary") or f.get("content") or f.get("tables") or f.get("routes") or f.get("events")]
+    informative = [
+        f for f in files
+        if f.get("summary") or f.get("content") or f.get("tables") or f.get("routes")
+        or f.get("events") or f.get("aggregates") or f.get("value_objects")
+        or f.get("repositories") or f.get("domain_services")
+    ]
     trivial = n - len(informative)
     n_listed = len(informative)
     ranked = sorted(informative, key=lambda f: f["path"])
@@ -107,9 +135,20 @@ def overview(project_name: str, files: List[dict], index: dict, fresh: str = "")
     for f in ranked:
         text = _clip(f.get("summary") or f.get("content", ""))
         line = f"- {f['path']}" + (f": {text}" if text else "")
-        if f.get("role"):
-            line += f" [{f['role']}]"
+        role = f.get("role")
+        if not role:
+            if f.get("aggregates"):
+                role = f"Aggregate Root: {f['aggregates'][0]}"
+            elif f.get("value_objects"):
+                role = f"Value Object: {f['value_objects'][0]}"
+            elif f.get("repositories"):
+                role = f"Repository: {f['repositories'][0]}"
+            elif f.get("domain_services"):
+                role = f"Domain Service: {f['domain_services'][0]}"
+        if role:
+            line += f" [{role}]"
         lines.append(line)
+
 
     if trivial:
         lines.append(f"(+{trivial} files without notable content omitted)")
@@ -131,7 +170,9 @@ def _match_files(files: List[dict], index: dict, domain: str, file: str, query: 
     fw = _tokens(file) or ([file.lower()] if file else [])
 
     def in_dom(f: dict) -> bool:
-        return bool(dw) and any(all(t in d.lower() for t in dw) for d in f.get("domains", []))
+        matches_dom = bool(dw) and any(all(t in d.lower() for t in dw) for d in f.get("domains", []))
+        matches_ctx = bool(dw) and bool(f.get("bounded_context")) and all(t in f["bounded_context"].lower() for t in dw)
+        return matches_dom or matches_ctx
 
     def in_file(f: dict) -> bool:
         return bool(fw) and all(t in f["path"].lower() for t in fw)
@@ -148,9 +189,16 @@ def _match_files(files: List[dict], index: dict, domain: str, file: str, query: 
     def score(f: dict) -> Tuple[int, int]:
         path = f["path"].lower()
         base = path.rsplit("/", 1)[-1]
-        entities = [e.lower() for cat in ("tables", "routes", "events") for e in f.get(cat, [])]
+        entities = [
+            e.lower()
+            for cat in ("tables", "routes", "events", "aggregates", "value_objects", "repositories", "domain_services")
+            for e in f.get(cat, [])
+        ]
         doms = [d.lower() for d in f.get("domains", [])]
+        if f.get("bounded_context"):
+            doms.append(f["bounded_context"].lower())
         summary = ((f.get("summary") or "") + " " + (f.get("content") or "")).lower()
+
         body = text_score(texts[f["path"]], terms)[0] if texts and f["path"] in texts else [0] * len(terms)
         total = hit_terms = 0
         for t, w in zip(terms, body):
@@ -267,9 +315,29 @@ def search(project_name: str, files: List[dict], index: dict, domain: str = "", 
         imported_by.setdefault(e["to"], []).append(e["from"])
     for f, sc, same in shown:
         doms = f.get("domains", [])
-        header = f"### {f['path']}" + (f" [{', '.join(doms[:2])}]" if doms else "")
-        if f.get("role"):
-            header += f" [{f['role']}]"
+
+        ctx = f.get("bounded_context")
+        header = f"### {f['path']}"
+        tags = []
+        if ctx:
+            tags.append(f"Context: {ctx}")
+        other_doms = [d for d in doms if d != ctx]
+        if other_doms:
+            tags.append(", ".join(other_doms[:2]))
+        if tags:
+            header += f" [{'; '.join(tags)}]"
+        role = f.get("role")
+        if not role:
+            if f.get("aggregates"):
+                role = f"Aggregate Root: {f['aggregates'][0]}"
+            elif f.get("value_objects"):
+                role = f"Value Object: {f['value_objects'][0]}"
+            elif f.get("repositories"):
+                role = f"Repository: {f['repositories'][0]}"
+            elif f.get("domain_services"):
+                role = f"Domain Service: {f['domain_services'][0]}"
+        if role:
+            header += f" [{role}]"
         if query:
             header += f" (score {sc})"
         lines += ["", header]
@@ -281,9 +349,18 @@ def search(project_name: str, files: List[dict], index: dict, domain: str = "", 
         if texts and terms and f["path"] in texts:
             for _, i, text in text_score(texts[f["path"]], terms)[1][:2]:
                 lines.append(f"L{i}: {_clip(text, 140)}")
-        for label_, cat in (("Tables", "tables"), ("Routes", "routes"), ("Events", "events")):
+        for label_, cat in (
+            ("Aggregates", "aggregates"),
+            ("Value Objects", "value_objects"),
+            ("Repositories", "repositories"),
+            ("Domain Services", "domain_services"),
+            ("Tables", "tables"),
+            ("Routes", "routes"),
+            ("Events", "events"),
+        ):
             if f.get(cat):
                 lines.append(f"{label_}: {_more(f[cat], 8)}")
+
         if f.get("calls"):
             chains = []
             for route, handler in f["calls"]:

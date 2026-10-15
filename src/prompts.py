@@ -271,9 +271,29 @@ def build_prompt(file_path: str, code: str) -> str:
     )
 
 
-def parse_analysis(raw_text: str) -> Tuple[List[str], List[str], List[str], List[str], str]:
+class ParsedAnalysis(tuple):
+    """Backwards-compatible 5-tuple (tables, routes, events, domains, summary)
+    augmented with DDD fields: aggregates, value_objects, repositories, domain_services, bounded_context."""
+    def __new__(cls, tables, routes, events, domains, summary,
+                aggregates=None, value_objects=None, repositories=None,
+                domain_services=None, bounded_context=""):
+        instance = super().__new__(cls, (tables, routes, events, domains, summary))
+        instance.tables = tables
+        instance.routes = routes
+        instance.events = events
+        instance.domains = domains
+        instance.summary = summary
+        instance.aggregates = aggregates or []
+        instance.value_objects = value_objects or []
+        instance.repositories = repositories or []
+        instance.domain_services = domain_services or []
+        instance.bounded_context = bounded_context or ""
+        return instance
+
+
+def parse_analysis(raw_text: str) -> ParsedAnalysis:
     """Parse structured output from codebone's analysis into:
-    (tables, routes, events, domains, summary_flow).
+    (tables, routes, events, domains, summary_flow) with DDD attributes.
     Handles both key-value line formats and JSON markdown blocks.
     """
     trimmed = raw_text.strip()
@@ -306,9 +326,19 @@ def parse_analysis(raw_text: str) -> Tuple[List[str], List[str], List[str], List
                 routes = _clean_entity_list(_to_raw_list(data.get("routes", data.get("routen", []))))
                 events = _clean_entity_list(_to_raw_list(data.get("events", data.get("ereignisse", []))))
                 domains = _clean_entity_list(_to_raw_list(data.get("domains", data.get("domänen", []))))
+                aggregates = _clean_entity_list(_to_raw_list(data.get("aggregates", [])))
+                value_objects = _clean_entity_list(_to_raw_list(data.get("value_objects", [])))
+                repositories = _clean_entity_list(_to_raw_list(data.get("repositories", [])))
+                domain_services = _clean_entity_list(_to_raw_list(data.get("domain_services", [])))
+                bounded_context = str(data.get("bounded_context", "")).strip()
                 raw_summary = str(data.get("summary", data.get("flow", data.get("fluss", "")))).strip()
                 summary = sanitize_text(raw_summary)
-                return tables, routes, events, domains, summary
+                return ParsedAnalysis(
+                    tables, routes, events, domains, summary,
+                    aggregates=aggregates, value_objects=value_objects,
+                    repositories=repositories, domain_services=domain_services,
+                    bounded_context=bounded_context,
+                )
         except Exception:
             pass
 
@@ -317,6 +347,11 @@ def parse_analysis(raw_text: str) -> Tuple[List[str], List[str], List[str], List
     raw_routes: List[str] = []
     raw_events: List[str] = []
     raw_domains: List[str] = []
+    raw_aggregates: List[str] = []
+    raw_value_objects: List[str] = []
+    raw_repositories: List[str] = []
+    raw_domain_services: List[str] = []
+    bounded_context: str = ""
     summary_lines: List[str] = []
     saw_key = False
 
@@ -342,6 +377,25 @@ def parse_analysis(raw_text: str) -> Tuple[List[str], List[str], List[str], List
             saw_key = True
             val = line_clean.split(":", 1)[1].strip()
             raw_domains.extend(val.split(","))
+        elif upper.startswith("AGGREGATES:") or upper.startswith("AGGREGATE:"):
+            saw_key = True
+            val = line_clean.split(":", 1)[1].strip()
+            raw_aggregates.extend(val.split(","))
+        elif upper.startswith("VALUE_OBJECTS:") or upper.startswith("VALUE_OBJECT:") or upper.startswith("VO:"):
+            saw_key = True
+            val = line_clean.split(":", 1)[1].strip()
+            raw_value_objects.extend(val.split(","))
+        elif upper.startswith("REPOSITORIES:") or upper.startswith("REPOSITORY:") or upper.startswith("REPOS:"):
+            saw_key = True
+            val = line_clean.split(":", 1)[1].strip()
+            raw_repositories.extend(val.split(","))
+        elif upper.startswith("SERVICES:") or upper.startswith("DOMAIN_SERVICES:") or upper.startswith("USE_CASES:"):
+            saw_key = True
+            val = line_clean.split(":", 1)[1].strip()
+            raw_domain_services.extend(val.split(","))
+        elif upper.startswith("BOUNDED_CONTEXT:") or upper.startswith("CONTEXT:"):
+            saw_key = True
+            bounded_context = line_clean.split(":", 1)[1].strip()
         elif upper.startswith("FLUSS:") or upper.startswith("FLOW:") or upper.startswith("SUMMARY:") or upper.startswith("PURPOSE:"):
             saw_key = True
             val = line_clean.split(":", 1)[1].strip()
@@ -354,12 +408,17 @@ def parse_analysis(raw_text: str) -> Tuple[List[str], List[str], List[str], List
     summary_raw = " ".join(summary_lines).strip() if (summary_lines or saw_key) else trimmed
     summary = sanitize_text(summary_raw)
 
-    return (
+    return ParsedAnalysis(
         _clean_entity_list(raw_tables),
         _clean_entity_list(raw_routes),
         _clean_entity_list(raw_events),
         _clean_entity_list(raw_domains),
         summary,
+        aggregates=_clean_entity_list(raw_aggregates),
+        value_objects=_clean_entity_list(raw_value_objects),
+        repositories=_clean_entity_list(raw_repositories),
+        domain_services=_clean_entity_list(raw_domain_services),
+        bounded_context=bounded_context,
     )
 
 

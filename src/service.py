@@ -60,6 +60,16 @@ class CodeBoneService:
         self.provider: Provider = build_provider(config)
         self.storage = Storage(config.db_path)
         self.scans = ScanManager(config)
+        from .application.use_cases import (
+            GetArchitectureContextUseCase,
+            ScanProjectUseCase,
+            ReconcileArchitectureUseCase,
+            AddGitHubRepositoryUseCase,
+        )
+        self.context_use_case = GetArchitectureContextUseCase(self.storage)
+        self.scan_use_case = ScanProjectUseCase(self.storage, self.provider)
+        self.reconcile_use_case = ReconcileArchitectureUseCase(self.storage, self.provider)
+        self.github_use_case = AddGitHubRepositoryUseCase(self, self.provider)
         self.sniffer: Optional[Sniffer] = None
         self.last_synced: Optional[str] = None
         self.last_error: Optional[str] = None

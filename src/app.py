@@ -2119,6 +2119,15 @@ class CodeBoneApp(rumps.App):
         )
         item.add(reveal)
 
+        if (project / ".git").exists():
+            pull_item = make_choice_item(
+                "Sync / Git Pull",
+                checked=None,
+                on_click=lambda target=project: self.sync_github_project(target),
+                icon="arrow.triangle.2.circlepath",
+            )
+            item.add(pull_item)
+
         item.add(None)
         remove = make_choice_item(
             "Remove Project...",
@@ -2164,6 +2173,10 @@ class CodeBoneApp(rumps.App):
         add_item = rumps.MenuItem("+ Add Project...", callback=self.choose_project)
         _set_symbol_icon(add_item, "folder.badge.plus")
         self.projects_menu.add(add_item)
+
+        add_gh_item = rumps.MenuItem("+ Add GitHub Repo...", callback=self.add_github_repo_dialog)
+        _set_symbol_icon(add_gh_item, "arrow.down.circle")
+        self.projects_menu.add(add_gh_item)
 
         if self.config.recent_scanned_projects:
             self.projects_menu.add(None)
@@ -2759,6 +2772,67 @@ class CodeBoneApp(rumps.App):
         self.config.clear_recent_projects()
         self._update_ui_state()
         rumps.notification("codebone", "Recent Shortcuts Cleared", "Projects and saved maps were not changed.")
+
+    def add_github_repo_dialog(self, _):
+        """Prompt user for a GitHub URL or owner/repo, clone it, activate it, and trigger scan."""
+        window = rumps.Window(
+            message="Enter a GitHub repository URL or slug:\n(e.g. 'palusc/codebone' or 'https://github.com/owner/repo')",
+            title="Add GitHub Repository",
+            default_text="",
+            ok="Clone & Scan",
+            cancel="Cancel",
+            dimensions=(380, 24),
+        )
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+        resp = window.run()
+        if not resp.clicked or not resp.text.strip():
+            return
+
+        repo_input = resp.text.strip()
+        rumps.notification("codebone", "Cloning Repository", f"Downloading '{repo_input}'...")
+
+        def _worker():
+            try:
+                from .github import clone_github_repo
+                cloned_path = clone_github_repo(repo_input)
+                self.config.add_project_path(str(cloned_path))
+                self.config.set("project_path", str(cloned_path))
+                try:
+                    self.service.activate_project(cloned_path)
+                except Exception:
+                    self.service.start(auto_scan=True)
+                self._on_main(self._update_ui_state)
+                rumps.notification(
+                    "codebone",
+                    "Repository Cloned",
+                    f"'{cloned_path.name}' is now active — scanning codebase.",
+                )
+            except Exception as exc:
+                logger.exception("Failed to clone GitHub repo: %s", exc)
+
+                def _show_err():
+                    NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+                    rumps.alert("Clone Failed", f"Could not clone repository '{repo_input}':\n\n{exc}")
+
+                self._on_main(_show_err)
+
+        threading.Thread(target=_worker, daemon=True, name="codebone-github-clone").start()
+
+    def sync_github_project(self, project: Path):
+        """Pulls latest git changes and triggers rescan."""
+        rumps.notification("codebone", "Syncing Repository", f"Checking for updates in '{project.name}'...")
+
+        def _worker():
+            from .github import pull_github_repo
+            success = pull_github_repo(project)
+            if success:
+                rumps.notification("codebone", "Repository Updated", f"Pulled latest changes for '{project.name}'.")
+                if self.config.project_path and self.config.project_path.resolve() == project.resolve():
+                    self.service.rescan_all()
+            else:
+                rumps.notification("codebone", "Repository Up to Date", f"No new changes or pull failed for '{project.name}'.")
+
+        threading.Thread(target=_worker, daemon=True, name="codebone-github-sync").start()
 
     def choose_project(self, _):
         paths = _choose_folders("Select Project Folders to Scan", multi=True)

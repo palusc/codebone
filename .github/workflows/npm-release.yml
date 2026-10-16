@@ -30,14 +30,16 @@ jobs:
           test "$expected" = "$actual"
           node --check bin/cbone.js
           npm test
+      - name: Stage npm package with cbone README
+        run: python3 scripts/package_npm.py "$RUNNER_TEMP/cbone-package"
       - name: Inspect package contents
-        run: npm pack --dry-run
+        run: npm pack "$RUNNER_TEMP/cbone-package" --dry-run
       # Configure this workflow as a trusted publisher in npm package settings.
       # The release workflow calls this only after native artifacts pass validation.
       - name: Publish cbone
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public --tag latest --provenance
+        run: npm publish "$RUNNER_TEMP/cbone-package" --access public --tag latest --provenance
       - name: Mark old npm package as moved
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

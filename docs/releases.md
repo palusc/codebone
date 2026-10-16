@@ -16,12 +16,15 @@ command alias is published for 2.0. After cbone is published, mark the old
    the GitHub repository secret `NPM_TOKEN` with package-publishing permissions
    for the initial release; enter its value only in GitHub Secrets, never in chat.
    Publishing `cbone` and marking the old package as moved each require
-   authorization for the respective package.
+   authorization for the respective package. The old package move notice is a
+   one-time `npm deprecate codebone-mcp "Renamed to cbone. Use npx cbone instead."`
+   operation, performed after the first successful cbone publication.
 3. Push tag `v2.0` at the reviewed source commit. The release workflow verifies the
    versions, builds and validates Windows and macOS, and publishes both sets of
    artifacts together only after both jobs succeed.
 4. The npm publication workflow runs after the native release and marks `2.0.0` as
-   `latest`. Verify the package and dist-tag on npm, then check Socket.dev after
+   `latest`. An identical version already published directly from the cloud is
+   verified and reused, allowing release retries without republishing. Verify the package and dist-tag on npm, then check Socket.dev after
    it indexes the new version.
 5. Update the Homebrew formula URL and SHA-256 together using the generated macOS
    ZIP. Until then it intentionally references the last verified 1.8 archive.

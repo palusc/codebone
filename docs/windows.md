@@ -34,7 +34,7 @@ The Coding agents tab displays a portable MCP configuration and can explicitly
 register the bridge with Cursor or Claude Desktop. Existing JSON settings are
 preserved and backed up; malformed settings are rejected. Other clients can use
 the displayed command directly. The installed bridge is
-`%LOCALAPPDATA%\Programs\codebone\codebone-mcp.exe` and needs no system Python.
+`%LOCALAPPDATA%\Programs\codebone\cbone.exe` and needs no system Python.
 Portable users can point their client directly to the adjacent MCP executable.
 `CODEBONE_MCP` overrides npm bridge discovery for a portable or custom install;
 `CODEBONE_PYTHON` continues to support source installations.

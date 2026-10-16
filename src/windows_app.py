@@ -382,7 +382,7 @@ class WindowsApp:
             pass
         progress = self.service.scan_progress
         if progress:
-            self.status.set(f'Scanning: {progress}')
+            self.status.set(f"{'Paused' if progress.get('paused') else 'Scanning'}: {progress.get('current', 0)}/{progress.get('total', 0)} files — {progress.get('pct', 0)}% — {progress.get('eta_str', '')}")
         self.root.after(150, self.poll)
 
     def quit(self):
@@ -437,7 +437,12 @@ def main():
     args = parser.parse_args()
     if args.smoke_test:
         from .windows_runtime import smoke_test
-        smoke_test(args.smoke_test, gui=True)
+        try:
+            smoke_test(args.smoke_test, gui=True)
+        except Exception:
+            import traceback
+            args.smoke_test.write_text(json.dumps({'passed': False, 'error': traceback.format_exc()}), encoding='utf-8')
+            raise
         return
     if sys.platform != 'win32':
         raise SystemExit('Use main.py for the macOS app; this entry point requires Windows.')

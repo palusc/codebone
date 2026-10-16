@@ -15,7 +15,8 @@ class DesktopRuntime:
         if getattr(sys, 'frozen', False):
             from .config import BASE_MODEL_PATH
             from .model_fetch import BUNDLED_MODEL
-            if self.config.get('model_path') == BASE_MODEL_PATH and BUNDLED_MODEL.is_file():
+            configured = Path(self.config.get('model_path') or BASE_MODEL_PATH)
+            if BUNDLED_MODEL.is_file() and (str(configured) == BASE_MODEL_PATH or not configured.exists()):
                 self.config.set('model_path', str(BUNDLED_MODEL))
         self.service = CodeBoneService(self.config)
         self.server = ServerThread(self.service)
@@ -45,7 +46,7 @@ class DesktopRuntime:
 
     def mcp_command(self):
         if getattr(sys, 'frozen', False):
-            executable = Path(sys.executable).with_name('codebone-mcp.exe')
+            executable = Path(sys.executable).with_name('cbone.exe')
             if not executable.is_file():
                 raise FileNotFoundError(f'MCP executable is missing: {executable}')
             return {'command': str(executable), 'args': []}

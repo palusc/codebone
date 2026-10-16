@@ -20,7 +20,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
-CloseApplicationsFilter=codebone.exe,codebone-mcp.exe
+CloseApplicationsFilter=codebone.exe,cbone.exe
 RestartApplications=no
 
 [Tasks]

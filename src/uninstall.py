@@ -31,7 +31,8 @@ from typing import Iterable, List, Optional, Tuple
 APP_IDS = ("com.codebone.app", "com.pug.app")  # current bundle id, then the legacy one
 APP_NAMES = ("codebone", "CodeBone", "PUG")  # current name first, then legacy names
 MCP_NAMES = ("codebone", "pug")  # server names codebone registered itself under
-NPM_PACKAGE = "codebone-mcp"
+NPM_PACKAGE = "cbone"
+NPM_PACKAGES = (NPM_PACKAGE, "codebone-mcp")  # Also clean up pre-2.0 installs.
 BREW_FORMULA = "codebone"
 BREW_TAP = "palusc/codebone"
 SYSTEM_APPS = Path("/Applications")
@@ -46,7 +47,7 @@ LSREGISTER = (
 _BUNDLE_EXE_RE = re.compile(r"/(?:codebone|CodeBone|PUG)\.app/Contents/")
 _INTERPRETER_RE = re.compile(r"^(?:[Pp]ython[\d.]*|node)$")
 _SCRIPT_RE = re.compile(
-    r"(?:codebone|pug)_mcp[./]server|codebone_main\.py|pug_main\.py|(?:^|[/\s])codebone-mcp(?:\.js)?(?:\s|$)"
+    r"(?:codebone|pug)_mcp[./]server|codebone_main\.py|pug_main\.py|(?:^|[/\s])(?:cbone|codebone-mcp)(?:\.js)?(?:\s|$)"
 )
 # Login items are matched by bundle id, so another vendor's com.pug.* agent is never touched.
 _AGENT_RE = re.compile(r"^(?:%s)(?:[._-].*)?\.plist$" % "|".join(re.escape(i) for i in APP_IDS))
@@ -434,15 +435,17 @@ def _launch_agents(home: Path) -> List[Path]:
 
 
 def _npx_caches(home: Path) -> List[Path]:
-    """npx cache entries that exist only to hold codebone-mcp (never one that holds other packages too)."""
+    """npx cache entries that exist only to hold cbone or its legacy package (never one that holds other packages too)."""
     out = []
     for entry in _glob(home / ".npm" / "_npx", "*"):
         try:
             deps = json.loads((entry / "package.json").read_text(encoding="utf-8")).get("dependencies") or {}
         except Exception:  # unreadable, not JSON, too deeply nested, not an object
             continue
-        if isinstance(deps, dict) and set(deps) == {NPM_PACKAGE} and (entry / "node_modules" / NPM_PACKAGE).is_dir():
-            out.append(entry)
+        if isinstance(deps, dict) and len(deps) == 1:
+            package = next(iter(deps))
+            if package in NPM_PACKAGES and (entry / "node_modules" / package).is_dir():
+                out.append(entry)
     return out
 
 
@@ -478,7 +481,7 @@ def _packages(home: Path, system: bool) -> List[Tuple[str, Path]]:
               for p in BREW_PREFIXES]
     libs = [p / "lib" / "node_modules" for p in BREW_PREFIXES] + [home / ".npm-global" / "lib" / "node_modules"]
     libs += [p / "lib" / "node_modules" for p in _glob(home / ".nvm" / "versions" / "node", "*")]
-    found += [("npm package " + NPM_PACKAGE, lib / NPM_PACKAGE) for lib in libs]
+    found += [("npm package " + package, lib / package) for lib in libs for package in NPM_PACKAGES]
     return [(label, p) for label, p in found if os.path.lexists(p)]
 
 
@@ -953,8 +956,10 @@ class _Runner:
             if BREW_TAP in _run([brew, "tap"], env=env)[1].split():
                 self.command([brew, "untap", BREW_TAP], f"Homebrew tap {BREW_TAP}", env)
         npm = _find_tool("npm", self.home)
-        if npm and f"{NPM_PACKAGE}@" in _run([npm, "ls", "-g", "--depth=0", NPM_PACKAGE], timeout=60)[1]:
-            self.command([npm, "uninstall", "-g", NPM_PACKAGE], f"npm package {NPM_PACKAGE} (global)", None, 120)
+        if npm:
+            for package in NPM_PACKAGES:
+                if f"{package}@" in _run([npm, "ls", "-g", "--depth=0", package], timeout=60)[1]:
+                    self.command([npm, "uninstall", "-g", package], f"npm package {package} (global)", None, 120)
 
     def command(self, cmd: List[str], what: str, env: Optional[dict], timeout: float = 60) -> None:
         rc, out = (0, "") if self.dry else _run(cmd, timeout=timeout, env=env)

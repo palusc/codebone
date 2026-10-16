@@ -12,8 +12,8 @@
 ## Current release
 - Version: 2.0
 - License: MIT
-- Platform: macOS 13+ on Apple Silicon (arm64)
-- Built-in map model: Qwen2.5-Coder 0.5B with Apple Metal acceleration
+- Platforms: macOS 13+ on Apple Silicon (arm64); Windows 10/11 x64
+- Built-in map model: Qwen2.5-Coder 0.5B with Apple Metal on macOS and CPU on Windows
 - Storage: local SQLite
 - Server: localhost-only MCP and HTTP API
 
@@ -21,6 +21,7 @@
 codebone watches a selected project and builds a live graph from deterministic source facts and grounded local synthesis. It extracts routes, tables, models, events, imports, business domains, tactical DDD patterns (aggregates, value objects, domain events, repositories, domain services) and bounded contexts. Shared entities connect files even when they do not import one another. Remote repositories can be cloned and indexed directly from GitHub.
 
 ## Agent tools
+- npm package and launcher: `cbone` / `npx cbone`.
 - `cb()` returns a project overview with bounded contexts and entities.
 - `cb(query="...")` returns ranked, focused context with source evidence and DDD role badges.
 - `cb(file="...")` returns context and links for one file.

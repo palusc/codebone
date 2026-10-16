@@ -24,7 +24,7 @@ App release `1.8a` maps to npm `1.8.0-a`; `1.8b` maps to `1.8.0-b`.
 - Windows build validation covering the packaged UI, model, HTTP API, MCP and installer.
 
 ### Changed
-- npm package renamed to `cbone` (`npx cbone`), with a `codebone-mcp` compatibility package.
+- npm package and command renamed to `cbone` (`npx cbone`).
 - Shared Windows-native data/log paths and cross-platform npm bridge discovery.
 - macOS remains supported with its existing native app and Metal backend.
 

@@ -45,12 +45,13 @@ jobs:
           $result = Join-Path $env:RUNNER_TEMP 'codebone-smoke.json'
           $app = Start-Process -FilePath ./dist/codebone/codebone.exe -ArgumentList @('--smoke-test', $result) -PassThru
           if (-not $app.WaitForExit(180000)) { $app.Kill(); throw 'Packaged smoke test timed out' }
+          if (Test-Path $result) { Get-Content $result }
           if ($app.ExitCode -ne 0) { throw "Packaged smoke test failed: $($app.ExitCode)" }
           if (-not (Test-Path $result)) { throw 'Smoke result missing' }
           $report = Get-Content $result -Raw | ConvertFrom-Json
           if (-not $report.passed -or -not $report.gui -or -not $report.model) { throw 'Smoke test did not exercise all targets' }
           Get-Content $result
-          python scripts/test_packaged_mcp.py ./dist/codebone/codebone-mcp.exe
+          python scripts/test_packaged_mcp.py ./dist/codebone/cbone.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test installer and uninstaller
         shell: pwsh

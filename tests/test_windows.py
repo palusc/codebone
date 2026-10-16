@@ -47,12 +47,12 @@ def test_explicit_mcp_registration_preserves_and_backs_up_client_settings(tmp_pa
 
 
 def test_frozen_mcp_command_uses_sibling_executable(tmp_path, monkeypatch):
-    (tmp_path / 'codebone-mcp.exe').write_bytes(b'fake')
+    (tmp_path / 'cbone.exe').write_bytes(b'fake')
     runtime = DesktopRuntime(Config(tmp_path / 'data/config.json'))
     monkeypatch.setattr(sys, 'frozen', True, raising=False)
     monkeypatch.setattr(sys, 'executable', str(tmp_path / 'codebone.exe'))
     try:
-        assert runtime.mcp_command() == {'command': str(tmp_path / 'codebone-mcp.exe'), 'args': []}
+        assert runtime.mcp_command() == {'command': str(tmp_path / 'cbone.exe'), 'args': []}
     finally:
         runtime.close()
 

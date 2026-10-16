@@ -11,8 +11,8 @@ function findCommand(platform = process.platform, env = process.env, exists = ex
   if (platform === 'win32') {
     const local = env.LOCALAPPDATA || join(home, 'AppData', 'Local');
     const candidates = [
-      join(local, 'Programs', 'codebone', 'codebone-mcp.exe'),
-      join(local, 'codebone', 'codebone-mcp.exe'),
+      join(local, 'Programs', 'codebone', 'cbone.exe'),
+      join(local, 'codebone', 'cbone.exe'),
     ];
     for (const command of candidates) if (exists(command)) return { command, args: [] };
     return { command: 'python', args: ['-m', 'codebone_mcp.server'] };
@@ -28,9 +28,9 @@ function main() {
   const { command, args } = findCommand();
   const child = spawn(command, args, { stdio: 'inherit', env: process.env, windowsHide: true });
   child.on('error', (err) => {
-    console.error('[codebone-mcp] Could not launch ' + command + ': ' + err.message + '\n' +
+    console.error('[cbone] Could not launch ' + command + ': ' + err.message + '\n' +
       'Install codebone: https://github.com/palusc/codebone/releases\n' +
-      'For portable Windows installs, set CODEBONE_MCP to codebone-mcp.exe.');
+      'For portable Windows installs, set CODEBONE_MCP to cbone.exe.');
     process.exit(1);
   });
   child.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)));

@@ -115,8 +115,8 @@ Your existing agent still reasons about the task and writes the code. codebone s
 <a id="mcp-setup"></a>
 ## MCP setup
 
-The npm bridge is **cbone** (`npx cbone`). The app is still named codebone;
-`codebone-mcp` remains a compatibility package. A portable manual configuration is:
+The npm package and command are **cbone** (`npx cbone`).
+A portable manual configuration is:
 
 ```json
 {

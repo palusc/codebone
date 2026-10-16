@@ -28,7 +28,7 @@ jobs:
           expected="$(python3 scripts/npm_version.py "$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/__init__.py)")"
           actual="$(node -p "require('./package.json').version")"
           test "$expected" = "$actual"
-          node --check bin/codebone-mcp.js
+          node --check bin/cbone.js
           npm test
       - name: Inspect package contents
         run: npm pack --dry-run
@@ -38,8 +38,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public --tag latest --provenance
-      - name: Publish compatibility package
-        working-directory: packaging/npm-compat
+      - name: Mark old npm package as moved
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public --tag latest --provenance
+        run: npm deprecate codebone-mcp "Renamed to cbone. Use npx cbone instead."

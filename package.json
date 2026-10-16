@@ -18,8 +18,7 @@
   },
   "license": "MIT",
   "bin": {
-    "cbone": "bin/codebone-mcp.js",
-    "codebone-mcp": "bin/codebone-mcp.js"
+    "cbone": "bin/cbone.js"
   },
   "files": [
     "bin/"

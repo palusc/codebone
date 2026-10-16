@@ -9,7 +9,7 @@ function Run-Python {
 }
 if (-not $IsWindows -and $PSVersionTable.PSEdition -eq 'Core') { throw 'A native Windows host is required.' }
 if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') { throw 'Windows x64 is required.' }
-$env:CMAKE_ARGS = '-DGGML_METAL=OFF -DGGML_CUDA=OFF -DGGML_NATIVE=OFF -DGGML_AVX512=OFF'
+$env:CMAKE_ARGS = '-DGGML_METAL=OFF -DGGML_CUDA=OFF -DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF'
 $env:CMAKE_BUILD_PARALLEL_LEVEL = '2'
 Run-Python -m pip install -r requirements-windows.txt -c requirements.lock
 Run-Python -m pip check
@@ -17,8 +17,8 @@ Run-Python scripts/download_model.py --dest $ModelCache
 Run-Python scripts/download_model.py --dest $ModelCache --check
 Run-Python -c "from PIL import Image; from pathlib import Path; Path('build').mkdir(exist_ok=True); Image.open('resources/bone_active.png').save('build/codebone.ico', sizes=[(16,16),(32,32),(48,48),(256,256)])"
 Run-Python -m PyInstaller --noconfirm --clean --onedir --windowed --name codebone --icon build/codebone.ico --paths . --add-data 'resources;resources' --add-data "$ModelCache;models" --collect-all llama_cpp --hidden-import pystray._win32 windows_main.py
-Run-Python -m PyInstaller --noconfirm --clean --onefile --console --name codebone-mcp --paths . --collect-submodules mcp windows_mcp.py
-Copy-Item dist/codebone-mcp.exe dist/codebone/codebone-mcp.exe -Force
+Run-Python -m PyInstaller --noconfirm --clean --onefile --console --name cbone --paths . --collect-submodules mcp windows_mcp.py
+Copy-Item dist/cbone.exe dist/codebone/cbone.exe -Force
 Copy-Item LICENSE dist/codebone/LICENSE.txt -Force
 $version = (& python -c 'from src import __version__; print(__version__)').Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Could not resolve version' }

@@ -1,11 +1,11 @@
 # Releasing codebone 2.0
 
 2.0 includes macOS Apple Silicon and Windows x64 desktop applications. Existing
-1.8 releases stay archived. App release `2.0` maps to npm package `cb1@2.0.0` through
+1.8 releases stay archived. App release `2.0` maps to npm package `xcbone@2.0.0` through
 `scripts/npm_version.py`. Nothing is published by a local version bump.
 
-The npm package is `cb1`; terminal commands are `cb1` and `cbone`. No compatibility package or old
-command alias is published for 2.0. After cb1 is published, mark the old
+The npm package is `xcbone`; terminal commands are `xcbone` and `cbone`. No compatibility package or old
+command alias is published for 2.0. After xcbone is published, mark the old
 `codebone-mcp` package as moved using npm deprecation metadata.
 
 1. Review the changes and run the Windows build workflow on the development branch.
@@ -15,10 +15,10 @@ command alias is published for 2.0. After cb1 is published, mark the old
    account before trusted publishing can be configured. Alternatively configure
    the GitHub repository secret `NPM_TOKEN` with package-publishing permissions
    for the initial release; enter its value only in GitHub Secrets, never in chat.
-   Publishing `cb1` and marking the old package as moved each require
+   Publishing `xcbone` and marking the old package as moved each require
    authorization for the respective package. The old package move notice is a
-   one-time `npm deprecate codebone-mcp "Renamed to cb1. Use npx cb1 instead."`
-   operation, performed after the first successful cb1 publication.
+   one-time `npm deprecate codebone-mcp "Renamed to xcbone. Use npx -y xcbone instead."`
+   operation, performed after the first successful xcbone publication.
 3. Push tag `v2.0` at the reviewed source commit. The release workflow verifies the
    versions, builds and validates Windows and macOS, and publishes both sets of
    artifacts together only after both jobs succeed.

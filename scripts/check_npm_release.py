@@ -13,7 +13,7 @@ import urllib.request
 def already_published(package_dir: Path) -> bool:
     package = json.loads((package_dir / 'package.json').read_text(encoding='utf-8'))
     name, version = package['name'], package['version']
-    if name != 'cb1':
+    if name != 'xcbone':
         raise ValueError('Unexpected npm package name')
     try:
         with urllib.request.urlopen(f'https://registry.npmjs.org/{name}/{version}', timeout=30) as response:

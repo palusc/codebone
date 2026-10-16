@@ -1,5 +1,5 @@
 {
-  "name": "cb1",
+  "name": "xcbone",
   "version": "2.0.0",
   "description": "MCP server bridge for codebone \u2014 local codebase architecture for macOS and Windows",
   "keywords": [
@@ -19,7 +19,7 @@
   "license": "MIT",
   "bin": {
     "cbone": "bin/cbone.js",
-    "cb1": "bin/cbone.js"
+    "xcbone": "bin/cbone.js"
   },
   "files": [
     "bin/"

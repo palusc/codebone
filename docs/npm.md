@@ -1,10 +1,10 @@
-# cb1
+# xcbone
 
 The terminal and MCP launcher for **codebone**, the local codebase architecture app
 for macOS and Windows.
 
 ```bash
-npx -y cb1
+npx -y xcbone
 ```
 
 Install and launch the [codebone desktop app](https://github.com/palusc/codebone/releases/latest)
@@ -18,7 +18,7 @@ agent to it through MCP. The launcher does not download or replace the desktop a
   "mcpServers": {
     "codebone": {
       "command": "npx",
-      "args": ["-y", "cb1"]
+      "args": ["-y", "xcbone"]
     }
   }
 }
@@ -39,9 +39,9 @@ interpreter. `CODEBONE_PORT` selects an explicit running local instance.
 
 ## Names
 
-**cb1** is the npm package and a terminal command. **cbone** is also available as
-a terminal alias. **codebone** is the desktop app. The previous npm package was
-called `codebone-mcp`; new configurations should use `cb1`.
+**xcbone** is the npm package and a terminal command. **cbone** is also available
+as a terminal alias. **codebone** is the desktop app. The previous npm package
+was called `codebone-mcp`; new configurations should use `xcbone`.
 
 [Website](https://codeb.one) · [Source](https://github.com/palusc/codebone) ·
 [Downloads](https://github.com/palusc/codebone/releases/latest) ·

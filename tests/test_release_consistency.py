@@ -17,25 +17,25 @@ def _norm(name):
 
 def test_version_is_the_same_everywhere():
     assert updater.CURRENT_VERSION == __version__
-    assert json.loads((ROOT / "package.json").read_text())["version"] == npm_version(__version__)
-    assert f"version-{__version__}-" in (ROOT / "README.md").read_text()
+    assert json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"] == npm_version(__version__)
+    assert f"version-{__version__}-" in (ROOT / "README.md").read_text(encoding="utf-8")
     # Homebrew stays on the last built archive until release CI computes a new checksum.
-    formula = (ROOT / "Formula" / "codebone.rb").read_text()
+    formula = (ROOT / "Formula" / "codebone.rb").read_text(encoding="utf-8")
     assert re.search(r"/v[0-9][^/]+/codebone-macos-arm64.zip", formula)
     assert re.search(r'sha256 "[0-9a-f]{64}"', formula)
-    package = json.loads((ROOT / "package.json").read_text())
+    package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
     assert package['name'] == 'cbone'
     assert package['bin'] == {'cbone': 'bin/cbone.js'}
-    assert f"## [{__version__}]" in (ROOT / "CHANGELOG.md").read_text()
+    assert f"## [{__version__}]" in (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
 
 def test_every_requirement_is_pinned_in_the_lock():
     pins = {}
-    for line in (ROOT / "requirements.lock").read_text().splitlines():
+    for line in (ROOT / "requirements.lock").read_text(encoding="utf-8").splitlines():
         name, _, ver = line.partition("==")
         assert ver, f"unpinned line in requirements.lock: {line!r}"
         pins[_norm(name)] = ver
-    for line in (ROOT / "requirements.txt").read_text().splitlines():
+    for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines():
         m = re.match(r"^([A-Za-z0-9_.-]+)", line.strip())
         if m and not line.strip().startswith("#"):
             assert _norm(m.group(1)) in pins, f"{m.group(1)} missing from requirements.lock"
@@ -47,8 +47,8 @@ def test_model_is_pinned_by_revision_and_checksum():
 
 
 def test_installers_share_the_single_bundle_recipe():
-    assert "build_bundle.sh" in (ROOT / "install.sh").read_text()
-    assert "build_bundle.sh" in (ROOT / "scripts" / "build_dmg.sh").read_text()
+    assert "build_bundle.sh" in (ROOT / "install.sh").read_text(encoding="utf-8")
+    assert "build_bundle.sh" in (ROOT / "scripts" / "build_dmg.sh").read_text(encoding="utf-8")
     assert not (ROOT / "setup.py").exists()  # a py2app path would build a different app
     assert not (ROOT / "scripts" / "build_uninstaller.sh").exists()  # uninstalling is done in-app (src/uninstall.py)
 

@@ -120,8 +120,8 @@ Your existing agent still reasons about the task and writes the code. codebone s
 <a id="mcp-setup"></a>
 ## MCP setup
 
-The npm package is **xcbone** (`npx -y xcbone`). It exposes the terminal commands
-**xcbone** and **cbone**. The desktop app remains **codebone**.
+The npm package and terminal command are **xcbone** (`npx -y xcbone`). The desktop
+app remains **codebone**.
 A portable manual configuration is:
 
 ```json

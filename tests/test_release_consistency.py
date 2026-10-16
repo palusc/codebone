@@ -25,7 +25,7 @@ def test_version_is_the_same_everywhere():
     assert re.search(r'sha256 "[0-9a-f]{64}"', formula)
     package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
     assert package['name'] == 'xcbone'
-    assert package['bin'] == {'cbone': 'bin/cbone.js', 'xcbone': 'bin/cbone.js'}
+    assert package['bin'] == {'xcbone': 'bin/cbone.js'}
     assert f"## [{__version__}]" in (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
 

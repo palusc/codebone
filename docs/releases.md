@@ -4,7 +4,7 @@
 1.8 releases stay archived. App release `2.0` maps to npm package `xcbone@2.0.0` through
 `scripts/npm_version.py`. Nothing is published by a local version bump.
 
-The npm package is `xcbone`; terminal commands are `xcbone` and `cbone`. No compatibility package or old
+The npm package and terminal command are `xcbone`. No compatibility package or old
 command alias is published for 2.0. After xcbone is published, mark the old
 `codebone-mcp` package as moved using npm deprecation metadata.
 

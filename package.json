@@ -18,7 +18,6 @@
   },
   "license": "MIT",
   "bin": {
-    "cbone": "bin/cbone.js",
     "xcbone": "bin/cbone.js"
   },
   "files": [

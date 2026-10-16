@@ -68,3 +68,23 @@ def test_windows_provider_key_encrypted_and_reloaded(tmp_path):
     config.set('brain_cloud_api_key', '')
     assert Config(path).get('brain_cloud_api_key') == ''
     assert not (tmp_path / 'provider-key.dpapi').exists()
+
+
+def test_windows_update_selects_windows_installer(monkeypatch):
+    from src import updater
+    from unittest.mock import MagicMock
+    response = MagicMock()
+    response.__enter__.return_value = response
+    response.read.return_value = json.dumps({
+        'tag_name': 'v2.1',
+        'html_url': 'https://github.com/palusc/codebone/releases/tag/v2.1',
+        'assets': [
+            {'name': 'codebone-macos-arm64.zip', 'browser_download_url': 'https://example.invalid/mac.zip'},
+            {'name': 'codebone-windows-x64-setup.exe', 'browser_download_url': 'https://example.invalid/windows.exe', 'size': 100},
+        ],
+    }).encode()
+    monkeypatch.setattr(updater.sys, 'platform', 'win32')
+    monkeypatch.setattr(updater.urllib.request, 'urlopen', lambda *a, **k: response)
+    result = updater.check_for_updates('2.0')
+    assert result['update_available']
+    assert result['download_url'].endswith('windows.exe')

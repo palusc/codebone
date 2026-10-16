@@ -7,6 +7,10 @@ on:
   workflow_dispatch:
   workflow_call:
 
+concurrency:
+  group: windows-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -19,6 +23,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            requirements-windows.txt
+            requirements.lock
+            scripts/build_windows.ps1
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -31,7 +40,16 @@ jobs:
           key: codebone-model-${{ hashFiles('src/config.py') }}
       - name: Build portable application and installer
         shell: pwsh
-        run: ./scripts/build_windows.ps1
+        run: |
+          try {
+            & ./scripts/build_windows.ps1 *>&1 | Tee-Object -FilePath build-windows.log
+          } catch {
+            if (Test-Path build-windows.log) {
+              $tail = (Get-Content build-windows.log -Tail 80) -join '%0A'
+              Write-Output "::error::$tail"
+            }
+            throw
+          }
       - name: Test Windows runtime and bridge
         shell: pwsh
         run: |

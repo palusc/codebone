@@ -10,6 +10,7 @@ codebone turns a codebase into a live, local architecture graph and serves focus
 
 [![Release](https://img.shields.io/badge/version-2.0-b9ff66?style=flat-square)](https://github.com/palusc/codebone/releases/latest)
 [![Platform](https://img.shields.io/badge/macOS_13%2B-Apple_Silicon-111317?style=flat-square&logo=apple)](#requirements)
+[![Windows](https://img.shields.io/badge/Windows_10%2F11-x64-111317?style=flat-square&logo=windows)](#requirements)
 [![MCP](https://img.shields.io/badge/MCP-native-917cff?style=flat-square)](#mcp-setup)
 [![License](https://img.shields.io/badge/license-MIT-6ddbd3?style=flat-square)](LICENSE)
 

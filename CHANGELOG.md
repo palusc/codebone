@@ -34,15 +34,6 @@ App release `1.8a` maps to npm `1.8.0-a`; `1.8b` maps to `1.8.0-b`.
 
 ---
 
-## [1.8a] - 2026-10-16
-
-### Changed
-- Align current app version and npm bridge release (`1.8a` / `1.8.0-a`).
-- Add an npm publication workflow with an explicit `latest` tag.
-- Treat letter releases from 1.8 onward as updates to the base release.
-
----
-
 ## [1.8] - 2026-10-15
 *Official Milestone Full Release*
 

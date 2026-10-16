@@ -161,6 +161,7 @@ class WindowsApp:
                 if path == self.config.project_path:
                     self.service.stop()
                     self.config.set('project_path', None)
+                    self.service.reset_map()
                 self.config.remove_project_path(str(path))
             self.submit('Removing project', remove)
 
@@ -421,6 +422,7 @@ def acquire_instance_lock():
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
     kernel.CreateMutexW.restype = ctypes.c_void_p
+    ctypes.set_last_error(0)
     handle = kernel.CreateMutexW(None, False, 'Local\\codebone-desktop')
     if not handle:
         raise ctypes.WinError(ctypes.get_last_error())

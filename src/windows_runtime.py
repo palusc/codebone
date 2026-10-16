@@ -51,7 +51,7 @@ class DesktopRuntime:
                 raise FileNotFoundError(f'MCP executable is missing: {executable}')
             return {'command': str(executable), 'args': []}
         return {'command': sys.executable, 'args': ['-m', 'codebone_mcp.server'],
-                'cwd': str(Path(__file__).resolve().parents[1])}
+                'env': {'PYTHONPATH': str(Path(__file__).resolve().parents[1])}}
 
     def register_mcp(self, target: Path):
         """Explicit opt-in. Preserve other servers and reject unreadable settings."""
@@ -83,7 +83,8 @@ def smoke_test(result_path: Path, gui=False):
         root = Path(folder)
         project = root / 'project'
         project.mkdir()
-        (project / 'billing.py').write_text('from fastapi import FastAPI\napp = FastAPI()\n@app.post("/checkout")\ndef checkout():\n    return {"paid": True}\n', encoding='utf-8')
+        (project / 'billing').mkdir()
+        (project / 'billing' / 'routes.py').write_text('from fastapi import FastAPI\napp = FastAPI()\n@app.post("/checkout")\ndef checkout():\n    return {"paid": True}\n', encoding='utf-8')
         cfg = Config(root / 'data' / 'config.json')
         cfg.set('server_port', find_free_port(18053))
         runtime = DesktopRuntime(cfg)
@@ -96,6 +97,7 @@ def smoke_test(result_path: Path, gui=False):
                 assert status['file_count'] == 1 and not status['last_error'], status
                 context = client.get('/codebone/context', params={'format': 'json', 'query': 'checkout'}).raise_for_status().json()
                 assert context['match_count'] == 1, context
+                assert runtime.service.storage.all_files()[0]['path'] == 'billing/routes.py'
                 assert client.get('/codebone/status', headers={'Host': 'evil.example'}).status_code == 403
                 assert '<html' in client.get('/codebone/graph/ui').raise_for_status().text.lower()
             if gui:
@@ -107,6 +109,15 @@ def smoke_test(result_path: Path, gui=False):
                 import time
                 app.notebook.select(app.settings_tab)
                 app.root.update()
+                assert app.projects.size() == 1
+                app.provider.set('fallback')
+                app.save_settings()
+                for _ in range(100):
+                    app.root.update()
+                    if not app.busy:
+                        break
+                    time.sleep(0.05)
+                assert not app.busy and cfg.get('brain_provider') == 'fallback', 'Settings did not persist'
                 app.tray.run_detached()
                 for _ in range(50):
                     if app.tray.visible:

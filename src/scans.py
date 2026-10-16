@@ -260,7 +260,7 @@ class ScanReconciler:
         disk_file_info: List[dict] = []
         for p in disk_files:
             try:
-                rel = str(p.relative_to(target_project))
+                rel = p.relative_to(target_project).as_posix()
             except ValueError:
                 rel = str(p)
             try:

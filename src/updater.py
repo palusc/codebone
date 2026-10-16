@@ -60,7 +60,7 @@ def clean_release_notes(text: str) -> str:
 
 def parse_version(v_str: str) -> Tuple[int, ...]:
     """Parses a version string like '1.6', '1.7a', '1.7b', '1.7' into an integer tuple for comparison.
-    Letter suffixes ('1.7a', '1.7b', '1.7c') are intermediate patches leading up to the final milestone ('1.7').
+    Before 1.8, letter suffixes are previews leading up to the final milestone.
     Historical previews sort before their milestone. From 1.8 onward, letters are
     follow-up releases: 1.7 < 1.8 < 1.8a < 1.8b.
     """
@@ -74,7 +74,7 @@ def parse_version(v_str: str) -> Tuple[int, ...]:
     while len(parts) < 3:
         parts.append(0)
     # If a letter is present: 'a' -> 1, 'b' -> 2, 'c' -> 3...
-    # If NO letter (clean milestone release like '1.7'): ranks at 999 (above all intermediate letter drops)
+    # Historical milestones sort above previews; 1.8+ letters are follow-up releases.
     base_rank = 0 if tuple(parts[:3]) >= (1, 8, 0) else 999
     letter_rank = (ord(letter_part.lower()) - ord("a") + 1) if letter_part else base_rank
     return tuple(parts[:3] + [letter_rank])

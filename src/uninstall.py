@@ -31,8 +31,8 @@ from typing import Iterable, List, Optional, Tuple
 APP_IDS = ("com.codebone.app", "com.pug.app")  # current bundle id, then the legacy one
 APP_NAMES = ("codebone", "CodeBone", "PUG")  # current name first, then legacy names
 MCP_NAMES = ("codebone", "pug")  # server names codebone registered itself under
-NPM_PACKAGE = "cbone"
-NPM_PACKAGES = (NPM_PACKAGE, "codebone-mcp")  # Also clean up pre-2.0 installs.
+NPM_PACKAGE = "cbonex"
+NPM_PACKAGES = (NPM_PACKAGE, "cbone", "codebone-mcp")  # Also clean up earlier installs.
 BREW_FORMULA = "codebone"
 BREW_TAP = "palusc/codebone"
 SYSTEM_APPS = Path("/Applications")
@@ -47,7 +47,7 @@ LSREGISTER = (
 _BUNDLE_EXE_RE = re.compile(r"/(?:codebone|CodeBone|PUG)\.app/Contents/")
 _INTERPRETER_RE = re.compile(r"^(?:[Pp]ython[\d.]*|node)$")
 _SCRIPT_RE = re.compile(
-    r"(?:codebone|pug)_mcp[./]server|codebone_main\.py|pug_main\.py|(?:^|[/\s])(?:cbone|codebone-mcp)(?:\.js)?(?:\s|$)"
+    r"(?:codebone|pug)_mcp[./]server|codebone_main\.py|pug_main\.py|(?:^|[/\s])(?:cbonex|cbone|codebone-mcp)(?:\.js)?(?:\s|$)"
 )
 # Login items are matched by bundle id, so another vendor's com.pug.* agent is never touched.
 _AGENT_RE = re.compile(r"^(?:%s)(?:[._-].*)?\.plist$" % "|".join(re.escape(i) for i in APP_IDS))
@@ -435,7 +435,7 @@ def _launch_agents(home: Path) -> List[Path]:
 
 
 def _npx_caches(home: Path) -> List[Path]:
-    """npx cache entries that exist only to hold cbone or its legacy package (never one that holds other packages too)."""
+    """npx cache entries that exist only to hold codebone's CLI packages (never one with other packages)."""
     out = []
     for entry in _glob(home / ".npm" / "_npx", "*"):
         try:

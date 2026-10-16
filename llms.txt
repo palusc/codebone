@@ -21,7 +21,7 @@
 codebone watches a selected project and builds a live graph from deterministic source facts and grounded local synthesis. It extracts routes, tables, models, events, imports, business domains, tactical DDD patterns (aggregates, value objects, domain events, repositories, domain services) and bounded contexts. Shared entities connect files even when they do not import one another. Remote repositories can be cloned and indexed directly from GitHub.
 
 ## Agent tools
-- npm package and launcher: `cbone` / `npx cbone`.
+- npm package and launcher: `cbonex` / `npx cbonex`.
 - `cb()` returns a project overview with bounded contexts and entities.
 - `cb(query="...")` returns ranked, focused context with source evidence and DDD role badges.
 - `cb(file="...")` returns context and links for one file.

@@ -59,7 +59,7 @@ LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchS
 # A `ps -o pid=,ppid=,command=` line of a codebone process: something running out of an app bundle, or an
 # interpreter running the MCP server / a launcher script / the npm bridge. An editor that merely has one of those
 # files open does not match.
-PROC_RE='^ *[0-9]+ +[0-9]+ +(/.*/(codebone|CodeBone|PUG)\.app/Contents/(MacOS|Resources/venv/bin)/[^/ ]+( |$)|(/.*/)?([Pp]ython[0-9.]*|node) .*((codebone|pug)_mcp[./]server|codebone_main\.py|pug_main\.py|[/ ](cbone|codebone-mcp)(\.js)?( |$)))'
+PROC_RE='^ *[0-9]+ +[0-9]+ +(/.*/(codebone|CodeBone|PUG)\.app/Contents/(MacOS|Resources/venv/bin)/[^/ ]+( |$)|(/.*/)?([Pp]ython[0-9.]*|node) .*((codebone|pug)_mcp[./]server|codebone_main\.py|pug_main\.py|[/ ](cbonex|cbone|codebone-mcp)(\.js)?( |$)))'
 
 say() { printf '%s\n' "$*"; }
 found() { FOUND=1; }
@@ -261,7 +261,7 @@ packages() {
     fi
   fi
   local package
-  for package in cbone codebone-mcp; do
+  for package in cbonex cbone codebone-mcp; do
     if [[ -n "$npm" ]] && "$npm" ls -g --depth=0 "$package" 2>/dev/null | grep -q "$package@"; then
       found; if (( DRY )); then say "  would remove package: npm $package (global)"
       else "$npm" uninstall -g "$package" >/dev/null 2>&1 && say "  removed package: npm $package (global)" || { say "  npm uninstall -g $package failed" >&2; ERRORS=1; }; fi
@@ -287,9 +287,9 @@ data() {
     remove "saved state" "$LIB/Containers/$id"
     for g in "$LIB/Group Containers"/*"$id"; do remove "saved state" "$g"; done
   done
-  # npx keeps a copy of cbone (or the legacy package); delete the entry only when it holds nothing else
+  # npx keeps a copy of a codebone CLI (or a legacy package); delete it only when it holds nothing else
   for d in "$HOME"/.npm/_npx/*; do
-    [[ ( -d "$d/node_modules/cbone" || -d "$d/node_modules/codebone-mcp" ) && "$(ls "$d/node_modules" | wc -l | tr -d ' ')" == 1 ]] && remove "cache" "$d"
+    [[ ( -d "$d/node_modules/cbonex" || -d "$d/node_modules/cbone" || -d "$d/node_modules/codebone-mcp" ) && "$(ls "$d/node_modules" | wc -l | tr -d ' ')" == 1 ]] && remove "cache" "$d"
   done
 }
 

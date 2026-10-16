@@ -120,8 +120,8 @@ Your existing agent still reasons about the task and writes the code. codebone s
 <a id="mcp-setup"></a>
 ## MCP setup
 
-The npm package and terminal command are **xcbone** (`npx -y xcbone`). The desktop
-app remains **codebone**.
+Install the **codebone** desktop app and start its MCP bridge with `npx -y cbonex`.
+The terminal command is **cbonex**; the desktop app remains **codebone**.
 A portable manual configuration is:
 
 ```json
@@ -129,7 +129,7 @@ A portable manual configuration is:
   "mcpServers": {
     "codebone": {
       "command": "npx",
-      "args": ["-y", "xcbone"]
+      "args": ["-y", "cbonex"]
     }
   }
 }

@@ -33,6 +33,9 @@ Windows artifacts: `codebone-windows-x64-setup.exe` and
 `codebone-windows-x64.zip`, each with a SHA-256 file. Windows uses its native
 installer for upgrades; macOS retains its signed-bundle update mechanism.
 The initial Windows build has no configured Authenticode signing identity.
+Future public releases require trusted, timestamped Windows publisher signatures.
+Configure the signing identity and validate a signed manual build as described in
+[Windows publisher signing](windows-signing.md) before creating the next tag.
 
 Publication requires Git write access, enabled GitHub Actions and an authorized
 npm publisher. Network access to `api.github.com` is required to observe workflow

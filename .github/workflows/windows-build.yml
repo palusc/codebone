@@ -5,7 +5,16 @@ on:
     branches: ['codex/windows-2.0']
   pull_request:
   workflow_dispatch:
+    inputs:
+      sign-windows:
+        description: Sign with the configured, verified Microsoft Artifact Signing publisher
+        type: boolean
+        default: false
   workflow_call:
+    inputs:
+      sign-windows:
+        type: boolean
+        default: false
 
 concurrency:
   group: windows-${{ github.head_ref || github.ref_name }}
@@ -18,8 +27,40 @@ jobs:
   windows:
     runs-on: windows-2022
     timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      WINDOWS_SIGNING_ENDPOINT: ${{ vars.WINDOWS_SIGNING_ENDPOINT }}
+      WINDOWS_SIGNING_ACCOUNT: ${{ vars.WINDOWS_SIGNING_ACCOUNT }}
+      WINDOWS_SIGNING_PROFILE: ${{ vars.WINDOWS_SIGNING_PROFILE }}
+      WINDOWS_SIGNING_SUBJECT: ${{ vars.WINDOWS_SIGNING_SUBJECT }}
     steps:
       - uses: actions/checkout@v4
+      - name: Validate signing scripts and publisher verification
+        shell: pwsh
+        run: ./scripts/test_windows_signing.ps1
+      - name: Require publisher configuration for a signed build
+        if: inputs.sign-windows
+        shell: pwsh
+        run: |
+          if ('${{ github.event_name }}' -eq 'pull_request' -or ('${{ github.ref }}' -ne 'refs/heads/main' -and -not '${{ github.ref }}'.StartsWith('refs/tags/v'))) {
+            throw 'Signing is restricted to main and release tags.'
+          }
+          foreach ($name in @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID', 'WINDOWS_SIGNING_ENDPOINT', 'WINDOWS_SIGNING_ACCOUNT', 'WINDOWS_SIGNING_PROFILE', 'WINDOWS_SIGNING_SUBJECT')) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) { throw "Missing signing configuration: $name" }
+          }
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Authenticate signing publisher without a stored password
+        if: inputs.sign-windows
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -40,9 +81,11 @@ jobs:
           key: codebone-model-${{ hashFiles('src/config.py') }}
       - name: Build portable application and installer
         shell: pwsh
+        env:
+          SIGN_WINDOWS: ${{ inputs.sign-windows || false }}
         run: |
           try {
-            & ./scripts/build_windows.ps1 *>&1 | Tee-Object -FilePath build-windows.log
+            & ./scripts/build_windows.ps1 -SignWindows:($env:SIGN_WINDOWS -eq 'true') *>&1 | Tee-Object -FilePath build-windows.log
           } catch {
             if (Test-Path build-windows.log) {
               $tail = (Get-Content build-windows.log -Tail 80) -join '%0A'
@@ -77,6 +120,11 @@ jobs:
           $target = Join-Path $env:RUNNER_TEMP 'codebone-install'
           $installer = Start-Process -FilePath ./dist/codebone-windows-x64-setup.exe -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$target") -Wait -PassThru
           if ($installer.ExitCode -ne 0 -or -not (Test-Path "$target/codebone.exe")) { throw 'Installer failed' }
+          if ('${{ inputs.sign-windows }}' -eq 'true') {
+            foreach ($file in @('codebone.exe', 'cbone.exe', 'unins000.exe')) {
+              & ./scripts/verify_windows_signature.ps1 -FilePath "$target/$file"
+            }
+          }
           $result = Join-Path $env:RUNNER_TEMP 'codebone-installed-smoke.json'
           $app = Start-Process -FilePath "$target/codebone.exe" -ArgumentList @('--smoke-test', $result) -Wait -PassThru
           if ($app.ExitCode -ne 0 -or -not (Test-Path $result)) { throw 'Installed app smoke failed' }

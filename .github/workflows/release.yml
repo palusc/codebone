@@ -31,6 +31,11 @@ jobs:
   windows:
     needs: verify
     uses: ./.github/workflows/windows-build.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      sign-windows: true
   macos:
     needs: verify
     runs-on: macos-14

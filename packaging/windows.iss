@@ -22,6 +22,10 @@ WizardStyle=modern
 CloseApplications=yes
 CloseApplicationsFilter=codebone.exe,cbone.exe
 RestartApplications=no
+#ifdef SignedBuild
+SignTool=ArtifactSigning
+SignedUninstaller=yes
+#endif
 
 [Tasks]
 Name: desktopicon; Description: "Create a desktop shortcut"; Flags: unchecked

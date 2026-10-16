@@ -13,6 +13,7 @@ repository's official release and trust it. Compare its SHA-256 with the release
 checksum; this confirms the downloaded file matches the release, not publisher
 identity. Do not disable SmartScreen globally. A trusted signing identity is
 required for signed releases; new signed apps can still receive reputation warnings.
+See [publisher signing setup](windows-signing.md) for the release pipeline.
 
 Use `codebone-windows-x64-setup.exe` for a per-user installation (no administrator
 rights required), or extract `codebone-windows-x64.zip` and run `codebone.exe`.

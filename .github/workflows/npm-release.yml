@@ -30,17 +30,17 @@ jobs:
           test "$expected" = "$actual"
           node --check bin/cbone.js
           npm test
-      - name: Stage npm package with cbone README
-        run: python3 scripts/package_npm.py "$RUNNER_TEMP/cbone-package"
+      - name: Stage npm package with cb1 README
+        run: python3 scripts/package_npm.py "$RUNNER_TEMP/cb1-package"
       - name: Inspect package contents
-        run: npm pack "$RUNNER_TEMP/cbone-package" --dry-run
+        run: npm pack "$RUNNER_TEMP/cb1-package" --dry-run
       # Configure this workflow as a trusted publisher in npm package settings.
       # The release workflow calls this only after native artifacts pass validation.
       - name: Check for an identical previously published version
         id: published
-        run: python3 scripts/check_npm_release.py "$RUNNER_TEMP/cbone-package" --github-output "$GITHUB_OUTPUT"
-      - name: Publish cbone
+        run: python3 scripts/check_npm_release.py "$RUNNER_TEMP/cb1-package" --github-output "$GITHUB_OUTPUT"
+      - name: Publish cb1
         if: steps.published.outputs.already_published != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish "$RUNNER_TEMP/cbone-package" --access public --tag latest --provenance
+        run: npm publish "$RUNNER_TEMP/cb1-package" --access public --tag latest --provenance

@@ -13,17 +13,17 @@ import urllib.request
 def already_published(package_dir: Path) -> bool:
     package = json.loads((package_dir / 'package.json').read_text(encoding='utf-8'))
     name, version = package['name'], package['version']
-    if name != 'cbone':
+    if name != 'cb1':
         raise ValueError('Unexpected npm package name')
     try:
-        with urllib.request.urlopen(f'https://registry.npmjs.org/cbone/{version}', timeout=30) as response:
+        with urllib.request.urlopen(f'https://registry.npmjs.org/{name}/{version}', timeout=30) as response:
             published = json.load(response)
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             return False
         raise
     # The registry's canonical tarball stays on the official HTTPS destination.
-    url = f'https://registry.npmjs.org/cbone/-/cbone-{version}.tgz'
+    url = f'https://registry.npmjs.org/{name}/-/{name}-{version}.tgz'
     with urllib.request.urlopen(url, timeout=30) as response:
         archive = response.read(1_000_001)
     if len(archive) > 1_000_000:

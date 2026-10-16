@@ -17,7 +17,7 @@ Run-Python scripts/download_model.py --dest $ModelCache
 Run-Python scripts/download_model.py --dest $ModelCache --check
 Run-Python -c "from PIL import Image; from pathlib import Path; Path('build').mkdir(exist_ok=True); Image.open('resources/bone_active.png').save('build/codebone.ico', sizes=[(16,16),(32,32),(48,48),(256,256)])"
 Run-Python -m PyInstaller --noconfirm --clean --onedir --windowed --name codebone --icon build/codebone.ico --paths . --add-data 'resources;resources' --add-data "$ModelCache;models" --collect-all llama_cpp --hidden-import pystray._win32 windows_main.py
-Run-Python -m PyInstaller --noconfirm --clean --onefile --console --name cbone --paths . --collect-submodules mcp windows_mcp.py
+Run-Python -m PyInstaller --noconfirm --clean --onefile --console --name cbone --paths . --collect-submodules mcp.server.fastmcp windows_mcp.py
 Copy-Item dist/cbone.exe dist/codebone/cbone.exe -Force
 Copy-Item LICENSE dist/codebone/LICENSE.txt -Force
 $version = (& python -c 'from src import __version__; print(__version__)').Trim()

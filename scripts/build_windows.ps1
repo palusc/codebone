@@ -9,7 +9,7 @@ function Run-Python {
 }
 if (-not $IsWindows -and $PSVersionTable.PSEdition -eq 'Core') { throw 'A native Windows host is required.' }
 if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') { throw 'Windows x64 is required.' }
-$env:CMAKE_ARGS = '-DGGML_METAL=OFF -DGGML_CUDA=OFF -DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF'
+$env:CMAKE_ARGS = (Get-Content packaging/windows-cmake.txt -Raw).Trim()
 $env:CMAKE_BUILD_PARALLEL_LEVEL = '2'
 Run-Python -m pip install -r requirements-windows.txt -c requirements.lock
 Run-Python -m pip check

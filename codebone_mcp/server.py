@@ -12,7 +12,9 @@ from typing import Optional
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-CONFIG_FILE = Path.home() / "Library" / "Application Support" / "codebone" / "config.json"
+from src.platform_paths import data_dir
+
+CONFIG_FILE = data_dir() / "config.json"
 LEGACY_CONFIG_FILE = Path.home() / "Library" / "Application Support" / "CodeBone" / "config.json"
 
 mcp = FastMCP("codebone")
@@ -34,7 +36,7 @@ def _connection() -> tuple[str, dict]:
     # 2. Config file
     cfg = CONFIG_FILE if CONFIG_FILE.exists() else LEGACY_CONFIG_FILE
     if not cfg.exists():
-        raise CodeBoneNotRunning("codebone has never been launched — open the codebone menu bar app first.")
+        raise CodeBoneNotRunning("codebone has never been launched — open the codebone desktop app first.")
     try:
         data = json.loads(cfg.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -86,7 +88,7 @@ def _request(method: str, path: str, params: dict | None = None, payload: dict |
     except CodeBoneNotRunning as exc:
         return f"codebone is not reachable: {exc}"
     except httpx.ConnectError:
-        return f"codebone is configured but not answering on {base}: make sure the codebone menu bar app is running."
+        return f"codebone is configured but not answering on {base}: make sure the codebone desktop app is running."
     except httpx.TimeoutException:
         return "codebone did not answer in time (it may be busy scanning); try again in a moment."
     except httpx.HTTPStatusError as exc:

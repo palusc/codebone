@@ -5,6 +5,7 @@ Provides structured semantic codebase context over localhost HTTP.
 import json
 import logging
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -96,6 +97,8 @@ def patch_mcp_configs(port: int, project_path: Optional[Path] = None):
     (port and project_path are accepted for compatibility.)"""
     if os.environ.get("CODEBONE_NO_MCP_PATCH"):
         return
+    if sys.platform == "win32":
+        return  # Windows registration is explicit in the desktop settings.
     home = Path.home()
     targets = [
         home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",

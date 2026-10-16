@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import subprocess
 import tempfile
 import urllib.request
@@ -59,8 +60,9 @@ def clean_release_notes(text: str) -> str:
 
 def parse_version(v_str: str) -> Tuple[int, ...]:
     """Parses a version string like '1.6', '1.7a', '1.7b', '1.7' into an integer tuple for comparison.
-    Letter suffixes ('1.7a', '1.7b', '1.7c') are intermediate patches leading up to the final milestone ('1.7').
-    Therefore: 1.6 < 1.7a < 1.7b < 1.7c < 1.7 < 1.8a < 1.8.
+    Before 1.8, letter suffixes are previews leading up to the final milestone.
+    Historical previews sort before their milestone. From 1.8 onward, letters are
+    follow-up releases: 1.7 < 1.8 < 1.8a < 1.8b.
     """
     clean = re.sub(r"^[vV]", "", (v_str or "").strip())
     match = re.match(r"^(\d+(?:\.\d+)*)([a-z])?", clean, re.IGNORECASE)
@@ -72,8 +74,9 @@ def parse_version(v_str: str) -> Tuple[int, ...]:
     while len(parts) < 3:
         parts.append(0)
     # If a letter is present: 'a' -> 1, 'b' -> 2, 'c' -> 3...
-    # If NO letter (clean milestone release like '1.7'): ranks at 999 (above all intermediate letter drops)
-    letter_rank = (ord(letter_part.lower()) - ord("a") + 1) if letter_part else 999
+    # Historical milestones sort above previews; 1.8+ letters are follow-up releases.
+    base_rank = 0 if tuple(parts[:3]) >= (1, 8, 0) else 999
+    letter_rank = (ord(letter_part.lower()) - ord("a") + 1) if letter_part else base_rank
     return tuple(parts[:3] + [letter_rank])
 
 
@@ -136,6 +139,18 @@ def check_for_updates(current_version: str = CURRENT_VERSION, timeout: int = 8) 
     asset_size = 0
     checksum_url = None
     assets = data.get("assets", [])
+    if sys.platform == "win32":
+        asset = next((a for a in assets if a.get("name", "").lower() == "codebone-windows-x64-setup.exe"), None)
+        return {
+            "update_available": update_available,
+            "latest_version": latest_ver_str or current_version,
+            "current_version": current_version,
+            "release_name": data.get("name", f"codebone v{latest_ver_str}"),
+            "release_notes": clean_release_notes(data.get("body", "")),
+            "download_url": asset.get("browser_download_url") if asset else None,
+            "asset_size": asset.get("size", 0) if asset else 0,
+            "html_url": data.get("html_url", f"https://github.com/{GITHUB_REPO}/releases"),
+        }
     for asset in assets:
         name = asset.get("name", "").lower()
         if "arm64" in name and name.endswith("-update.zip"):

@@ -1,135 +1,95 @@
 name: Release codebone
 
-# Releases are built and published when a release tag is pushed (e.g. `git tag v1.8.0 && git push origin v1.8.0`)
-# or manually triggered via GitHub Actions (workflow_dispatch).
-# Normal commits and pushes to main do NOT create automated releases.
-
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ['v*']
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to release (e.g. 1.8.0) - leave empty to use tag or src/__init__.py'
-        required: false
-        type: string
 
 concurrency:
-  group: release
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
-    runs-on: macos-14
-    if: github.event_name == 'workflow_dispatch' || (!startsWith(github.ref, 'refs/tags/v1.0') && !startsWith(github.ref, 'refs/tags/v1.1') && !startsWith(github.ref, 'refs/tags/v1.2') && !startsWith(github.ref, 'refs/tags/v1.3') && !startsWith(github.ref, 'refs/tags/v1.4') && !startsWith(github.ref, 'refs/tags/v1.5') && !startsWith(github.ref, 'refs/tags/v1.6'))
+  verify:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: true
-
-      - name: Configure git identity
+      - name: Require a tag matching the checked-in version
+        env:
+          RELEASE_REF: ${{ github.ref }}
         run: |
-          git config user.name "codebone-release-bot"
-          git config user.email "actions@users.noreply.github.com"
-
-      - name: Cache base model download
-        uses: actions/cache@v4
+          python3 - <<'PY'
+          import json, os
+          from src import __version__
+          from scripts.npm_version import npm_version
+          assert os.environ['RELEASE_REF'] == f'refs/tags/v{__version__}', 'Run releases at the version tag'
+          assert json.load(open('package.json'))['version'] == npm_version(__version__)
+          PY
+  windows:
+    needs: verify
+    uses: ./.github/workflows/windows-build.yml
+  macos:
+    needs: verify
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
         with:
           path: ~/Library/Caches/codebone-build
-          key: codebone-model-${{ hashFiles('scripts/download_model.py') }}
-
-      - name: Determine release version
-        id: bump
-        run: |
-          set -euo pipefail
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            version="${{ github.event.inputs.version }}"
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            version="${GITHUB_REF#refs/tags/v}"
-          else
-            version="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/__init__.py)"
-          fi
-          version="${version#v}"
-          sed -i '' "s/^__version__ = \".*\"/__version__ = \"${version}\"/" src/__init__.py
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "Releasing version ${version}"
-
-      - name: Build DMG + ZIP (scripts/build_dmg.sh)
+          key: codebone-model-${{ hashFiles('src/config.py') }}
+      - name: Build and validate macOS application
         run: ./scripts/build_dmg.sh
-
-      - name: Update Homebrew formula
-        run: |
-          set -euo pipefail
-          version="${{ steps.bump.outputs.version }}"
-          zip_sha="$(shasum -a 256 dist/codebone-macos-arm64.zip | awk '{print $1}')"
-          sed -i '' "s#^  url \".*\"#  url \"https://github.com/palusc/codebone/releases/download/v${version}/codebone-macos-arm64.zip\"#" Formula/codebone.rb
-          sed -i '' "s#^  sha256 \".*\"#  sha256 \"${zip_sha}\"#" Formula/codebone.rb
-
-      - name: Sync package.json + README version badge
-        run: |
-          set -euo pipefail
-          version="${{ steps.bump.outputs.version }}"
-          sed -i '' "s#\"version\": \".*\"#\"version\": \"${version}\"#" package.json
-          sed -i '' "s#version-[0-9][0-9.]*-informational#version-${version}-informational#" README.md
-          sed -i '' "s#Version%20[0-9][0-9.]*-#Version%20${version}-#" README.md
-          sed -i '' "s#!\[Version [0-9][0-9.]*\]#![Version ${version}]#" README.md
-
-      - name: Commit version bump + formula (if on branch or manual)
-        run: |
-          set -euo pipefail
-          if git diff --quiet src/__init__.py Formula/codebone.rb package.json README.md; then
-            echo "No changes to commit"
-          else
-            git add src/__init__.py Formula/codebone.rb package.json README.md
-            git commit -m "chore(release): bump version to ${{ steps.bump.outputs.version }}"
-            git push origin HEAD:main || true
-          fi
-
-      - name: Ensure git tag exists
-        run: |
-          set -euo pipefail
-          version="${{ steps.bump.outputs.version }}"
-          if ! git rev-parse "v${version}" >/dev/null 2>&1; then
-            git tag "v${version}"
-            git push origin "v${version}"
-          fi
-
-      - name: Build release notes
-        id: notes
-        run: |
-          set -euo pipefail
-          version="${{ steps.bump.outputs.version }}"
-          section="$(awk -v ver="## [$version]" '
-            index($0, ver) == 1 { found=1; next }
-            found && /^## \[/ { exit }
-            found { print }
-          ' CHANGELOG.md)"
-          section="$(printf '%s\n' "$section" | sed -e '/./,$!d')"
-          if [ -z "$(echo "$section" | tr -d '[:space:]')" ]; then
-            section="$(git log -1 --pretty=%B | sed -e '/./,$!d')"
-          fi
-          {
-            echo "$section"
-            echo ""
-            echo "---"
-            echo "Full history: [CHANGELOG.md](https://github.com/palusc/codebone/blob/main/CHANGELOG.md)"
-          } > release_notes.md
-          cat release_notes.md
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
         with:
-          tag_name: "v${{ steps.bump.outputs.version }}"
-          name: "codebone v${{ steps.bump.outputs.version }}"
+          name: macos-release
+          path: dist/codebone-macos-arm64*
+          if-no-files-found: error
+  publish:
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-release'
+          merge-multiple: true
+          path: dist
+      - name: Prepare release notes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from src import __version__
+          text = Path('CHANGELOG.md').read_text()
+          section = text.split(f'## [{__version__}]', 1)[1].split('\n## [', 1)[0]
+          section = section.split('### Release status', 1)[0].strip()
+          Path('release_notes.md').write_text(f'codebone {__version__}\n\n' + section + '\n\nWindows x64: installer or portable ZIP. macOS: Apple Silicon DMG.\n')
+          PY
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: codebone ${{ github.ref_name }}
           body_path: release_notes.md
+          make_latest: true
+          fail_on_unmatched_files: true
           files: |
+            dist/codebone-windows-x64-setup.exe
+            dist/codebone-windows-x64-setup.exe.sha256
+            dist/codebone-windows-x64.zip
+            dist/codebone-windows-x64.zip.sha256
             dist/codebone-macos-arm64.dmg
             dist/codebone-macos-arm64.zip
             dist/codebone-macos-arm64.zip.sha256
             dist/codebone-macos-arm64-update.zip
             dist/codebone-macos-arm64-update.zip.sha256
+  npm:
+    needs: publish
+    secrets: inherit
+    uses: ./.github/workflows/npm-release.yml
+    permissions:
+      contents: read
+      id-token: write

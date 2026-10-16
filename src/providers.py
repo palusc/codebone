@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import sys
 import re
 import threading
 import time
@@ -431,7 +432,7 @@ class BuiltinProvider(Provider):
     def __init__(self, model_path: str, n_ctx: int = 2048, n_gpu_layers: int = -1):
         self.model_path = Path(model_path)
         self.n_ctx = n_ctx
-        self.n_gpu_layers = n_gpu_layers
+        self.n_gpu_layers = 0 if sys.platform == "win32" else n_gpu_layers
         self._llm: Optional["Llama"] = None
         self._fallback = FastFallbackProvider()
         self._load_lock = threading.Lock()
@@ -680,6 +681,8 @@ class CloudProvider(Provider):
 
 def build_provider(config: Config) -> Provider:
     kind = config.get("brain_provider", "builtin")
+    if kind == "fallback":
+        return FastFallbackProvider()
     if kind == "local_url":
         url = config.get("brain_local_url", "http://localhost:11434/api/generate")
         return LocalUrlProvider(url)

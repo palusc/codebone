@@ -1,0 +1,16 @@
+# Core versions remain constrained by requirements.lock.
+watchdog
+fastapi
+uvicorn
+llama-cpp-python
+pydantic
+requests
+networkx
+mcp
+httpx
+pathspec
+pytest
+# Native Windows tray, image loading and self-contained executable packaging.
+pystray==0.19.5
+Pillow==12.3.0
+pyinstaller==6.22.3

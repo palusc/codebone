@@ -5,13 +5,15 @@ with byte-identical models. Order: bundled copy inside the .app (symlink, no ext
 """
 import hashlib
 import os
+import shutil
+import sys
 import urllib.request
 from pathlib import Path
 from typing import Callable, Optional
 
 from .config import BASE_MODEL_FILE, BASE_MODEL_SHA256, BASE_MODEL_URL
 
-BUNDLED_MODEL = Path(__file__).resolve().parents[2] / "models" / BASE_MODEL_FILE  # <app>/Contents/Resources/models
+BUNDLED_MODEL = (Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[2]) / "models" / BASE_MODEL_FILE  # <app>/Contents/Resources/models
 
 
 def sha256_of(path: Path) -> str:
@@ -50,9 +52,12 @@ def install(dest: Path, progress: Optional[Callable[[int], None]] = None) -> str
         return "present"
     if dest.is_symlink() or dest.exists():
         dest.unlink()  # dangling link (app moved/deleted) or corrupt partial file
-    if BUNDLED_MODEL.exists():
+    if is_valid(BUNDLED_MODEL):
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.symlink_to(BUNDLED_MODEL)
+        if sys.platform == "win32":
+            shutil.copyfile(BUNDLED_MODEL, dest)
+        else:
+            dest.symlink_to(BUNDLED_MODEL)
         return "linked"
     download(dest, progress)
     return "downloaded"

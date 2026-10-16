@@ -305,7 +305,7 @@ class CodeBoneService:
             ext = p.suffix.lower() if p.suffix else p.name
             ext_counts[ext] = ext_counts.get(ext, 0) + 1
             try:
-                rel = str(p.relative_to(proj))
+                rel = p.relative_to(proj).as_posix()
                 mtime = p.stat().st_mtime
             except (ValueError, OSError):
                 files_to_sniff += 1
@@ -907,7 +907,7 @@ class CodeBoneService:
                     break
 
                 try:
-                    rel_path = str(path.relative_to(project_path))
+                    rel_path = path.relative_to(project_path).as_posix()
                 except ValueError:
                     rel_path = str(path)
                 active_rel.add(rel_path)
@@ -1041,7 +1041,7 @@ class CodeBoneService:
             return None
         for candidate in (path, path.resolve()):
             try:
-                return str(candidate.relative_to(project_path))
+                return candidate.relative_to(project_path).as_posix()
             except ValueError:
                 continue
         return None

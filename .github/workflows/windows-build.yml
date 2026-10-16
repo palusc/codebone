@@ -44,7 +44,7 @@ jobs:
         if: inputs.sign-windows
         shell: pwsh
         run: |
-          if ('${{ github.event_name }}' -eq 'pull_request' -or ('${{ github.ref }}' -ne 'refs/heads/main' -and -not '${{ github.ref }}'.StartsWith('refs/tags/v'))) {
+          if ($env:GITHUB_EVENT_NAME -eq 'pull_request' -or ($env:GITHUB_REF -ne 'refs/heads/main' -and -not $env:GITHUB_REF.StartsWith('refs/tags/v'))) {
             throw 'Signing is restricted to main and release tags.'
           }
           foreach ($name in @('AZURE_CLIENT_ID', 'AZURE_TENANT_ID', 'AZURE_SUBSCRIPTION_ID', 'WINDOWS_SIGNING_ENDPOINT', 'WINDOWS_SIGNING_ACCOUNT', 'WINDOWS_SIGNING_PROFILE', 'WINDOWS_SIGNING_SUBJECT')) {

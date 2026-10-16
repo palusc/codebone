@@ -1,0 +1,45 @@
+name: Publish npm bridge
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - name: Verify package version matches app release
+        run: |
+          expected="$(python3 scripts/npm_version.py "$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/__init__.py)")"
+          actual="$(node -p "require('./package.json').version")"
+          test "$expected" = "$actual"
+          node --check bin/codebone-mcp.js
+          npm test
+      - name: Inspect package contents
+        run: npm pack --dry-run
+      # Configure this workflow as a trusted publisher in npm package settings.
+      # The release workflow calls this only after native artifacts pass validation.
+      - name: Publish cbone
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --tag latest --provenance
+      - name: Publish compatibility package
+        working-directory: packaging/npm-compat
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --tag latest --provenance

@@ -3,6 +3,7 @@ import logging
 import subprocess
 import threading
 import time
+import sys
 
 logger = logging.getLogger("codebone.battery")
 
@@ -21,8 +22,18 @@ def on_battery_power() -> bool:
         if now - _cached_at < _CACHE_SECONDS:
             return _cached_value
         try:
-            out = subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True, timeout=3).stdout
-            _cached_value = "Battery Power" in out and "AC Power" not in out
+            if sys.platform == "win32":
+                import ctypes
+                from ctypes import wintypes
+                class PowerStatus(ctypes.Structure):
+                    _fields_ = [("ac", wintypes.BYTE), ("flags", wintypes.BYTE),
+                                ("percent", wintypes.BYTE), ("reserved", wintypes.BYTE),
+                                ("life", wintypes.DWORD), ("full_life", wintypes.DWORD)]
+                status = PowerStatus()
+                _cached_value = bool(ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(status))) and status.ac == 0
+            else:
+                out = subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True, timeout=3).stdout
+                _cached_value = "Battery Power" in out and "AC Power" not in out
         except (OSError, subprocess.SubprocessError):
             _cached_value = False
         _cached_at = now

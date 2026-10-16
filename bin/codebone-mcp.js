@@ -1,61 +1,39 @@
 #!/usr/bin/env node
-/**
- * codebone-mcp — npm bridge for the codebone MCP server.
- *
- * Locates the Python interpreter bundled with codebone and spawns
- * `python3 -m codebone_mcp.server`, passing MCP stdio straight through.
- *
- * Install locations tried (in order):
- *   1. CODEBONE_PYTHON env var (override for custom installs)
- *   2. ~/Library/Application Support/codebone/venv/bin/python3
- *   3. python3 on PATH (source installs / Homebrew)
- */
+/** Launch the MCP bridge bundled with codebone on macOS or Windows. */
+const { spawn } = require('child_process');
+const { existsSync } = require('fs');
+const { homedir } = require('os');
+const { join } = require('path');
 
-const { spawn } = require("child_process");
-const { existsSync } = require("fs");
-const { homedir } = require("os");
-const { join } = require("path");
-
-const VENV_PYTHON = join(
-  homedir(),
-  "Library",
-  "Application Support",
-  "codebone",
-  "venv",
-  "bin",
-  "python3"
-);
-
-const APP_BUNDLE_PYTHON = "/Applications/codebone.app/Contents/Resources/venv/bin/python3";
-
-function findPython() {
-  if (process.env.CODEBONE_PYTHON) return process.env.CODEBONE_PYTHON;
-  if (existsSync(VENV_PYTHON)) return VENV_PYTHON;
-  if (existsSync(APP_BUNDLE_PYTHON)) return APP_BUNDLE_PYTHON;
-  return "python3"; // fallback — source install or Homebrew
+function findCommand(platform = process.platform, env = process.env, exists = existsSync, home = homedir()) {
+  if (env.CODEBONE_MCP) return { command: env.CODEBONE_MCP, args: [] };
+  if (env.CODEBONE_PYTHON) return { command: env.CODEBONE_PYTHON, args: ['-m', 'codebone_mcp.server'] };
+  if (platform === 'win32') {
+    const local = env.LOCALAPPDATA || join(home, 'AppData', 'Local');
+    const candidates = [
+      join(local, 'Programs', 'codebone', 'codebone-mcp.exe'),
+      join(local, 'codebone', 'codebone-mcp.exe'),
+    ];
+    for (const command of candidates) if (exists(command)) return { command, args: [] };
+    return { command: 'python', args: ['-m', 'codebone_mcp.server'] };
+  }
+  for (const command of [
+    join(home, 'Library', 'Application Support', 'codebone', 'venv', 'bin', 'python3'),
+    '/Applications/codebone.app/Contents/Resources/venv/bin/python3',
+  ]) if (exists(command)) return { command, args: ['-m', 'codebone_mcp.server'] };
+  return { command: 'python3', args: ['-m', 'codebone_mcp.server'] };
 }
 
-const python = findPython();
-
-const child = spawn(python, ["-m", "codebone_mcp.server"], {
-  stdio: "inherit",
-  env: {
-    ...process.env,
-    // Forward port override if set
-    ...(process.env.CODEBONE_PORT ? { CODEBONE_PORT: process.env.CODEBONE_PORT } : {}),
-  },
-});
-
-child.on("error", (err) => {
-  if (err.code === "ENOENT") {
-    console.error(
-      "[codebone-mcp] Python not found at: " + python + "\n" +
-      "Make sure codebone is installed: https://github.com/palusc/codebone/releases"
-    );
-  } else {
-    console.error("[codebone-mcp] Failed to start:", err.message);
-  }
-  process.exit(1);
-});
-
-child.on("exit", (code) => process.exit(code ?? 0));
+function main() {
+  const { command, args } = findCommand();
+  const child = spawn(command, args, { stdio: 'inherit', env: process.env, windowsHide: true });
+  child.on('error', (err) => {
+    console.error('[codebone-mcp] Could not launch ' + command + ': ' + err.message + '\n' +
+      'Install codebone: https://github.com/palusc/codebone/releases\n' +
+      'For portable Windows installs, set CODEBONE_MCP to codebone-mcp.exe.');
+    process.exit(1);
+  });
+  child.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+}
+if (require.main === module) main();
+module.exports = { findCommand, main };

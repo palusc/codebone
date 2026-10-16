@@ -1,0 +1,70 @@
+name: Windows build and validation
+
+on:
+  push:
+    branches: ['codex/windows-2.0']
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - uses: actions/cache@v4
+        with:
+          path: build/model-cache
+          key: codebone-model-${{ hashFiles('src/config.py') }}
+      - name: Build portable application and installer
+        shell: pwsh
+        run: ./scripts/build_windows.ps1
+      - name: Test Windows runtime and bridge
+        shell: pwsh
+        run: |
+          python -m pytest -q tests/test_windows.py tests/test_api_security.py tests/test_indexing.py tests/test_mcp_client.py tests/test_release_consistency.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Exercise packaged EXE, tray, settings, model and HTTP
+        shell: pwsh
+        run: |
+          $result = Join-Path $env:RUNNER_TEMP 'codebone-smoke.json'
+          $app = Start-Process -FilePath ./dist/codebone/codebone.exe -ArgumentList @('--smoke-test', $result) -PassThru
+          if (-not $app.WaitForExit(180000)) { $app.Kill(); throw 'Packaged smoke test timed out' }
+          if ($app.ExitCode -ne 0) { throw "Packaged smoke test failed: $($app.ExitCode)" }
+          if (-not (Test-Path $result)) { throw 'Smoke result missing' }
+          $report = Get-Content $result -Raw | ConvertFrom-Json
+          if (-not $report.passed -or -not $report.gui -or -not $report.model) { throw 'Smoke test did not exercise all targets' }
+          Get-Content $result
+          python scripts/test_packaged_mcp.py ./dist/codebone/codebone-mcp.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test installer and uninstaller
+        shell: pwsh
+        run: |
+          $target = Join-Path $env:RUNNER_TEMP 'codebone-install'
+          $installer = Start-Process -FilePath ./dist/codebone-windows-x64-setup.exe -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$target") -Wait -PassThru
+          if ($installer.ExitCode -ne 0 -or -not (Test-Path "$target/codebone.exe")) { throw 'Installer failed' }
+          $result = Join-Path $env:RUNNER_TEMP 'codebone-installed-smoke.json'
+          $app = Start-Process -FilePath "$target/codebone.exe" -ArgumentList @('--smoke-test', $result) -Wait -PassThru
+          if ($app.ExitCode -ne 0 -or -not (Test-Path $result)) { throw 'Installed app smoke failed' }
+          $uninstaller = Start-Process -FilePath "$target/unins000.exe" -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru
+          if ($uninstaller.ExitCode -ne 0) { throw 'Uninstall failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: dist/codebone-windows-x64*
+          if-no-files-found: error

@@ -4,7 +4,8 @@ All notable changes to codebone will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Official milestone releases are clean numbers (`1.0`, `1.1`, `1.2`, `1.3`, `1.4`, `1.5`, `1.6`, `1.7`, `1.8`).
-Development preview snapshots leading up to each milestone use letter releases (`.a`, `.b`, `.c`).
+Starting with 1.8, letter releases follow the base release: `1.8` → `1.8a` → `1.8b`.
+App release `1.8a` maps to npm `1.8.0-a`; `1.8b` maps to `1.8.0-b`.
 
 ---
 
@@ -12,8 +13,38 @@ Development preview snapshots leading up to each milestone use letter releases (
 
 ---
 
+## [2.0] - 2026-10-16
+
+### Added
+- Windows x64 desktop app with a native tray menu, project selection, GitHub cloning,
+  scan/pause/cancel controls, map-agent settings and saved scan import/export.
+- Self-contained Windows application, portable ZIP and per-user installer.
+- Windows CPU inference for the pinned built-in model and encrypted provider-key storage.
+- Bundled Windows MCP executable and explicit coding-client registration.
+- Windows build validation covering the packaged UI, model, HTTP API, MCP and installer.
+
+### Changed
+- npm package renamed to `cbone` (`npx cbone`), with a `codebone-mcp` compatibility package.
+- Shared Windows-native data/log paths and cross-platform npm bridge discovery.
+- macOS remains supported with its existing native app and Metal backend.
+
+### Release status
+- Native artifacts and publication must pass the release workflow; source changes
+  alone do not establish that a Windows binary has been built or published.
+
+---
+
+## [1.8a] - 2026-10-16
+
+### Changed
+- Align current app version and npm bridge release (`1.8a` / `1.8.0-a`).
+- Add an npm publication workflow with an explicit `latest` tag.
+- Treat letter releases from 1.8 onward as updates to the base release.
+
+---
+
 ## [1.8] - 2026-10-15
-*Official Milestone Full Release (Current)*
+*Official Milestone Full Release*
 
 ### 🎯 Milestone Goal
 Implement comprehensive Domain-Driven Design (DDD) internal architecture and multi-language codebase extraction (Bounded Contexts, Aggregate Roots, Value Objects, Domain Events, Repositories, Domain Services), combined with 1-click GitHub repository cloning, workspace synchronization, and automated background scanning.

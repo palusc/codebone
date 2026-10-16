@@ -9,7 +9,7 @@ class TestUpdater(unittest.TestCase):
     def test_parse_version(self):
         self.assertEqual(parse_version("1.2.0"), (1, 2, 0, 999))
         self.assertEqual(parse_version("v1.2.0"), (1, 2, 0, 999))
-        self.assertEqual(parse_version("V2.0.1"), (2, 0, 1, 999))
+        self.assertEqual(parse_version("V2.0.1"), (2, 0, 1, 0))
         self.assertEqual(parse_version("1.3"), (1, 3, 0, 999))
         self.assertEqual(parse_version("1.2.0-beta.1"), (1, 2, 0, 999))
         self.assertTrue(parse_version("1.2.1") > parse_version("1.2.0"))
@@ -24,7 +24,8 @@ class TestUpdater(unittest.TestCase):
         self.assertTrue(parse_version("1.7b") > parse_version("1.7a"))
         self.assertTrue(parse_version("1.7") > parse_version("1.7c"))
         self.assertTrue(parse_version("1.8a") > parse_version("1.7"))
-        self.assertTrue(parse_version("1.8") > parse_version("1.8a"))
+        self.assertTrue(parse_version("1.8a") > parse_version("1.8"))
+        self.assertTrue(parse_version("1.8b") > parse_version("1.8a"))
 
     @patch("urllib.request.urlopen")
     def test_check_for_updates_found(self, mock_urlopen):

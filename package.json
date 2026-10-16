@@ -1,15 +1,24 @@
 {
-  "name": "codebone-mcp",
-  "version": "1.8",
-  "description": "MCP server bridge for codebone — real-time codebase knowledge graph for macOS",
-  "keywords": ["mcp", "codebone", "codebase", "ai", "claude", "cursor", "context"],
+  "name": "cbone",
+  "version": "2.0.0",
+  "description": "MCP server bridge for codebone \u2014 local codebase architecture for macOS and Windows",
+  "keywords": [
+    "mcp",
+    "codebone",
+    "codebase",
+    "ai",
+    "claude",
+    "cursor",
+    "context"
+  ],
   "homepage": "https://github.com/palusc/codebone",
   "repository": {
     "type": "git",
-    "url": "https://github.com/palusc/codebone.git"
+    "url": "git+https://github.com/palusc/codebone.git"
   },
   "license": "MIT",
   "bin": {
+    "cbone": "bin/codebone-mcp.js",
     "codebone-mcp": "bin/codebone-mcp.js"
   },
   "files": [
@@ -18,5 +27,11 @@
   "engines": {
     "node": ">=18"
   },
-  "os": ["darwin"]
+  "os": [
+    "darwin",
+    "win32"
+  ],
+  "scripts": {
+    "test": "node --test tests/npm-bridge.test.cjs"
+  }
 }

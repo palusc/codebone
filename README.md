@@ -6,9 +6,9 @@
 
 codebone turns a codebase into a live, local architecture graph and serves focused context to AI coding agents through MCP.
 
-[**Download for macOS**](https://github.com/palusc/codebone/releases/latest/download/codebone-macos-arm64.dmg) · [Website](https://codeb.one) · [Benchmark](https://github.com/palusc/codebone-benchmark) · [Latest release](https://github.com/palusc/codebone/releases/latest)
+[**Download for macOS**](https://github.com/palusc/codebone/releases/latest/download/codebone-macos-arm64.dmg) · [**Download for Windows**](https://github.com/palusc/codebone/releases/latest/download/codebone-windows-x64-setup.exe) · [Website](https://codeb.one) · [Benchmark](https://github.com/palusc/codebone-benchmark) · [Latest release](https://github.com/palusc/codebone/releases/latest)
 
-[![Release](https://img.shields.io/badge/version-1.8-b9ff66?style=flat-square)](https://github.com/palusc/codebone/releases/latest)
+[![Release](https://img.shields.io/badge/version-2.0-b9ff66?style=flat-square)](https://github.com/palusc/codebone/releases/latest)
 [![Platform](https://img.shields.io/badge/macOS_13%2B-Apple_Silicon-111317?style=flat-square&logo=apple)](#requirements)
 [![MCP](https://img.shields.io/badge/MCP-native-917cff?style=flat-square)](#mcp-setup)
 [![License](https://img.shields.io/badge/license-MIT-6ddbd3?style=flat-square)](LICENSE)
@@ -36,7 +36,10 @@ codebone prepares that map before the task starts. It watches your project, buil
 3. Click the bone in the menu bar and select a project folder.
 4. Open your coding agent and type `cb`.
 
-Requires macOS 13 or later on Apple Silicon. The current release is arm64 only.
+macOS requires version 13 or later on Apple Silicon. Windows 10/11 x64 uses the
+[Windows installer](https://github.com/palusc/codebone/releases/latest/download/codebone-windows-x64-setup.exe)
+or portable ZIP. Launch codebone from the Start menu; its tray icon opens projects
+and settings. See [Windows setup and builds](docs/windows.md).
 
 ## One shortcut
 
@@ -112,14 +115,15 @@ Your existing agent still reasons about the task and writes the code. codebone s
 <a id="mcp-setup"></a>
 ## MCP setup
 
-The app registers supported clients during setup. A portable manual configuration is:
+The npm bridge is **cbone** (`npx cbone`). The app is still named codebone;
+`codebone-mcp` remains a compatibility package. A portable manual configuration is:
 
 ```json
 {
   "mcpServers": {
     "codebone": {
       "command": "npx",
-      "args": ["-y", "codebone-mcp"]
+      "args": ["-y", "cbone"]
     }
   }
 }
@@ -175,7 +179,9 @@ The current comparison measures a static context file built with codebone's fall
 - 8 GB memory minimum
 - approximately 2 GB free disk space for the app, runtime, model and local data
 
-Intel Macs, Windows and Linux are not supported release targets today.
+Windows: Windows 10/11 x64, 8 GB RAM and approximately 2 GB free disk space.
+The built-in model uses CPU on Windows. Intel Macs and Linux desktop releases
+are not supported.
 
 ## Build from source
 
@@ -186,6 +192,8 @@ cd codebone
 ```
 
 The installer validates macOS and Apple Silicon before changing the system.
+For Windows native builds, use `scripts/build_windows.ps1` as described in
+[the Windows guide](docs/windows.md).
 
 Run the test suite from a development checkout:
 

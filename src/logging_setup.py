@@ -6,7 +6,9 @@ import sys
 import threading
 from pathlib import Path
 
-LOG_DIR = Path.home() / "Library" / "Logs" / "codebone"
+from .platform_paths import log_dir
+
+LOG_DIR = log_dir()
 LOG_FILE = LOG_DIR / "codebone.log"
 
 

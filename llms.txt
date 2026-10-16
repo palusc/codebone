@@ -10,7 +10,7 @@
 - Changelog: https://github.com/palusc/codebone/blob/main/CHANGELOG.md
 
 ## Current release
-- Version: 1.8
+- Version: 2.0
 - License: MIT
 - Platform: macOS 13+ on Apple Silicon (arm64)
 - Built-in map model: Qwen2.5-Coder 0.5B with Apple Metal acceleration

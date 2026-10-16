@@ -1,0 +1,35 @@
+# Releasing codebone 2.0
+
+2.0 includes macOS Apple Silicon and Windows x64 desktop applications. Existing
+1.8 releases stay archived. App release `2.0` maps to npm package `cbone@2.0.0` through
+`scripts/npm_version.py`. Nothing is published by a local version bump.
+
+The old `codebone-mcp@2.0.0` package delegates to `cbone@2.0.0` so existing
+MCP client configurations keep working. `npx cbone` is the preferred command.
+
+1. Review the changes and run the Windows build workflow on the development branch.
+2. Configure the npm package's trusted GitHub publisher for repository
+   `palusc/codebone`, workflow `npm-release.yml`. No npm token is saved in source.
+   A newly named npm package may require its first publication through an npm
+   account before trusted publishing can be configured. Alternatively configure
+   the GitHub repository secret `NPM_TOKEN` with package-publishing permissions
+   for the initial release; enter its value only in GitHub Secrets, never in chat.
+   Both `cbone` and `codebone-mcp` need publishing authorization.
+3. Push tag `v2.0` at the reviewed source commit. The release workflow verifies the
+   versions, builds and validates Windows and macOS, and publishes both sets of
+   artifacts together only after both jobs succeed.
+4. The npm publication workflow runs after the native release and marks `2.0.0` as
+   `latest`. Verify the package and dist-tag on npm, then check Socket.dev after
+   it indexes the new version.
+5. Update the Homebrew formula URL and SHA-256 together using the generated macOS
+   ZIP. Until then it intentionally references the last verified 1.8 archive.
+
+Windows artifacts: `codebone-windows-x64-setup.exe` and
+`codebone-windows-x64.zip`, each with a SHA-256 file. Windows uses its native
+installer for upgrades; macOS retains its signed-bundle update mechanism.
+The initial Windows build has no configured Authenticode signing identity.
+
+Publication requires Git write access, enabled GitHub Actions and an authorized
+npm publisher. Network access to `api.github.com` is required to observe workflow
+runs from the cloud environment. A pushed tag is not evidence of a successful
+build or published release.

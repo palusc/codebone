@@ -7,6 +7,13 @@ existing Cocoa menu-bar app and Metal backend.
 
 ## Install and run
 
+The Windows 2.0 binaries are unsigned. SmartScreen may block their launch and
+show an unknown publisher. Only proceed if you obtained the file from this
+repository's official release and trust it. Compare its SHA-256 with the release
+checksum; this confirms the downloaded file matches the release, not publisher
+identity. Do not disable SmartScreen globally. A trusted signing identity is
+required for signed releases; new signed apps can still receive reputation warnings.
+
 Use `codebone-windows-x64-setup.exe` for a per-user installation (no administrator
 rights required), or extract `codebone-windows-x64.zip` and run `codebone.exe`.
 The installer offers desktop and login-startup shortcuts as optional tasks.

@@ -42,6 +42,10 @@ macOS requires version 13 or later on Apple Silicon. Windows 10/11 x64 uses the
 or portable ZIP. Launch codebone from the Start menu; its tray icon opens projects
 and settings. See [Windows setup and builds](docs/windows.md).
 
+The Windows 2.0 installer and application are unsigned. Windows SmartScreen may
+block the download or launch and show an unknown publisher. A trusted Windows
+signing identity is not yet configured.
+
 ## One shortcut
 
 | Prompt | What the agent receives |

@@ -1,5 +1,6 @@
 """Allow release retries only when an existing npm version has identical contents."""
 import argparse
+import base64
 import hashlib
 import io
 import json
@@ -27,8 +28,9 @@ def already_published(package_dir: Path) -> bool:
         archive = response.read(1_000_001)
     if len(archive) > 1_000_000:
         raise ValueError('Unexpectedly large npm distribution')
-    if hashlib.sha1(archive).hexdigest() != published['dist']['shasum']:
-        raise ValueError('Registry tarball checksum mismatch')
+    integrity = 'sha512-' + base64.b64encode(hashlib.sha512(archive).digest()).decode('ascii')
+    if integrity != published['dist']['integrity']:
+        raise ValueError('Registry tarball integrity mismatch')
     expected = {'package.json', 'README.md', 'LICENSE', 'bin/cbone.js'}
     with tarfile.open(fileobj=io.BytesIO(archive), mode='r:gz') as tar:
         members = [m for m in tar.getmembers() if not m.isdir()]

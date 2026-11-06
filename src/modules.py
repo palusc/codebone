@@ -649,6 +649,16 @@ def get_module_key(config, module_id: str, keychain: Optional[Keychain] = None) 
     return (keychain or Keychain()).get(module_id) or ""
 
 
+def mask_key(key: str) -> str:
+    """Safe preview of an API key: first 3 and last 3 characters (e.g. 'sk-…a1b')."""
+    key = (key or "").strip()
+    if not key:
+        return "—"
+    if len(key) <= 8:
+        return "•" * len(key)
+    return f"{key[:3]}…{key[-3:]}"
+
+
 def detect_provider(mod: dict) -> str:
     openai_url = (mod.get("openai_url") or "").lower()
     anthropic_url = (mod.get("anthropic_url") or "").lower()

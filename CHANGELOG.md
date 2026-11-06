@@ -13,6 +13,22 @@ App release `1.8a` maps to npm `1.8.0-a`; `1.8b` maps to `1.8.0-b`.
 
 ---
 
+## [2.0a] - 2026-11-06
+
+### Added
+- Map Agent now shows a notification when the API fails (rejected key, no credits, unknown model,
+  rate limit, no connection); the connection test names the real reason.
+- API keys are shown as a safe preview (first 3 and last 3 characters) in the Models menu and the
+  Edit API Key dialog.
+- npm: `npm i -g cbonex@latest` installs or updates the terminal bridge.
+
+### Fixed
+- Selecting an online model for the Map Agent did not reload the provider, so scans kept using the
+  old provider and no tokens went through the selected API key (e.g. OpenRouter).
+- Failed API responses are logged instead of being silently ignored.
+
+---
+
 ## [2.0] - 2026-10-16
 
 ### Added

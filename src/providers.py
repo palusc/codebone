@@ -588,6 +588,54 @@ class LocalUrlProvider(Provider):
         return self._model_result(out, file_path, code)
 
 
+_error_listener = None
+_last_reported: tuple = ("", 0.0)
+
+
+def set_provider_error_listener(fn) -> None:
+    """Registers fn(message) to be told about cloud API failures (key rejected, no credits, ...)."""
+    global _error_listener
+    _error_listener = fn
+
+
+def describe_api_error(vendor: str, status: int, body: str = "") -> str:
+    """One-line, user-facing explanation of a failed API call."""
+    name = {"openrouter": "OpenRouter", "anthropic": "Anthropic", "openai": "OpenAI"}.get(vendor, vendor.title())
+    detail = ""
+    try:
+        err = json.loads(body).get("error")
+        detail = (err.get("message") if isinstance(err, dict) else err) or ""
+    except Exception:
+        pass
+    if status in (401, 403):
+        msg = f"{name} rejected the API key. Check it under Models → Edit API Key."
+    elif status == 402:
+        msg = f"{name}: no credits left on this account."
+    elif status == 404:
+        msg = f"{name}: model not found. Check the model ID."
+    elif status == 429:
+        msg = f"{name}: rate limit reached. Try again shortly."
+    elif status >= 500:
+        msg = f"{name} is having problems (HTTP {status})."
+    else:
+        msg = f"{name} returned HTTP {status}."
+    return f"{msg} ({detail[:120]})" if detail and status not in (401, 403) else msg
+
+
+def _report_error(message: str) -> None:
+    """Calls the listener, but at most once per minute per distinct message so a scan doesn't spam."""
+    global _last_reported
+    now = time.monotonic()
+    if _last_reported[0] == message and now - _last_reported[1] < 60:
+        return
+    _last_reported = (message, now)
+    if _error_listener:
+        try:
+            _error_listener(message)
+        except Exception:
+            logger.debug("Provider error listener failed", exc_info=True)
+
+
 class CloudProvider(Provider):
     """Cloud BYOK provider (OpenAI, Anthropic, or OpenRouter)."""
 
@@ -596,14 +644,23 @@ class CloudProvider(Provider):
         self.api_key = api_key
         self.model = model
         self._fallback = FastFallbackProvider()
+        self.last_error = ""
 
     @property
     def available(self) -> bool:
         return bool(self.api_key and len(self.api_key.strip()) > 8)
 
+    def _fail(self, status: int, body: str) -> None:
+        logger.warning("%s API returned %s: %s", self.vendor, status, body[:200])
+        self.last_error = describe_api_error(self.vendor, status, body)
+        _report_error(self.last_error)
+
     def generate(self, prompt: str, max_tokens: int = 250, system_prompt: str = "") -> str:
         if not self.available:
+            self.last_error = "API key missing or too short."
+            _report_error(self.last_error)
             return ""
+        self.last_error = ""
         try:
             if self.vendor == "anthropic":
                 payload = {
@@ -625,6 +682,7 @@ class CloudProvider(Provider):
                 )
                 if r.status_code == 200:
                     return r.json()["content"][0]["text"].strip()
+                self._fail(r.status_code, r.text)
             elif self.vendor == "openrouter":
                 messages = []
                 if system_prompt:
@@ -645,6 +703,7 @@ class CloudProvider(Provider):
                 )
                 if r.status_code == 200:
                     return r.json()["choices"][0]["message"]["content"].strip()
+                self._fail(r.status_code, r.text)
             else:
                 # OpenAI
                 messages = []
@@ -666,8 +725,11 @@ class CloudProvider(Provider):
                 )
                 if r.status_code == 200:
                     return r.json()["choices"][0]["message"]["content"].strip()
+                self._fail(r.status_code, r.text)
         except Exception as exc:
             logger.warning("CloudProvider generation error: %s", exc)
+            self.last_error = f"Could not reach {self.vendor}: {str(exc)[:120]}"
+            _report_error(self.last_error)
         return ""
 
     def sniff(self, file_path: str, code: str) -> str:

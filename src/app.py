@@ -676,6 +676,11 @@ class CodeBoneApp(rumps.App):
         self.service = CodeBoneService(self.config)
         self.server = ServerThread(self.service)
 
+        from .providers import set_provider_error_listener
+        set_provider_error_listener(
+            lambda msg: self._on_main(lambda: rumps.notification("codebone", "Map Agent API problem", msg))
+        )
+
         active_icon = _get_icon(ICON_ACTIVE if self.config.is_configured else ICON_INACTIVE)
         super().__init__("codebone", icon=active_icon, template=True, quit_button=None)
         self.template = True
@@ -1703,6 +1708,8 @@ class CodeBoneApp(rumps.App):
         self.config.set("brain_cloud_model", mod.get("model", ""))
         self.config.set("brain_cloud_url", url)
         self.config.set("brain_cloud_api_key", key)
+        self.config.set("brain_tested_signature", "")
+        self.service.reload_provider()
         self._update_brain_checks()
         self._update_models_menu()
         self._sync_map_switch()
@@ -1794,11 +1801,9 @@ class CodeBoneApp(rumps.App):
                     )
                 else:
                     NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
-                    rumps.alert(
-                        "Connection Test Failed",
-                        f"{label} did not answer.\n\nCheck the API key (or that the local server is "
-                        "running) and try again.",
-                    )
+                    reason = getattr(provider, "last_error", "") or (
+                        "Check the API key (or that the local server is running) and try again.")
+                    rumps.alert("Connection Test Failed", f"{label} did not answer.\n\n{reason}")
                 self._update_ui_state()
 
             self._on_main(_done)
@@ -1898,6 +1903,7 @@ class CodeBoneApp(rumps.App):
                 # Copy Endpoints & Credentials directly in model settings
                 model_id_val = m.get("model", "")
                 item.add(make_choice_item(f"Copy Model ID ({model_id_val})", None, lambda val=model_id_val: self._copy_text(val, "Model ID"), icon="doc.on.clipboard"))
+                item.add(make_info_item(f"Key: {modules.mask_key(modules.Keychain().get(m['id']) or '')}"))
                 item.add(make_choice_item("Copy API Key", None, lambda mid=m["id"]: self._copy_module_key(mid), icon="key"))
 
                 openai_url = m.get("openai_url")
@@ -1959,7 +1965,7 @@ class CodeBoneApp(rumps.App):
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         current = modules.Keychain().get(module_id) or ""
         resp = rumps.Window(
-            message=f"API key for '{name}' (stored in your macOS Keychain):",
+            message=f"API key for '{name}' (stored in your macOS Keychain).\nCurrent: {modules.mask_key(current)}",
             title="Edit API Key",
             default_text=current,
             ok="Save Key",

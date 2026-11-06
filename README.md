@@ -8,7 +8,7 @@ codebone turns a codebase into a live, local architecture graph and serves focus
 
 [**Download for macOS**](https://github.com/palusc/codebone/releases/latest/download/codebone-macos-arm64.dmg) · [**Download for Windows**](https://github.com/palusc/codebone/releases/latest/download/codebone-windows-x64-setup.exe) · [Website](https://codeb.one) · [Benchmark](https://github.com/palusc/codebone-benchmark) · [Latest release](https://github.com/palusc/codebone/releases/latest)
 
-[![Release](https://img.shields.io/badge/version-2.0-b9ff66?style=flat-square)](https://github.com/palusc/codebone/releases/latest)
+[![Release](https://img.shields.io/badge/version-2.0a-b9ff66?style=flat-square)](https://github.com/palusc/codebone/releases/latest)
 [![Platform](https://img.shields.io/badge/macOS_13%2B-Apple_Silicon-111317?style=flat-square&logo=apple)](#requirements)
 [![Windows](https://img.shields.io/badge/Windows_10%2F11-x64-111317?style=flat-square&logo=windows)](#requirements)
 [![MCP](https://img.shields.io/badge/MCP-native-917cff?style=flat-square)](#mcp-setup)
@@ -41,6 +41,9 @@ macOS requires version 13 or later on Apple Silicon. Windows 10/11 x64 uses the
 [Windows installer](https://github.com/palusc/codebone/releases/latest/download/codebone-windows-x64-setup.exe)
 or portable ZIP. Launch codebone from the Start menu; its tray icon opens projects
 and settings. See [Windows setup and builds](docs/windows.md).
+
+**Terminal bridge (npm):** `npm i -g cbonex` installs it, `npm i -g cbonex@latest` updates it.
+The desktop app updates itself via **Check for Updates** in the menu.
 
 The Windows 2.0 installer and application are unsigned. Windows SmartScreen may
 block the download or launch and show an unknown publisher. A trusted Windows

@@ -12,10 +12,13 @@ codebone turns a codebase into a live, local architecture graph and serves focus
 [![Platform](https://img.shields.io/badge/macOS_13%2B-Apple_Silicon-111317?style=flat-square&logo=apple)](#requirements)
 [![MCP](https://img.shields.io/badge/MCP-native-917cff?style=flat-square)](#mcp-setup)
 [![License](https://img.shields.io/badge/license-MIT-6ddbd3?style=flat-square)](LICENSE)
+[![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/palusc/badge.svg)](https://hub.xerj.org/contributors/palusc)
 
 </div>
 
 ![The real codebone architecture graph showing files, domains, routes, tables, events and their connections](resources/graph_screenshot.png)
+
+codebone is featured in the [XERJ Corpus Hub](https://hub.xerj.org/corpus/palusc--codebone), where coding agents can search the repository at its pinned v1.8 commit as a reference.
 
 ## What codebone changes
 

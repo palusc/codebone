@@ -44,3 +44,29 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish "$RUNNER_TEMP/igotaboner-package" --access public --tag latest --provenance
+
+      # Secondary package: gotaboner
+      - name: Stage gotaboner package
+        run: |
+          python3 - <<'PY'
+          import json, os, shutil
+          from pathlib import Path
+          dest = Path(os.environ['RUNNER_TEMP']) / 'gotaboner-package'
+          dest.mkdir(parents=True, exist_ok=True)
+          (dest / 'bin').mkdir(exist_ok=True)
+          meta = json.loads(Path('package.json').read_text())
+          meta['name'] = 'gotaboner'
+          meta.pop('scripts', None)
+          (dest / 'package.json').write_text(json.dumps(meta, indent=2) + '\n', encoding='utf-8')
+          for src, tgt in [('bin/cbone.js', 'bin/cbone.js'), ('LICENSE', 'LICENSE'), ('docs/npm.md', 'README.md')]:
+              shutil.copy2(src, dest / tgt)
+          PY
+      - name: Check for an identical previously published gotaboner
+        id: published_gotaboner
+        run: python3 scripts/check_npm_release.py "$RUNNER_TEMP/gotaboner-package" --github-output "$GITHUB_OUTPUT"
+      - name: Publish gotaboner
+        if: steps.published_gotaboner.outputs.already_published != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish "$RUNNER_TEMP/gotaboner-package" --access public --tag latest --provenance
+

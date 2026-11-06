@@ -35,7 +35,7 @@ jobs:
       contents: read
       id-token: write
     with:
-      sign-windows: true
+      sign-windows: false
   macos:
     needs: verify
     runs-on: macos-14

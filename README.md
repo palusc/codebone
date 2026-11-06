@@ -42,7 +42,7 @@ macOS requires version 13 or later on Apple Silicon. Windows 10/11 x64 uses the
 or portable ZIP. Launch codebone from the Start menu; its tray icon opens projects
 and settings. See [Windows setup and builds](docs/windows.md).
 
-**Terminal bridge (npm):** `npm i -g igotaboner` installs it, `npm i -g igotaboner@latest` updates it.
+**Terminal bridge (npm):** `npm i -g igotaboner` or `npm i -g gotaboner` installs it, `npm i -g igotaboner@latest` updates it.
 Afterwards run it as `codebone`, `cb` or `igotaboner` (all the same command).
 The desktop app updates itself via **Check for Updates** in the menu.
 

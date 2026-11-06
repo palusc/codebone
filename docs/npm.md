@@ -1,7 +1,7 @@
 # igotaboner
 
 The terminal and MCP launcher for **codebone**, the local codebase architecture app
-for macOS and Windows.
+for macOS.
 
 ```bash
 npx -y igotaboner
@@ -30,12 +30,9 @@ context, or `codebone_tldr()` for a compact project summary.
 ## Supported desktop apps
 
 - **macOS:** macOS 13+ on Apple Silicon, with the built-in model using Metal.
-- **Windows:** Windows 10/11 x64, with a tray app, settings and CPU model support.
 
 cbone requires Node.js 18 or later. The installed desktop app includes the Python
-runtime and MCP server. Windows portable installs can set `CODEBONE_MCP` to the
-full path of `cbone.exe`. Source installs can set `CODEBONE_PYTHON` to their Python
-interpreter. `CODEBONE_PORT` selects an explicit running local instance.
+runtime and MCP server. Source installs can set `CODEBONE_PYTHON` to their Python interpreter. `CODEBONE_PORT` selects an explicit running local instance.
 
 ## Names
 

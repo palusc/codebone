@@ -5,7 +5,6 @@ with byte-identical models. Order: bundled copy inside the .app (symlink, no ext
 """
 import hashlib
 import os
-import shutil
 import sys
 import urllib.request
 from pathlib import Path
@@ -54,10 +53,7 @@ def install(dest: Path, progress: Optional[Callable[[int], None]] = None) -> str
         dest.unlink()  # dangling link (app moved/deleted) or corrupt partial file
     if is_valid(BUNDLED_MODEL):
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if sys.platform == "win32":
-            shutil.copyfile(BUNDLED_MODEL, dest)
-        else:
-            dest.symlink_to(BUNDLED_MODEL)
+        dest.symlink_to(BUNDLED_MODEL)
         return "linked"
     download(dest, progress)
     return "downloaded"

@@ -139,18 +139,6 @@ def check_for_updates(current_version: str = CURRENT_VERSION, timeout: int = 8) 
     asset_size = 0
     checksum_url = None
     assets = data.get("assets", [])
-    if sys.platform == "win32":
-        asset = next((a for a in assets if a.get("name", "").lower() == "codebone-windows-x64-setup.exe"), None)
-        return {
-            "update_available": update_available,
-            "latest_version": latest_ver_str or current_version,
-            "current_version": current_version,
-            "release_name": data.get("name", f"codebone v{latest_ver_str}"),
-            "release_notes": clean_release_notes(data.get("body", "")),
-            "download_url": asset.get("browser_download_url") if asset else None,
-            "asset_size": asset.get("size", 0) if asset else 0,
-            "html_url": data.get("html_url", f"https://github.com/{GITHUB_REPO}/releases"),
-        }
     for asset in assets:
         name = asset.get("name", "").lower()
         if "arm64" in name and name.endswith("-update.zip"):

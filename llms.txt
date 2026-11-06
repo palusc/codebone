@@ -12,8 +12,8 @@
 ## Current release
 - Version: 2.0
 - License: MIT
-- Platforms: macOS 13+ on Apple Silicon (arm64); Windows 10/11 x64
-- Built-in map model: Qwen2.5-Coder 0.5B with Apple Metal on macOS and CPU on Windows
+- Platforms: macOS 13+ on Apple Silicon (arm64)
+- Built-in map model: Qwen2.5-Coder 0.5B with Apple Metal on macOS
 - Storage: local SQLite
 - Server: localhost-only MCP and HTTP API
 

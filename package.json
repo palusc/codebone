@@ -1,7 +1,7 @@
 {
   "name": "igotaboner",
   "version": "2.0.0-a",
-  "description": "MCP server bridge for codebone — local codebase architecture for macOS and Windows",
+  "description": "MCP server bridge for codebone \u2014 local codebase architecture for macOS",
   "keywords": [
     "mcp",
     "codebone",
@@ -30,8 +30,7 @@
     "node": ">=18"
   },
   "os": [
-    "darwin",
-    "win32"
+    "darwin"
   ],
   "scripts": {
     "test": "node --test tests/npm-bridge.test.cjs"

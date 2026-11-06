@@ -5,7 +5,6 @@ import copy
 import logging
 import os
 import stat
-import sys
 import threading
 import time
 from pathlib import Path
@@ -373,15 +372,6 @@ class Config:
                     pass
                 return
             self.data.update(stored)
-            if sys.platform == "win32":
-                from .windows_secrets import read_secret, write_secret
-                secret_file = self.config_dir / "provider-key.dpapi"
-                legacy_key = self.data.get("brain_cloud_api_key", "")
-                if legacy_key:
-                    write_secret(secret_file, legacy_key)
-                self.data["brain_cloud_api_key"] = read_secret(secret_file)
-                if legacy_key:
-                    self.save()
             # Ensure all modern default extensions are included
             cur_exts = set(self.data.get("watched_extensions", []))
             cur_exts.update(DEFAULT_WATCHED_EXTENSIONS)
@@ -409,8 +399,6 @@ class Config:
             fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 saved = dict(self.data)
-                if sys.platform == "win32":
-                    saved.pop("brain_cloud_api_key", None)
                 json.dump(saved, f, indent=2)
                 f.flush()
                 os.fsync(f.fileno())
@@ -421,9 +409,6 @@ class Config:
 
     def set(self, key: str, value):
         with self._lock:
-            if sys.platform == "win32" and key == "brain_cloud_api_key":
-                from .windows_secrets import write_secret
-                write_secret(self.config_dir / "provider-key.dpapi", value)
             self.data[key] = value
             if key == "project_path" and value:
                 # Every writer of the active project (menu, MCP adopt, first run) joins the workspace with

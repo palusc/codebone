@@ -43,7 +43,7 @@ or portable ZIP. Launch codebone from the Start menu; its tray icon opens projec
 and settings. See [Windows setup and builds](docs/windows.md).
 
 **Terminal bridge (npm):** `npm i -g igotaboner` or `npm i -g gotaboner` installs it, `npm i -g igotaboner@latest` updates it.
-Afterwards run it as `codebone`, `cb` or `igotaboner` (all the same command).
+Afterwards run it as `codebone`, `cb`, `igotaboner` or `gotaboner` (all the same command).
 The desktop app updates itself via **Check for Updates** in the menu.
 
 The Windows 2.0 installer and application are unsigned. Windows SmartScreen may

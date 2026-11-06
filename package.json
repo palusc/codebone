@@ -19,6 +19,7 @@
   "license": "MIT",
   "bin": {
     "igotaboner": "bin/cbone.js",
+    "gotaboner": "bin/cbone.js",
     "codebone": "bin/cbone.js",
     "cb": "bin/cbone.js"
   },

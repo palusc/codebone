@@ -13,6 +13,15 @@ App release `1.8a` maps to npm `1.8.0-a`; `1.8b` maps to `1.8.0-b`.
 
 ---
 
+## [2.0c] - 2026-11-06
+
+### Changed
+- Model menus show the exact configured model ID with the provider beside it.
+- Model setup labels provider name, exact model ID, API URL and key as separate fields.
+- `cb update` and `codebone update` install verified desktop app releases from the terminal.
+
+---
+
 ## [2.0b] - 2026-11-06
 
 ### Changed

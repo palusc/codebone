@@ -17,7 +17,7 @@ def stage(destination: Path):
     metadata = json.loads((ROOT / 'package.json').read_text())
     metadata.pop('scripts', None)  # development-only test script is not shipped
     (destination / 'package.json').write_text(json.dumps(metadata, indent=2) + '\n', encoding='utf-8')
-    for source, target in [('bin/cbone.js', 'bin/cbone.js'), ('LICENSE', 'LICENSE'), ('docs/npm.md', 'README.md')]:
+    for source, target in [('bin/cbone.js', 'bin/cbone.js'), ('bin/update.py', 'bin/update.py'), ('LICENSE', 'LICENSE'), ('docs/npm.md', 'README.md')]:
         shutil.copy2(ROOT / source, destination / target)
     return destination
 

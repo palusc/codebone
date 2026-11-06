@@ -1820,8 +1820,8 @@ class CodeBoneApp(rumps.App):
         from . import modules
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
         resp = rumps.Window(
-            message=f"Enter new name for '{current_name}':",
-            title="Rename Model",
+            message=f"Enter provider name for this model:",
+            title="Rename Provider",
             default_text=current_name,
             ok="Save",
             cancel="Cancel",
@@ -1925,7 +1925,7 @@ class CodeBoneApp(rumps.App):
                 item.add(edit_key_item)
 
                 rename_item = rumps.MenuItem(
-                    "Rename Model...",
+                    "Rename Provider...",
                     callback=lambda _, mid=m["id"], n=m["name"]: self.rename_module_dialog(mid, n),
                 )
                 _set_symbol_icon(rename_item, "pencil")
@@ -2623,14 +2623,14 @@ class CodeBoneApp(rumps.App):
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
 
         alert = NSAlert.alloc().init()
-        alert.setMessageText_("Add Coding Model")
-        alert.setInformativeText_("Enter your model and API key. Provide at least one compatible base URL.")
+        alert.setMessageText_("Add Model")
+        alert.setInformativeText_("Enter the provider, its exact model ID, API URL and key.")
         alert.addButtonWithTitle_("Add Model")
         alert.addButtonWithTitle_("Cancel")
         form = NSView.alloc().initWithFrame_(NSRect(NSPoint(0, 0), NSSize(420, 330)))
         fields = []
-        for i, label in enumerate(("Name", "Model ID", "Anthropic base URL · Claude Code",
-                                   "OpenAI base URL · OpenAI-compatible agents", "API key · saved in macOS Keychain")):
+        for i, label in enumerate(("Provider name", "Exact model ID from the provider", "Anthropic API base URL · Claude Code",
+                                   "OpenAI API base URL · compatible coding agents", "API key · saved in macOS Keychain")):
             y = 300 - i * 64
             caption = NSTextField.labelWithString_(label)
             caption.setFrame_(NSRect(NSPoint(0, y), NSSize(420, 18)))

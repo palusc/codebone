@@ -14,3 +14,5 @@ codebone_main.py
 install.sh
 uninstall.sh
 Formula/
+
+!bin/update.py

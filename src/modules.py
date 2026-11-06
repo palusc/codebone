@@ -683,11 +683,13 @@ def detect_provider(mod: dict) -> str:
 def format_model_name(mod: dict) -> str:
     raw_name = (mod.get("name") or "Custom Model").strip()
     provider = detect_provider(mod)
+    model_id = (mod.get("model") or "").strip()
+    if model_id:
+        return f"{model_id} ({provider})"
     if f"({provider})" in raw_name:
         return raw_name
-    if raw_name.lower().startswith(provider.lower()) and "(" in raw_name and raw_name.endswith(")"):
-        inner = raw_name[len(provider):].strip(" ()")
-        return f"{inner} ({provider})"
+    if raw_name.lower() == provider.lower():
+        return raw_name
     return f"{raw_name} ({provider})"
 
 

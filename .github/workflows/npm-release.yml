@@ -58,7 +58,7 @@ jobs:
           meta['name'] = 'gotaboner'
           meta.pop('scripts', None)
           (dest / 'package.json').write_text(json.dumps(meta, indent=2) + '\n', encoding='utf-8')
-          for src, tgt in [('bin/cbone.js', 'bin/cbone.js'), ('LICENSE', 'LICENSE'), ('docs/npm.md', 'README.md')]:
+          for src, tgt in [('bin/cbone.js', 'bin/cbone.js'), ('bin/update.py', 'bin/update.py'), ('LICENSE', 'LICENSE'), ('docs/npm.md', 'README.md')]:
               shutil.copy2(src, dest / tgt)
           PY
       - name: Check for an identical previously published gotaboner

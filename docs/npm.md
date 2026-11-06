@@ -9,7 +9,8 @@ npx -y igotaboner
 
 Install and launch the [codebone desktop app](https://github.com/palusc/codebone/releases/latest)
 first. The app builds the local architecture graph; cbone connects your coding
-agent to it through MCP. The launcher does not download or replace the desktop app.
+agent to it through MCP. Run `cb update` (or `codebone update`) to check and install desktop app updates.
+After an update, quit and reopen the app.
 
 ## Configure your coding agent
 

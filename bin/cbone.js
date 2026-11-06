@@ -16,7 +16,16 @@ function findCommand(platform = process.platform, env = process.env, exists = ex
 }
 
 function main() {
-  const { command, args } = findCommand();
+  const update = process.argv.length === 3 && process.argv[2] === 'update';
+  if (process.argv.length > 2 && !update) {
+    const help = process.argv.length === 3 && ['--help', '-h'].includes(process.argv[2]);
+    console.error('Usage: codebone | cb | igotaboner | gotaboner [update]\n' +
+      'These commands start the MCP bridge for a coding agent.\n' +
+      'Use update to check and install desktop app updates.');
+    process.exit(help ? 0 : 1);
+  }
+  const { command, args } = findCommand(process.platform, update ? { ...process.env, CODEBONE_MCP: '' } : process.env);
+  if (update) args.splice(0, args.length, join(__dirname, 'update.py'));
   const child = spawn(command, args, { stdio: 'inherit', env: process.env });
   child.on('error', (err) => {
     console.error('[cbone] Could not launch ' + command + ': ' + err.message + '\n' +

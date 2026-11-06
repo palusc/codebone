@@ -630,15 +630,16 @@ def test_processes_are_stopped_but_never_this_one(world, system, monkeypatch):
         (909, 1, "/usr/bin/vim", "vim codebone_mcp/server.py"),
         (910, 1, "/usr/bin/vim", f"/usr/bin/vim {app}/Info.plist"),
         (911, 1, "/usr/bin/grep", "grep -r codebone-mcp ."),
+        (912, 1, "/opt/homebrew/bin/node", "npm exec gotaboner"),
     ]
     monkeypatch.setattr(un, "_ps", lambda: rows)
     killed = []
     monkeypatch.setattr(un, "_kill", lambda pid, sig: killed.append(pid))
     monkeypatch.setattr(un, "_alive", lambda pid: pid not in killed)
     targets = un.collect_targets(home=world["home"], bundle=world["bundle"], system=True)
-    assert sorted(t.path for t in targets if t.kind == "process") == [f"pid {p}" for p in (900, 901, 902, 903, 905, 906)]
+    assert sorted(t.path for t in targets if t.kind == "process") == [f"pid {p}" for p in (900, 901, 902, 903, 905, 906, 912)]
     un.run_uninstall(home=world["home"], bundle=world["bundle"], system=True)
-    assert sorted(set(killed)) == [900, 901, 902, 903, 905, 906]
+    assert sorted(set(killed)) == [900, 901, 902, 903, 905, 906, 912]
     assert me not in killed and parent not in killed
 
 
@@ -904,6 +905,7 @@ def test_shell_process_pattern_matches_launchers_but_not_editors():
         "/Users/x/Library/Application Support/codebone/venv/bin/python3 -m codebone_mcp.server",
         "python3 -m pug_mcp.server", "/usr/bin/python3 pug_main.py",
         "node /opt/homebrew/lib/node_modules/codebone-mcp/bin/codebone-mcp.js", "node /opt/homebrew/bin/npm exec codebone-mcp",
+        "node /opt/homebrew/bin/npm exec gotaboner",
         "/Users/x/Other Place/PUG.app/Contents/MacOS/PUG",
     ]
     others = [

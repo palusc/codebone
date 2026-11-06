@@ -47,7 +47,7 @@ LSREGISTER = (
 _BUNDLE_EXE_RE = re.compile(r"/(?:codebone|CodeBone|PUG)\.app/Contents/")
 _INTERPRETER_RE = re.compile(r"^(?:[Pp]ython[\d.]*|node)$")
 _SCRIPT_RE = re.compile(
-    r"(?:codebone|pug)_mcp[./]server|codebone_main\.py|pug_main\.py|(?:^|[/\s])(?:igotaboner|cbonex|cbone|codebone-mcp)(?:\.js)?(?:\s|$)"
+    r"(?:codebone|pug)_mcp[./]server|codebone_main\.py|pug_main\.py|(?:^|[/\s])(?:igotaboner|gotaboner|cbonex|cbone|codebone-mcp)(?:\.js)?(?:\s|$)"
 )
 # Login items are matched by bundle id, so another vendor's com.pug.* agent is never touched.
 _AGENT_RE = re.compile(r"^(?:%s)(?:[._-].*)?\.plist$" % "|".join(re.escape(i) for i in APP_IDS))

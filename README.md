@@ -38,7 +38,7 @@ codebone prepares that map before the task starts. It watches your project, buil
 
 macOS requires version 13 or later on Apple Silicon.
 
-**Terminal bridge (npm):** `igotaboner@2.0.0-a` has been submitted to npm and is awaiting processing. Once available, `npm i -g igotaboner` installs it and `npm i -g igotaboner@latest` updates it.
+**Terminal bridge (npm):** `npm i -g igotaboner` or `npm i -g gotaboner` installs it; add `@latest` to update it.
 Run it as `codebone`, `cb`, `igotaboner` or `gotaboner` (all the same command).
 The desktop app updates itself via **Check for Updates** in the menu.
 
@@ -117,7 +117,7 @@ Your existing agent still reasons about the task and writes the code. codebone s
 ## MCP setup
 
 Install the **codebone** desktop app and start its MCP bridge with `npx -y igotaboner`.
-The terminal command is `codebone`, `cb` or `igotaboner`; the desktop app remains **codebone**.
+The terminal command is `codebone`, `cb`, `igotaboner` or `gotaboner`; the desktop app remains **codebone**.
 A portable manual configuration is:
 
 ```json

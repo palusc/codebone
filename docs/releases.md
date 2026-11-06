@@ -1,11 +1,11 @@
 # Releasing codebone 2.0
 
 codebone supports macOS Apple Silicon. Existing
-1.8 releases stay archived. App release `2.0` maps to npm package `igotaboner@2.0.0` through
+1.8 releases stay archived. App release `2.0a` maps to npm package `igotaboner@2.0.0-a` through
 `scripts/npm_version.py`. Nothing is published by a local version bump.
 
-The npm package and terminal command are `igotaboner`; the desktop app is `codebone`.
-No compatibility package or old command alias is published for 2.0.
+The npm packages are `igotaboner` and `gotaboner`; the desktop app is `codebone`.
+Both packages provide the `codebone`, `cb`, `igotaboner` and `gotaboner` commands.
 After igotaboner is published, mark the old
 `codebone-mcp` package as moved using npm deprecation metadata.
 
@@ -20,9 +20,9 @@ After igotaboner is published, mark the old
    authorization for the respective package. The old package move notice is a
    one-time `npm deprecate codebone-mcp "Renamed to igotaboner. Use npx -y igotaboner instead."`
    operation, performed after the first successful igotaboner publication.
-3. Push tag `v2.0` at the reviewed source commit. The release workflow verifies the
+3. Push a tag matching the checked-in version (such as `v2.0a`) at the reviewed source commit. The release workflow verifies the
    versions, builds and validates macOS before publishing its artifacts.
-4. The npm publication workflow runs after the native release and marks `2.0.0` as
+4. The npm publication workflow runs after the native release and marks the matching npm version as
    `latest`. An identical version already published directly from the cloud is
    verified and reused, allowing release retries without republishing. Verify the package and dist-tag on npm, then check Socket.dev after
    it indexes the new version.

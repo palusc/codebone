@@ -43,6 +43,7 @@ or portable ZIP. Launch codebone from the Start menu; its tray icon opens projec
 and settings. See [Windows setup and builds](docs/windows.md).
 
 **Terminal bridge (npm):** `npm i -g igotaboner` installs it, `npm i -g igotaboner@latest` updates it.
+Afterwards run it as `codebone`, `cb` or `igotaboner` (all the same command).
 The desktop app updates itself via **Check for Updates** in the menu.
 
 The Windows 2.0 installer and application are unsigned. Windows SmartScreen may
@@ -124,7 +125,7 @@ Your existing agent still reasons about the task and writes the code. codebone s
 ## MCP setup
 
 Install the **codebone** desktop app and start its MCP bridge with `npx -y igotaboner`.
-The terminal command is **igotaboner**; the desktop app remains **codebone**.
+The terminal command is `codebone`, `cb` or `igotaboner`; the desktop app remains **codebone**.
 A portable manual configuration is:
 
 ```json

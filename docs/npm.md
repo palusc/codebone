@@ -39,7 +39,7 @@ interpreter. `CODEBONE_PORT` selects an explicit running local instance.
 
 ## Names
 
-**igotaboner** is both the npm package and terminal command. **codebone** is the
+**igotaboner** is the npm package; it installs the terminal commands `codebone`, `cb` and `igotaboner`. **codebone** is the
 desktop app. The previous npm package was called
 `codebone-mcp`; new configurations should use `igotaboner`.
 

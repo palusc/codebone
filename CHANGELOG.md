@@ -13,6 +13,15 @@ App release `1.8a` maps to npm `1.8.0-a`; `1.8b` maps to `1.8.0-b`.
 
 ---
 
+## [2.0b] - 2026-11-06
+
+### Changed
+- Adding a coding model now uses one native form with consistent system typography.
+- Enter your own provider, model ID, base URLs and API key without preset suggestions.
+- API keys stay hidden during entry and are saved in macOS Keychain; invalid entries can be corrected without retyping the form.
+
+---
+
 ## [2.0a] - 2026-11-06
 
 ### Added

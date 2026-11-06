@@ -31,6 +31,7 @@ from AppKit import (
     NSAttributedString,
     NSView,
     NSTextField,
+    NSSecureTextField,
     NSSwitch,
     NSImageView,
     NSImage,
@@ -2621,88 +2622,40 @@ class CodeBoneApp(rumps.App):
 
         NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
 
-        # 1-click sync if user already configured a model in Map Agent
-        map_key = (self.config.get("brain_cloud_api_key") or "").strip()
-        map_vendor = self.config.get("brain_cloud_vendor", "openai")
-        map_model = self.config.get("brain_cloud_model", "")
-        if map_key and len(map_key) > 8:
-            vendor_display = {
-                "openai": "OpenAI",
-                "anthropic": "Claude (Anthropic)",
-                "openrouter": "OpenRouter",
-            }.get(map_vendor, map_vendor.title())
-            use_map = rumps.alert(
-                title="Add Coding Model",
-                message=f"You already have a {vendor_display} key configured in Map Agent.\n\nWould you like to route Coding Agents through your existing {vendor_display} configuration?",
-                ok=f"Use Map {vendor_display}",
-                cancel="Other / Custom...",
-            )
-            if use_map == 1:
-                preset_match = next((p for p in modules.PRESETS if vendor_display.lower() in p["name"].lower()), None)
-                if preset_match:
-                    name = preset_match["name"]
-                    model = map_model or preset_match["model"]
-                    anthropic_url = preset_match.get("anthropic_url", "")
-                    openai_url = preset_match.get("openai_url", "")
-                else:
-                    name = f"{vendor_display} (Synced)"
-                    model = map_model or "default"
-                    anthropic_url = "https://api.anthropic.com/v1" if map_vendor == "anthropic" else ""
-                    openai_url = "https://api.openai.com/v1" if map_vendor == "openai" else ""
-                key = map_key
-                try:
-                    module = modules.add_module(self.config, name, model, key, anthropic_url, openai_url)
-                    self.config.set("module_selected", module["id"])
-                    self.config.set("modules_enabled", True)
-                    self._update_modules_menu()
-                    self._update_brain_checks()
-                    self._update_models_menu()
-                    rumps.notification("codebone", "Coding Agent Synced", f"Now using {name} for coding agents.")
-                    return
-                except Exception as exc:
-                    logger.warning("Could not sync Map Agent model to coding agent: %s", exc)
-
-        name = model = anthropic_url = openai_url = None
-        for i, preset in enumerate(modules.PRESETS):
-            last = i == len(modules.PRESETS) - 1
-            choice = rumps.alert(
-                title="Add Coding Model",
-                message=(f"This model API can be used by your coding agent instead of its default.\n\n"
-                         f"Preset: {preset['name']}\nModel: {preset['model']}\n\n"
-                         "Custom needs a base URL in Anthropic format (for Claude Code) and/or OpenAI format (for opencode)."),
-                ok=preset["name"], cancel="Cancel", other=("Custom..." if last else "Other provider..."),
-            )
-            if choice == 0:
-                return
-            if choice == 1:
-                name, model = preset["name"], preset["model"]
-                anthropic_url = preset.get("anthropic_url", "")
-                openai_url = preset.get("openai_url", "")
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_("Add Coding Model")
+        alert.setInformativeText_("Enter your model and API key. Provide at least one compatible base URL.")
+        alert.addButtonWithTitle_("Add Model")
+        alert.addButtonWithTitle_("Cancel")
+        form = NSView.alloc().initWithFrame_(NSRect(NSPoint(0, 0), NSSize(420, 330)))
+        fields = []
+        for i, label in enumerate(("Name", "Model ID", "Anthropic base URL · Claude Code",
+                                   "OpenAI base URL · OpenAI-compatible agents", "API key · saved in macOS Keychain")):
+            y = 300 - i * 64
+            caption = NSTextField.labelWithString_(label)
+            caption.setFrame_(NSRect(NSPoint(0, y), NSSize(420, 18)))
+            caption.setFont_(NSFont.systemFontOfSize_(12))
+            caption.setTextColor_(NSColor.secondaryLabelColor())
+            form.addSubview_(caption)
+            field_class = NSSecureTextField if i == 4 else NSTextField
+            field = field_class.alloc().initWithFrame_(NSRect(NSPoint(0, y - 29), NSSize(420, 25)))
+            field.setFont_(NSFont.systemFontOfSize_(13))
+            field.setAccessibilityLabel_(label)
+            form.addSubview_(field)
+            fields.append(field)
+        for current, following in zip(fields, fields[1:]):
+            current.setNextKeyView_(following)
+        alert.setAccessoryView_(form)
+        alert.window().setInitialFirstResponder_(fields[0])
+        while alert.runModal() == 1000:
+            name, model, anthropic_url, openai_url, key = [field.stringValue().strip() for field in fields]
+            try:
+                module = modules.add_module(self.config, name, model, key, anthropic_url, openai_url)
+                self.config.set("module_selected", module["id"])
                 break
-            if last:
-                name = ""  # falls through to the custom-entry form below
-        if name is None or name == "":
-            fields = []
-            for label, default in (("Name (shown in the menu)", ""), ("Model ID", ""),
-                                   ("Anthropic-format base URL (optional, https://...)", ""),
-                                   ("OpenAI-format base URL (optional, https://...)", "")):
-                resp = rumps.Window(message=label, title="Add Coding Model", default_text=default, ok="Next", cancel="Cancel",
-                                    dimensions=(360, 24)).run()
-                if not resp.clicked:
-                    return
-                fields.append(resp.text.strip())
-            name, model, anthropic_url, openai_url = fields
-        resp = rumps.Window(message=f"API key for {name} (stored in your macOS Keychain)",
-                            title="Add Coding Model", default_text="", ok="Add", cancel="Cancel", dimensions=(360, 24),
-                            secure=True).run()
-        if not resp.clicked:
-            return
-        key = resp.text.strip()
-        try:
-            module = modules.add_module(self.config, name, model, key, anthropic_url, openai_url)
-            self.config.set("module_selected", module["id"])
-        except (ValueError, RuntimeError) as exc:
-            rumps.alert("Add Model", str(exc))
+            except (ValueError, RuntimeError) as exc:
+                rumps.alert("Add Model", str(exc))
+        else:
             return
         self._update_modules_menu()
         self._update_brain_checks()

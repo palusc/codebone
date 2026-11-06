@@ -1,12 +1,12 @@
 # Releasing codebone 2.0
 
 2.0 includes macOS Apple Silicon and Windows x64 desktop applications. Existing
-1.8 releases stay archived. App release `2.0` maps to npm package `cbonex@2.0.0` through
+1.8 releases stay archived. App release `2.0` maps to npm package `igotaboner@2.0.0` through
 `scripts/npm_version.py`. Nothing is published by a local version bump.
 
-The npm package and terminal command are `cbonex`; the desktop app is `codebone`.
+The npm package and terminal command are `igotaboner`; the desktop app is `codebone`.
 No compatibility package or old command alias is published for 2.0.
-After cbonex is published, mark the old
+After igotaboner is published, mark the old
 `codebone-mcp` package as moved using npm deprecation metadata.
 
 1. Review the changes and run the Windows build workflow on the development branch.
@@ -16,10 +16,10 @@ After cbonex is published, mark the old
    account before trusted publishing can be configured. Alternatively configure
    the GitHub repository secret `NPM_TOKEN` with package-publishing permissions
    for the initial release; enter its value only in GitHub Secrets, never in chat.
-   Publishing `cbonex` and marking the old package as moved each require
+   Publishing `igotaboner` and marking the old package as moved each require
    authorization for the respective package. The old package move notice is a
-   one-time `npm deprecate codebone-mcp "Renamed to cbonex. Use npx -y cbonex instead."`
-   operation, performed after the first successful cbonex publication.
+   one-time `npm deprecate codebone-mcp "Renamed to igotaboner. Use npx -y igotaboner instead."`
+   operation, performed after the first successful igotaboner publication.
 3. Push tag `v2.0` at the reviewed source commit. The release workflow verifies the
    versions, builds and validates Windows and macOS, and publishes both sets of
    artifacts together only after both jobs succeed.

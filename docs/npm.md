@@ -1,10 +1,10 @@
-# cbonex
+# igotaboner
 
 The terminal and MCP launcher for **codebone**, the local codebase architecture app
 for macOS and Windows.
 
 ```bash
-npx -y cbonex
+npx -y igotaboner
 ```
 
 Install and launch the [codebone desktop app](https://github.com/palusc/codebone/releases/latest)
@@ -18,7 +18,7 @@ agent to it through MCP. The launcher does not download or replace the desktop a
   "mcpServers": {
     "codebone": {
       "command": "npx",
-      "args": ["-y", "cbonex"]
+      "args": ["-y", "igotaboner"]
     }
   }
 }
@@ -39,9 +39,9 @@ interpreter. `CODEBONE_PORT` selects an explicit running local instance.
 
 ## Names
 
-**cbonex** is both the npm package and terminal command. **codebone** is the
+**igotaboner** is both the npm package and terminal command. **codebone** is the
 desktop app. The previous npm package was called
-`codebone-mcp`; new configurations should use `cbonex`.
+`codebone-mcp`; new configurations should use `igotaboner`.
 
 [Website](https://codeb.one) · [Source](https://github.com/palusc/codebone) ·
 [Downloads](https://github.com/palusc/codebone/releases/latest) ·

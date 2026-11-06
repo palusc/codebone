@@ -30,17 +30,17 @@ jobs:
           test "$expected" = "$actual"
           node --check bin/cbone.js
           npm test
-      - name: Stage npm package with cbonex README
-        run: python3 scripts/package_npm.py "$RUNNER_TEMP/cbonex-package"
+      - name: Stage npm package with igotaboner README
+        run: python3 scripts/package_npm.py "$RUNNER_TEMP/igotaboner-package"
       - name: Inspect package contents
-        run: npm pack "$RUNNER_TEMP/cbonex-package" --dry-run
+        run: npm pack "$RUNNER_TEMP/igotaboner-package" --dry-run
       # Configure this workflow as a trusted publisher in npm package settings.
       # The release workflow calls this only after native artifacts pass validation.
       - name: Check for an identical previously published version
         id: published
-        run: python3 scripts/check_npm_release.py "$RUNNER_TEMP/cbonex-package" --github-output "$GITHUB_OUTPUT"
-      - name: Publish cbonex
+        run: python3 scripts/check_npm_release.py "$RUNNER_TEMP/igotaboner-package" --github-output "$GITHUB_OUTPUT"
+      - name: Publish igotaboner
         if: steps.published.outputs.already_published != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish "$RUNNER_TEMP/cbonex-package" --access public --tag latest --provenance
+        run: npm publish "$RUNNER_TEMP/igotaboner-package" --access public --tag latest --provenance

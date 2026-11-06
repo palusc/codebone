@@ -1,5 +1,5 @@
 {
-  "name": "cbonex",
+  "name": "igotaboner",
   "version": "2.0.0-a",
   "description": "MCP server bridge for codebone \u2014 local codebase architecture for macOS and Windows",
   "keywords": [
@@ -18,7 +18,7 @@
   },
   "license": "MIT",
   "bin": {
-    "cbonex": "bin/cbone.js"
+    "igotaboner": "bin/cbone.js"
   },
   "files": [
     "bin/"
